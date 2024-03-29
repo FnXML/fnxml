@@ -8,6 +8,7 @@ Tools:
 - a transformer - this can be used to take the stream of XML elements and output another stream of
   modified elements or anything else really.
 - an inspector, which will write stream elements to the console, as they are processed.
+- add a filter which takes XPATH or something like it to include/exclude elements from the stream.
 - a decoder this builds on the transformer and will convert XML to elixir Maps.  As part of this
   there is an Elixir Behaviour called Formatter which is defined to specify how to convert the
   XML to a Map.  New implementations of this behaviour can be defined to change how the XML is
