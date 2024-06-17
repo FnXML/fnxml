@@ -35,25 +35,45 @@ defmodule XMLStreamTools.ParserTest do
            ]
   end
 
-  # inputs = [
-  #       "<ns:foo a=\"1\" a:b='2'>bar</ns:foo>",
-  #       "<ns:biz a='bar'/>",
-  #       "<foo><bar>baz</bar>\n</foo>",
-  #       "<foo><bar>one</bar><bar>two</bar></foo>",
-  # #      "<>bar</>",
-  #       "<foo>bar</baz>",
-  #       "<foo>bar</foo>oops",
-  #       "<foo>bar",
-  #       "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">",
-  #       "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:soapenc=\"http://schemas.xmlsoap.org/soap/encoding/\" xmlns:tns=\"http://www.witsml.org/wsdl/120\" xmlns:types=\"http://www.witsml.org/wsdl/120/encodedTypes\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><soap:Body soap:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><q1:WMLS_GetVersion xmlns:q1=\"http://www.witsml.org/message/120\"/></soap:Body></soap:Envelope>",
-  #       "hi, this is a <bold>bold</bold> statement"
-  # ]
+  test "soap" do
+    input = "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:soapenc=\"http://schemas.xmlsoap.org/soap/encoding/\" xmlns:tns=\"http://www.witsml.org/wsdl/120\" xmlns:types=\"http://www.witsml.org/wsdl/120/encodedTypes\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><soap:Body soap:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><q1:WMLS_GetVersion xmlns:q1=\"http://www.witsml.org/message/120\"/></soap:Body></soap:Envelope>"
 
-  # for input <- inputs do
-  #     IO.puts(input)
-  #     stream = XMLStream.Parser.parse(input)
-  #     Enum.each(stream, fn x -> IO.inspect(x) end)
-  #     |> IO.inspect()
-  #     IO.puts("")
-  # end
+    result = parse_xml(input)
+    assert result == [
+      {
+        :open_tag, [
+          tag: "Envelope",
+          namespace: "soap",
+          attr: [
+            {"xmlns:soap", "http://schemas.xmlsoap.org/soap/envelope/"},
+            {"xmlns:soapenc", "http://schemas.xmlsoap.org/soap/encoding/"},
+            {"xmlns:tns", "http://www.witsml.org/wsdl/120"},
+            {"xmlns:types", "http://www.witsml.org/wsdl/120/encodedTypes"},
+            {"xmlns:xsd", "http://www.w3.org/2001/XMLSchema"},
+            {"xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"}
+          ],
+          loc: {{1, 0}, 1}
+        ]
+      },
+      {
+        :open_tag, [
+          tag: "Body",
+          namespace: "soap",
+          attr: [{"soap:encodingStyle", "http://schemas.xmlsoap.org/soap/encoding/"}],
+          loc: {{1, 0}, 329}
+        ]
+      },
+      {
+        :open_tag, [
+          tag: "WMLS_GetVersion",
+          namespace: "q1",
+          attr: [{"xmlns:q1", "http://www.witsml.org/message/120"}],
+          close: true,
+          loc: {{1, 0}, 403}
+        ]
+      },
+      {:close_tag, [tag: "Body", namespace: "soap", loc: {{1, 0}, 470}]},
+      {:close_tag, [tag: "Envelope", namespace: "soap", loc: {{1, 0}, 482}]}
+    ]
+  end
 end
