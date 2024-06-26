@@ -111,9 +111,9 @@ defmodule XMLStreamTools.Parser do
     choice([parsec(:open_tag), parsec(:close_tag), parsec(:text)])
   )
 
-  defp reverse(_rest, list, context, _line, _offset) do
-    {Enum.reverse(list), context}
-  end
+  # defp reverse(_rest, list, context, _line, _offset) do
+  #   {Enum.reverse(list), context}
+  # end
 
   defp into_keyword([k | [v]]), do: {k, v}
 
@@ -137,7 +137,7 @@ defmodule XMLStreamTools.Parser do
   defp add_loc([{[{[], line}], offset}]), do: [loc: {line, offset}]
   defp add_loc([{[{[data], line}], offset}]), do: [data, loc: {line, offset}]
 
-  defp add_line_and_offset([{[{[{label, tag}], line}], offset}]), do: {label, tag, line, offset}
+  #  defp add_line_and_offset([{[{[{label, tag}], line}], offset}]), do: {label, tag, line, offset}
   #  defp add_line([{[{label, tag}], line}]), do: {label, tag, line}
 
   defp sort([list]) do

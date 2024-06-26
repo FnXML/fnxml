@@ -3,11 +3,12 @@ defmodule XMLStreamTools.Inspector do
   XML Inspector: This module is used to inspect the XML stream.
 
   # Example:
+  #    This example is commented out because it writes to the console.
 
-      xml = "<foo a='1'>first element<bar>nested element</bar></foo>"
-      XMLStreamTools.Parser.parse(xml)
-      |> XMLStreamTools.Transformer.transform(XMLStreamTools.Inspector.inspect_fn(label: "test_stream"))
-      |> Enum.map(fn x -> x end)
+  #    xml = "<foo a='1'>first element<bar>nested element</bar></foo>"
+  #    XMLStreamTools.Parser.parse(xml)
+  #    |> XMLStreamTools.Transformer.transform(XMLStreamTools.Inspector.inspect_fn(label: "test_stream"))
+  #    |> Enum.map(fn x -> x end)
 
   This will show the stream as it is processed (see below), `path` is a seperate list inserted by the Transformer,
   it shows the path from the root element.
@@ -27,7 +28,7 @@ defmodule XMLStreamTools.Inspector do
     fn element, path, acc -> inspect(element, path, acc, options) end
   end
 
-  def inspect({type, meta} = element, path, acc, %{label: label}) do
+  def inspect({type, meta} = element, path, _acc, %{label: label}) do
     label = if label != nil, do: "#{label}: ", else: ""
     IO.puts("#{label}{#{inspect(type)}, #{inspect(meta)}}, path: #{inspect(path)}")
     {element, []}  #always emit the element

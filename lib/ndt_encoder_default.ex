@@ -3,11 +3,10 @@ defmodule XMLStreamTools.NativeDataType.MetaDefault do
   This Module is used to encode a Native Data Type (NDT) to an XML stream.
   """
   alias XMLStreamTools.NativeDataType.Meta, as: NDT_Meta
-  alias XMLStreamTools.NativeDataType.MetaDefault, as: NDT_MetaDefault
   
   @behaviour NDT_Meta
 
-  @impl NDT_Ops
+  @impl NDT_Meta
   @doc """
   Meta returns a map of metadata about the data structure.
 
@@ -50,7 +49,6 @@ defmodule XMLStreamTools.NativeDataType.MetaDefault do
       }
   
   """
-  @impl NDT_Meta
   def meta(map, opts) when is_map(map), do: meta(%NDT_Meta{data: map, opts: opts})
 
 

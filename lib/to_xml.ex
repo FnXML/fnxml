@@ -7,7 +7,7 @@ defmodule XMLStreamTools.XMLStream do
     path = []
 
     Enum.reduce(list, {path, ""}, fn {type, parts} = element, {path, acc} ->
-      [h|t] = if path == [], do: [ nil | []], else: path
+      [_h|t] = if path == [], do: [ nil | []], else: path
       tag = Keyword.get(parts, :tag)
       path = case type do
                :open_tag -> [ tag | path]
@@ -44,7 +44,7 @@ defmodule XMLStreamTools.XMLStream do
     end
   end
 
-  def format_element({:open_tag, parts}, path, acc) do
+  def format_element({:open_tag, parts}, path, _acc) do
     tag = Keyword.get(parts, :tag)
     ns = Keyword.get(parts, :namespace)
     ns = if ns, do: "#{ns}:", else: ""
@@ -57,9 +57,9 @@ defmodule XMLStreamTools.XMLStream do
     { length(path) - 1, "<#{ns}#{tag}#{attrs}#{close}>" }
   end
 
-  def format_element({:text, [text]}, path, acc), do: { length(path), text }
+  def format_element({:text, [text]}, path, _acc), do: { length(path), text }
 
-  def format_element({:close_tag, parts}, path, acc) do
+  def format_element({:close_tag, parts}, path, _acc) do
     tag = Keyword.get(parts, :tag)
     ns = Keyword.get(parts, :namespace)
     ns = if ns, do: "#{ns}:", else: ""
