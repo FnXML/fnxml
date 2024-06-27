@@ -121,8 +121,9 @@ XML Format:
 ```elixir
 address
 |> XMLStreamTools.XMLStream.Format()
-
-"<address><name>John Doe</name><street>42 Main St.</street><city>Ely</city><state>MN</state><zip>55731<zip><address>"
+```
+```xml
+<address><name>John Doe</name><street>42 Main St.</street><city>Ely</city><state>MN</state><zip>55731<zip><address>
 ```
 
 or:
@@ -130,8 +131,9 @@ or:
 ```elixir
 address
 |> XMLStreamTools.XMLStream.Format(pretty: true, indent: 4)
+```
 
-"""
+```xml
 <address>
     <name>John Doe</name>
     <street>42 Main St.</street>
@@ -139,7 +141,6 @@ address
     <state>MN</state>
     <zip>55731<zip>
 </address>
-"""
 ```
 
 The XML Stream could also be converted back to the same or a different Native Data Structure.
