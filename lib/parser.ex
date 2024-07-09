@@ -1,27 +1,4 @@
-defmodule XMLStreamTools.Parser.Helpers do
-  @moduledoc """
-  Helper functions to handle quoted strings
-  """
-  import NimbleParsec
-
-  def maybe_escaped_char(combinator \\ empty(), char) do
-    combinator
-    |> choice([
-      ignore(ascii_char([?\\])) |> ascii_char([char]),
-      ascii_char([{:not, char}])
-    ])
-  end
-
-  def quote_by_delimiter(combinator \\ empty(), char) do
-    combinator
-    |> ignore(ascii_char([char]))
-    |> repeat(maybe_escaped_char(char))
-    |> ignore(ascii_char([char]))
-    |> reduce({List, :to_string, []})
-  end
-end
-
-defmodule XMLStreamTools.Parser do
+defmodule FnXML.Parser do
   @moduledoc """
   XML Parser: This parser emits a stream of XML tags and text.
 
@@ -33,13 +10,17 @@ defmodule XMLStreamTools.Parser do
   These are available as a stream of items which can be processed by other stream functions.
   """
   import NimbleParsec
-  import XMLStreamTools.Parser.Helpers
+  import FnXML.Parser.Helpers
 
   @doc """
   Basic XML Parser, parses to a stream of tags and text.  This makes it possible to process XML as a stream.
   """
   # |> concat(repeat(parsec(:node))) |> eos()
-  defparsec(:element, parsec(:node), debug: true)
+  defparsec(
+    :element,
+    parsec(:node),
+    debug: true
+  )
 
   tag_chars = [?a..?z, ?A..?Z, ?0..?9, ?_]
   tag_id = ascii_string(tag_chars, min: 1)
@@ -67,7 +48,7 @@ defmodule XMLStreamTools.Parser do
     |> byte_offset()
     |> reduce(:add_loc)
     |> concat(tag)
-    |> optional(parsec(:attribute) |> repeat() |> tag(:attr))
+    |> optional(parsec(:attribute) |> repeat() |> tag(:attr_list))
     |> reduce(:filter_empty_attr)
     |> choice([
       string("/>") |> tag(:close) |> reduce(:set_true),
@@ -107,9 +88,19 @@ defmodule XMLStreamTools.Parser do
   )
 
   defcombinatorp(
-    :node,
-    choice([parsec(:open_tag), parsec(:close_tag), parsec(:text)])
+    :xml_header,
+    ignore(optional(ws))
+    |> ignore(string("<"))
+    |> quote_by_delimiter(??)
+    |> ignore(string(">"))
   )
+
+  defcombinatorp(
+    :node,
+    ignore(optional(parsec(:xml_header)))
+    |> choice([parsec(:open_tag), parsec(:close_tag), parsec(:text)])
+  )
+
 
   # defp reverse(_rest, list, context, _line, _offset) do
   #   {Enum.reverse(list), context}
@@ -127,8 +118,8 @@ defmodule XMLStreamTools.Parser do
   defp deconvolute([[loc: loc], tag]), do: [{:loc, loc} | tag]
   defp deconvolute([list]), do: list
 
-  defp filter_empty_attr([loc, {:tag, tag}, {:attr, []}]), do: [tag: tag] ++ loc
-  defp filter_empty_attr([loc, tag, {:attr, []}]), do: tag ++ loc
+  defp filter_empty_attr([loc, {:tag, tag}, {:attr_list, []}]), do: [tag: tag] ++ loc
+  defp filter_empty_attr([loc, tag, {:attr_list, []}]), do: tag ++ loc
   defp filter_empty_attr([loc, {:tag, tag}, attr]), do: [attr | [tag: tag]] ++ loc
   defp filter_empty_attr([loc, tag, attr]), do: [attr | tag] ++ loc
 
@@ -141,7 +132,7 @@ defmodule XMLStreamTools.Parser do
   #  defp add_line([{[{label, tag}], line}]), do: {label, tag, line}
 
   defp sort([list]) do
-    key_order = [:tag, :namespace, :attr]
+    key_order = [:tag, :namespace, :attr_list]
     index = fn list, item -> Enum.find_index(list, &Kernel.==(&1, item)) end
     Enum.sort_by(list, fn {k, _} -> index.(key_order, k) end)
   end

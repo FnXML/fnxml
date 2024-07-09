@@ -1,35 +1,40 @@
-# XML Stream Tools
+# FnXML
 
-This is an Elixir library of tools for manipulate XML with using Streams.  It also provides a way to encode/decode
+This is an Elixir library of tools for manipulate XML in a functional manner, including tools using Streams.  It also provides a way to encode/decode
 "Native Data Structures" to/from an XML Stream.
 
 ```
  ----------------   ----------------
 | Encoder        | | Decoder        |
  ----------------   ----------------
- -----------------------------------   -----------------  ----------------
-|  Native Data Structures           | | XML Parser     | | XML Formatter  |
- -----------------------------------   -----------------  ----------------
- -------------------------------------------------------------------------
-|                               XML Stream                                |
- -------------------------------------------------------------------------
+ -----------------------------------   ----------------   ----------------   -------------
+|  Native Data Structures           | | XML Parser     | | XML Formatter  | | Transformer |
+ -----------------------------------   ----------------   ----------------   -------------
+ -----------------------------------------------------------------------------------------
+|                                        FnXML.Stream                                     |
+ -----------------------------------------------------------------------------------------
+ -----------------------------------------------------------------------------------------
+|                                           FnXML                                         |
+ -----------------------------------------------------------------------------------------
 ```
 
-# What is an XML Stream?
+# What is an FnXML.Stream?
 
 XML is difficult to stream as it is defined.  This is because valid
-XML must end with a valid end tag to be correct.  Consequently in
-order to ensure that the XML expression is valid the entire XML must
-be consumed.  XML with a root tag, that contains 10Tb of data cannot
-be confirmed to be correct unless the entire 10Tb is parsed.  This is
-inconvenient.
+XML must end with a valid matching end tag to be correct.
+Consequently in order to ensure that the XML expression is valid the
+entire XML must be consumed.  XML with a root tag, that contains 10Tb
+of data cannot be confirmed to be correct unless the entire 10Tb is
+parsed; which can be a bit inconvenient.
 
-This module makes one little assumption, and that is that the XML is
-already correct, so we won't worry about that part.
+This module makes *one little* assumption, and that assumption is that
+the XML is already correct, so we won't worry about that part.  It
+also works if it is ok to determine late in processing that there is
+an error in the XML.
 
-This frees us to consume XML differently.  These tools treat XML as a
-list of open, text, and close elements, which represent the elements
-as they were encountered in the XML string/file.
+This assumption frees us to consume XML differently.  An FnXML.Stream is
+a list of _open_tag_, _text_, and _close_tag_ elements, which represent
+the elements as they were encountered in the XML string/file.
 
 ## Example:
 
@@ -61,9 +66,15 @@ XML Stream Tools has a parser which can parse this XML and emit it to a Stream l
   {:close_tag, [tag: "name"},
   {:open_tag, [tag: "street"},
   {:text, ["42 Main St."]
-
-   ...
-
+  {:close_tag, [tag: "street"},
+  {:open_tag, [tag: "city"},
+  {:text, ["Ely"]
+  {:close_tag, [tag: "city"},
+  {:open_tag, [tag: "state"},
+  {:text, ["MN"]
+  {:close_tag, [tag: "state"},
+  {:open_tag, [tag: "zip"},
+  {:text, ["55731"]
   {:close_tag, [tag: "zip"]},
   {:close_tag, [tag: "address"]},
   {:close_tag, [tag: "root", namespace: "demo"]}
@@ -71,7 +82,8 @@ XML Stream Tools has a parser which can parse this XML and emit it to a Stream l
 ```
 
 In this format elements of the XML become a stream of XML parts, which
-could be operated on and transformed through a stream.
+could be operated on and transformed through a stream.  It is still
+possible to keep track of parent child relationships using a stack.
 
 Once in this format existing tools can be used to operate on the
 stream, such as filter elements, convert it back to XML, format the
@@ -159,7 +171,8 @@ Implemented Tools:
 - a transformer - this can be used to take the stream of XML elements and output another stream of
   modified elements or anything else really.
 - an inspector, which will write stream elements to the console, as they are processed.
-- add a filter which takes XPATH or something like it to include/exclude elements from the stream.
+
+In Progress:
 - a decoder this builds on the transformer and will convert XML to elixir Maps.  As part of this
   there is an Elixir Behaviour called Formatter which is defined to specify how to convert the
   XML to a Map.  New implementations of this behaviour can be defined to change how the XML is
@@ -167,6 +180,7 @@ Implemented Tools:
   is possible to create with the Formatter.
 
 ToDo:
+- add a filter which takes XPATH or something like it to include/exclude elements from the stream.
 
 
 ## Contributions

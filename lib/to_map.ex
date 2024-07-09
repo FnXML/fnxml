@@ -1,4 +1,4 @@
-defmodule XMLStreamTools.ToMap do
+defmodule FnXML.Stream.ToMap do
   @moduledoc """
   
   """
@@ -10,7 +10,7 @@ defmodule XMLStreamTools.ToMap do
     private = Keyword.get(opts, :private, [])
 
     %{
-      formatter: Keyword.get(opts, :formatter, XMLStreamTools.ToMap.FormatterDefault),
+      formatter: Keyword.get(opts, :formatter, FnXML.Stream.ToMap.FormatterDefault),
       private:
         Keyword.get(opts, :private, [])
         |> Enum.into(%{})
@@ -61,7 +61,7 @@ defmodule XMLStreamTools.ToMap do
   def emit(false, acc, _, _, _), do: acc
 end
 
-defmodule XMLStreamTools.ToMap.Formatter do
+defmodule FnXML.Stream.ToMap.Formatter do
   # called whant a close tag is encountered
   @callback close(acc :: list, opts :: list, path :: list) :: list
 
@@ -75,8 +75,8 @@ defmodule XMLStreamTools.ToMap.Formatter do
   @callback finalize(obj :: term, opts :: list, path :: list) :: term
 end
 
-defmodule XMLStreamTools.ToMap.FormatterDefault do
-  @behaviour XMLStreamTools.ToMap.Formatter
+defmodule FnXML.Stream.ToMap.FormatterDefault do
+  @behaviour FnXML.Stream.ToMap.Formatter
 
   @impl true
   def close([obj], opts, _path), do: [close_obj(obj, opts)]
@@ -93,7 +93,7 @@ defmodule XMLStreamTools.ToMap.FormatterDefault do
     |> Enum.into(%{})
   end
 
-  def attr(acc, %{attr: attr}, %{attr_enabled: true, attr_reduce: fun}), do: [fun.(attr) | acc]
+  def attr(acc, %{attr_list: attr}, %{attr_enabled: true, attr_reduce: fun}), do: [fun.(attr) | acc]
   def attr(acc, _, _), do: acc
 
   def meta(acc, %{loc: loc, order: order, tag: tag}, %{meta_enabled: true}),

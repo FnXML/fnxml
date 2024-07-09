@@ -1,12 +1,12 @@
-defmodule XMLStreamTools.ToMapTest do
+defmodule FnXML.Stream.ToMapTest do
   use ExUnit.Case
-  alias XMLStreamTools.ToMap
-  doctest XMLStreamTools.ToMap
+  alias FnXML.Stream.ToMap
+  doctest FnXML.Stream.ToMap
 
   def parse_to_map(xml, opts \\ []) do
     xml
-    |> XMLStreamTools.Parser.parse()
-    |> XMLStreamTools.Transformer.transform(ToMap.to_map_fn(private: opts))
+    |> FnXML.Parser.parse()
+    |> FnXML.Stream.transform(ToMap.to_map_fn(private: opts))
     |> Enum.map(fn x -> x end)
   end
 
