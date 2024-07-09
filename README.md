@@ -204,7 +204,7 @@ by adding `xmlstreamtools` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:xmlstreamtools, "~> 0.1.0"}
+    {:fnxml, "~> 0.1.0"}
   ]
 end
 ```
