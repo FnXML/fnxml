@@ -37,8 +37,6 @@ defmodule WITSML_Test do
       NDS.DecoderDefault.decode(result, [])
       |> Enum.map(fn x -> x end)
       |> IO.inspect()
-
-
     end
   end
 end
