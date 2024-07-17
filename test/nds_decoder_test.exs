@@ -5,6 +5,27 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderDefaultTest do
 
   doctest NDS.DecoderDefault
 
+  test "open/close tag decode" do
+    stream = [open_tag: [tag: "bar", close: true]]
+    decode = NDS.DecoderDefault.decode(stream, []) |> Enum.at(0)
+    assert decode == %NDS{ tag: "bar", data: %{} }
+  end
+
+  test "open/close tag, depth 1 decode" do
+    stream = [
+      open_tag: [tag: "bar"],
+      open_tag: [tag: "foo", close: true],
+      close_tag: [tag: "bar"]
+    ]
+    decode =
+      NDS.DecoderDefault.decode(stream, [])
+      |> Enum.map(fn x -> x end)
+    
+    assert decode == [
+      %NDS{ tag: "bar", order_id_list: ["foo"], child_list: %{"foo" => %NDS{ tag: "foo" }}},
+    ]
+  end
+  
   test "basic decode" do
     map = %{ :a => "1", "text" => "world" }
     result = (
@@ -86,7 +107,7 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderDefaultTest do
       %NDS{
         tag: "hello",
         attr_list: [a: "1"],
-        order_id_list: ["text", "text", "child", "child"],
+        order_id_list: ["child", "text", "child", "text"],
         child_list: %{
           "child" => [
             %NDS{

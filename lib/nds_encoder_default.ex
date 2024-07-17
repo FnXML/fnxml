@@ -10,20 +10,17 @@ defmodule FnXML.Stream.NativeDataStruct.EncoderDefault do
 
   ## Example:
 
-      iex> alias FnXML.Stream.NativeDataStruct.FormatterDefault, as: NDS_FormatterDefault
       iex> data = %{"a" => "hi", "b" => %{a: 1, b: 1}, c: "hi", d: 4}
-      iex> NDS.EncoderDefault.encode(data, [tag_from_parent: "foo"])
-      iex> |> NDS_FormatterDefault.emit()
+      iex> NDS.EncoderDefault.encode(data, tag_from_parent: "foo")
+      iex> |> NDS.Format.XML.emit()
       [
         open_tag: [tag: "foo", attr_list: [c: "hi", d: 4]],
         text: ["hi"],
-        open_tag: [tag: "b", attr_list: [a: 1, b: 1]],
-        close_tag: [tag: "b"],
-        close_tag: [tag: "foo"]
-        ]
+        open_tag: [tag: "b", close: true, attr_list: [a: 1, b: 1]],
+        close_tag: [tag: "foo"],
+      ]
 
   # How a tag name is determined:
-  - meta_id: [:_meta][:tag] value
   - option: :tag_from_parent value (this is automatically set for nested structures
   - name of structure if it is a struct
   
@@ -40,33 +37,24 @@ defmodule FnXML.Stream.NativeDataStruct.EncoderDefault do
       iex> NDS.EncoderDefault.encode(%{a: 1}, [])
       %NDS{
           data: %{a: 1},
-          opts: [],
-          meta_id: :_meta,
-          tag: "undef",
-          tag_from_parent: "undef",
+          tag: "root",
           attr_list: [{:a, 1}],
           namespace: "",
+          private: %{opts: []}
       }
 
       iex> data = %{"a" => "hi", "b" => %{a: 1, b: 1}, c: "hi", d: 4}
-      iex> opts = [tag_from_parent: "foo"]
-      iex> NDS.EncoderDefault.encode(data, opts)
+      iex> NDS.EncoderDefault.encode(data, [tag_from_parent: "foo"]) |> NDS.TestHelpers.clear_private()
       %NDS{
           data: data,
-          opts: opts,
-          meta_id: :_meta,
           tag: "foo",
-          tag_from_parent: "foo",
           attr_list: [{:c, "hi"}, {:d, 4}],
           child_list: %{
               "b" => %NDS {
-                  meta_id: :_meta,
                   tag: "b",
-                  tag_from_parent: "b",
                   namespace: "",
                   attr_list: [{:a, 1}, {:b, 1}], 
                   data: %{a: 1, b: 1},
-                  opts: [tag_from_parent: "b", tag_from_parent: "foo"]
               }
           },
           order_id_list: ["a", "b"],
@@ -75,48 +63,25 @@ defmodule FnXML.Stream.NativeDataStruct.EncoderDefault do
   
   """
   @impl NDS.Encoder
-  def encode(meta = %NDS{}) do
-    # if the data is a struct, get the struct name for the tag
-    tag_from_parent = Keyword.get(meta.opts, :tag_from_parent, "undef")
-
-    meta
-    |> meta_update(:meta_id, :_meta)
-    |> meta_update(:namespace, fn meta -> meta.data[meta.meta_id][:namespace] || "" end)
-    |> meta_update(:tag_from_parent, tag_from_parent)
-    |> select_tag()
-    |> meta_update(:attr_list, fn meta -> attributes(meta) end)
-    |> meta_update(:child_list, fn meta -> children(meta, nil) end)
-    |> meta_update(:order_id_list, fn meta ->
-      Keyword.get(meta.opts, :order, meta.data[meta.meta_id][:order]) || order(meta)
-    end)
+  def encode(data, opts \\ [])
+  def encode(nds = %NDS{}, opts) do
+    meta_fun = Keyword.get(opts, :encoder_meta, &default_encoder_meta/1)
+    
+    nds
+    |> meta_fun.()
+    |> fn nds -> %NDS{nds | private: put_in(nds.private, [:opts], opts)} end.()
+    |> NDS.tag(Keyword.get(opts, :tag, fn nds -> default_tag(nds, opts) end))
+    |> NDS.namespace(Keyword.get(opts, :namespace, &default_namespace/1))
+    |> NDS.attr_list(Keyword.get(opts, :attr, &default_attributes/1))
+    |> NDS.child_list(Keyword.get(opts, :children, &default_children/1))
+    |> NDS.order_id_list(Keyword.get(opts, :order, &default_order/1))
   end
+  def encode(map, opts) when is_map(map), do: encode(%NDS{data: map}, opts)
 
-  @impl NDS.Encoder
-  def encode(map, opts) when is_map(map) do
-    {type, map} = struct_type(map)
-    opts =
-    if Keyword.get(opts, :tag_from_parent) do
-      opts
-    else
-      if is_nil(type), do: opts, else: [{:tag_from_parent, type} | opts]
-    end
-      
-    encode(%NDS{data: map, opts: opts})
-  end
-
-  def select_tag(meta) do
-    meta_update(meta, :tag, meta.data[meta.meta_id][:tag] || meta.tag_from_parent)
-  end
-
-  def meta_update(meta, key, default)
-  def meta_update(meta, key, default) when key in [:meta_id] do
-    NDS.update(meta, key, Keyword.get(meta.opts, key, default))
-  end
-  def meta_update(meta, key, default) do
-    value = Keyword.get(meta.opts, key, default) |> opt_action(meta)
-    NDS.update(meta, key, value)
-  end
-
+  @doc """
+  Returns a tuple with the type of the struct and the struct itself.  If `struct`
+  is not a real struct, it returns the tuple {nil, struct}
+  """
   def struct_type(struct) do
     try do
       {to_string(struct.__struct__) |> String.trim_leading("Elixir."), Map.from_struct(struct)}
@@ -125,199 +90,162 @@ defmodule FnXML.Stream.NativeDataStruct.EncoderDefault do
     end
   end
 
-  @doc """
-  This function is used to select an action for an option based on its value
+  ##
+  ## Default Behaviors
+  ##  
 
-  In each case the function returns a binary
+  @doc """
+  extract metadata from nds.data
+
+  ## Examples
+
+      iex> NDS.EncoderDefault.default_encoder_meta(%NDS{data: %{_meta: %{tag: "blue"}, a: 1}})
+      %NDS{
+          data: %{a: 1},
+          private: %{_meta: %{tag: "blue"}}
+      }
   """
-  def opt_action(value, meta, default \\ nil)
-  def opt_action(nil, _meta, default), do: default
-  def opt_action(fun, meta, _) when is_function(fun), do: fun.(meta)
-  def opt_action(value, _meta, _) when is_binary(value) or is_list(value), do: value
-  def opt_action(value, _meta, _), do: to_string(value)
+
+  def default_encoder_meta(%NDS{data: %{ _meta: meta}} = nds) when not is_nil(meta) do
+    %NDS{nds | private: Map.put(nds.private, :_meta, meta), data: Map.delete(nds.data, :_meta)}
+  end
+  def default_encoder_meta(%NDS{} = nds), do: nds
 
   @doc """
-  This function is used to filter the list of keys in the map based on the options.
+  get namespace for nds
 
-  the meta data is passed as the first parameter, the second is used to describe the keys being filtered it can take 3 forms:
+  ## Examples
 
-  A list:
+      iex> NDS.EncoderDefault.default_namespace(%NDS{
+      iex>   data: %{"_meta" => %{"t" => "hi"}, a: 1},
+      iex>   private: %{ _meta: %{namespace: "foo", }}
+      iex> })
+      "foo"
+  """
+  def default_namespace(nds), do: get_in(nds.private, [:_meta, :namespace]) || ""
 
-  The filter_list function will return a list of keys that are in the provided list and also exist in the meta.data map.
   
-  ## Examples
-
-      iex> meta = %NDS{data: %{"a" => %{a: 1}, "b" => %{b: 2}, c: 3}}
-      iex> NDS.EncoderDefault.filter_list(meta, fn meta -> Map.keys(meta.data) |> Enum.filter(fn k -> k in ["a", "b"] end) end)
-      ["a", "b"]
-
-  A function that takes the meta data as a parameter, this function should return a list of keys to be included in the list:
-
-  ## Examples
-
-      iex> meta = %NDS{data: %{"a" => %{a: 1}, "b" => %{b: 2}, c: 3}}
-      iex> NDS.EncoderDefault.filter_list(meta, fn meta -> Map.keys(meta.data) |> Enum.filter(fn k -> not is_atom(k) end) end)
-      ["a", "b"]
-
-  A function that takes the meta data as a parameter and the key being filtered, which returns a boolean value if the key
-  should be included in the list.  This function will be called once for each key in the meta.data map.
-
-      iex> meta = %NDS{data: %{"a" => %{a: 1}, "b" => %{b: 2}, c: 3}}
-      iex> NDS.EncoderDefault.filter_list(meta, fn _meta, k -> k in ["a", "b"] end)
-      ["a", "b"]
-  """
-  def filter_list(meta, list) when is_list(list), do: Map.keys(meta.data) |> Enum.filter(fn k -> k in list end)
-  def filter_list(meta, fun) when is_function(fun, 1), do: fun.(meta)
-  def filter_list(meta, fun) when is_function(fun, 2), do: Enum.filter(Map.keys(meta.data), fn k -> fun.(meta, k) end)
-        
   @doc """
-  Return a list of attributes from a map.
-  Arguments:
-  - map - the data being encoded
-  - meta - the metadata for the data
-  - opt - this can be nil, a list, or a function.
-      - nil the default behaviour is used which is to select all atoms as attributes except those which are
-        listed in the id list in metadata.
-      - a list, this can be a list of atoms of binaries, and the attributes will be selected from the map
-        based on the list.
-      - a function, in this case the function will be run for each key in the map, and should return true/false
-        based on whether the key should be included in the list of attributes.
+  find tag for nds
 
-  ## Examples
+  1. use `:tag_from_parent` option if provided.
+  2. if the data is a struct, use the type of the struct
+  3. default to "root"
 
-      iex> NDS.EncoderDefault.attributes(%NDS{data: %{"text" => "not an attribute", a: 1, b: 2}})
-      [{:a, 1}, {:b, 2}]
+  ## Examples:
 
-      iex> NDS.EncoderDefault.attributes(%NDS{data: %{a: 1, b: 2, c: 3}, }, [:a, :c])
-      [{:c, 3}, {:a, 1}]
+      iex> NDS.EncoderDefault.default_tag(%NDS{data: %{"a" => 1}}, [])
+      "root"
 
-      iex> NDS.EncoderDefault.attributes(%NDS{data: %{a: 1, b: 2, c: 3, d: 4}}, fn _, k -> k in [:a, :d] end)
-      [{:a, 1}, {:d, 4}]
+      iex> NDS.EncoderDefault.default_tag(%NDS{data: %{"a" => 1}}, tag_from_parent: "foo")
+      "foo"
   """
-  def attributes(meta, opt \\ nil)
-  def attributes(%NDS{} = meta, opt) do
-    exclude_list = [meta.meta_id | Keyword.get(meta.opts || [], :children, [])]
-    fun = fn meta, k ->
-      is_atom(k) and k not in exclude_list and (meta.data[k] |> FnXML.Type.type()) in [Binary, Integer, Float, Boolean]
-    end
-    filter_list(meta, opt || fun)
-    |> Enum.sort() # without this tests fail because the order of the attributes is not guaranteed, otherwise not needed
-    |> Enum.map(fn k -> {k, meta.data[k]} end)
+  def default_tag(nds, opts) do
+    tag_from_parent = Keyword.get(opts, :tag_from_parent)
+    {type, _map} = struct_type(nds.data)
+    tag_from_parent || type || get_in(nds.private, [:meta, :tag]) || "root"
+    |> fn
+      s when is_binary(s) -> s
+      s -> to_string(s)
+    end.()
   end
 
 
   @doc """
-  Return a list of children from a map.
-  Arguments:
-  - map - the data being encoded
-  - meta - the metadata for the data
-  - opt - this can be nil, a list, or a function.
-      - nil the default behaviour is used which is to select all keys as attributes except those which are
-        listed in the id list in metadata, or as an attribute.
-      - a list, this can be a list of atoms of binaries, and the children will be selected from the map
-        based on the list.
-      - a function, in this case the function will be run for each key in the map, and should return true/false
-        based on whether the key should be included in the list of children.
+  default function to calculate attributes, this can be overriden by specifying a list of options or another
+  function in opts[:attr]
 
   ## Examples
 
-      iex> meta = %NDS{data: %{"c" => %{a: 1}, a: 1, b: 2}, attr_list: [{:a, 1}, {:b, 2}]}
-      iex> NDS.EncoderDefault.children(meta, nil)
-      %{ "c" => %NDS{
-          meta_id: :_meta,
-          tag: "c",
-          tag_from_parent: "c",
-          namespace: "",
-          attr_list: [a: 1],
-          data: %{a: 1},
-          opts: [tag_from_parent: "c"]
-      } }
-
-      iex> meta = %NDS{data: %{"c" => %{a: 1}, a: 1, b: 2}, attr_list: [{:a, 1}, {:b, 2}]}
-      iex> NDS.EncoderDefault.children(meta, ["c", :b])
-      %{ "c" => %NDS{
-          meta_id: :_meta,
-          tag: "c",
-          tag_from_parent: "c",
-          namespace: "",
-          attr_list: [a: 1],
-          data: %{a: 1},
-          opts: [tag_from_parent: "c"]
-          } }
-
-
+      iex> NDS.EncoderDefault.default_attributes(%NDS{data: %{"text" => "not an attribute", a: 1, b: 2}})
+      [{:a, 1}, {:b, 2}]
   """
-  def children(meta, opt) do
-    # fun defines the default behavior
-    fun = fn meta ->
-      exclude_list = [meta.meta_id | Keyword.keys(meta.attr_list)]
-      Map.keys(meta.data)      
-      |> Enum.filter(fn k -> k not in exclude_list and valid_child(meta, meta.data[k]) end)
-      |> Enum.reverse()
-    end
-    filter_list(meta, opt || fun)
+  def default_attributes(nds) do
+    valid_attribute_types = [Binary, Integer, Float, Boolean]
+    Map.keys(nds.data)
+    |> Enum.map(fn
+      k ->
+        item = nds.data[k]
+        {k, item, FnXML.Type.type(item)}
+    end)
+    |> Enum.filter(fn {k, _, type} -> is_atom(k) and type in valid_attribute_types end)
+    |> Enum.map(fn {k, v, _} -> {k, v} end)
+    |> Enum.sort(fn {k1, _}, {k2, _} -> k1 < k2 end)
+  end
+  
+  
+  @doc """
+  Return a list of children from a nds.data.
 
-    # encode children
-    |> Enum.map(fn k -> {k, meta.data[k]} end)
-    |> Enum.map(fn {k, child} -> encode_child(meta, k, child) end)
+  ## Examples
+
+      iex> nds = %NDS{data: %{"c" => %{a: 1}, a: 1, b: 2}}
+      iex> NDS.EncoderDefault.default_children(nds)
+      %{ "c" => %NDS{
+          tag: "c",
+          namespace: "",
+          attr_list: [a: 1],
+          data: %{a: 1},
+          private: %{opts: [tag_from_parent: "c"]}
+      } }
+  """
+  def default_children(nds) do
+    Map.keys(nds.data)
+    |> Enum.filter(fn k -> valid_child(nds.data[k]) end)
+    |> Enum.map(fn k -> encode_child(nds, k, nds.data[k]) end)
     |> Enum.into(%{})
   end
 
-  def valid_child(_meta, child) when is_map(child), do: true
-  def valid_child(_meta, [h|_] = child) when is_list(child) and is_map(h), do: true
-  def valid_child(_, _), do: false
+  def valid_child(child) when is_map(child), do: true
+  def valid_child([child|_]) when is_map(child), do: true
+  def valid_child(_), do: false
 
-  def encode_child(meta, key, child) when is_list(child) do
-    {key, child |> Enum.map(fn v -> encode(v, [{:tag_from_parent, key} | meta.opts || []]) end)}
+  def encode_child(nds, key, child) when is_list(child) do
+    {
+      key,
+      Enum.map(child, fn
+        v -> encode(v, [{:tag_from_parent, key} | nds.private[:opts] || []] |> propagate_opts())
+      end)
+    }
   end
-  def encode_child(meta, key, child) when is_map(child) do
-    {key, encode(child, [{:tag_from_parent, key} | meta.opts || []])}
+  def encode_child(nds, key, child) when is_map(child) do
+    {key, encode(child, [{:tag_from_parent, key} | nds.private[:opts] || []] |> propagate_opts())}
+  end
+
+  def propagate_opts(opts) do
+    Enum.filter(opts, fn {k, v} -> is_function(v) or k in [:tag_from_parent, :encoder_meta] end)
   end
         
+
   @doc """
-  Returns a list of elements in the order they should be encoded.
-  Arguments:
-  - map - the data being encoded
-  - meta - the metadata for the data
-  - opt - this can be nil, a list, or a function.
-      - nil the default behaviour is used which is to select all keys as attributes except those which are
-        listed in the id list in metadata, or as an attribute.
-      - a list, this can be a list of atoms of binaries, and the children will be selected from the map
-        based on the list.
-      - a function, in this case the function will be run for each key in the map, and should return true/false
-        based on whether the key should be included in the list of children.
+  Returns a list of element ids in the order they should be encoded/decoded.  The default function
+  takes a guess, that the keys for children and text are interleaved and that the list of children
+  or text which is the longest appears first.
 
-  ## Examples
+  ## Examples:
 
-      iex> %NDS{data: %{a: 1, b: 2}, attr_list: [{:a, 1}, {:b, 2}]}
-      iex> |> NDS.EncoderDefault.order()
-      []
-
-      iex> %NDS{data: %{"text" => "not an attribute", a: 1, b: 2}, attr_list: [{:a, 1}, {:b, 2}]}
-      iex> |> NDS.EncoderDefault.order(meta)
-      ["text"]
-
-      iex> %NDS{data: %{"text" => ["a", "b"], a: 1, b: 2}, "child" => %NDS{data: %{"text" => "c"}}}
-      iex> |> NDS.EncoderDefault.order(meta)
+      iex> %NDS{data: %{"text" => ["a", "b"], a: 1, b: 2}, attr_list: [a: 1, b: 2], child_list: %{"child" => %NDS{data: %{"text" => "c"}}}}
+      iex> |> NDS.EncoderDefault.default_order()
       ["text", "child", "text"]
 
-      iex> %NDS{data: %{"text" => ["a", "b"]}, "child" => [%NDS{data: %{"text" => "c"}}, %NDS{data: %{"text" => "d"}}]}
-      iex> |> NDS.EncoderDefault.order(meta)
-      ["text", "child", "text", "child"]
-  
+      iex> %NDS{data: %{"text" => ["a", "b", "c"], a: 1}, child_list: %{"d" => %NDS{data: %{"text" => "c"}}},
+      iex>   private: %{meta: %{order: ["text", "text", "child", "text"]}}
+      iex> }
+      iex> |> NDS.EncoderDefault.default_order()
+      ["text", "text", "child", "text"]
   """
-  def order(%{order: order} = meta) when is_function(order), do: filter_list(meta, order)
-  def order(%{meta_id: id, attr_list: attr_list} = meta) do
-    fun = fn meta ->
-      order_keys = Enum.filter(Map.keys(meta.data), fn k -> k not in [id | Keyword.keys(attr_list)] end)
-      child_keys = Enum.filter(order_keys, fn k -> is_map(meta.data[k]) end)
-      text_keys =
-        Enum.filter(order_keys, fn k -> k not in child_keys end)
-        |> Enum.reduce([], fn k, acc -> acc ++ order_item(k, meta.data[k]) end)
+  def default_order(%NDS{private: %{meta: %{order: order}}}), do: order
+  def default_order(nds) do
+    order_keys = Enum.filter(Map.keys(nds.data), fn k -> k not in nds.attr_list end)
+    child_keys =
+      Map.keys(nds.child_list)
+      |> Enum.map(fn k -> order_item(k, nds.child_list[k]) end)
+      |> List.flatten()
+    text_keys =
+      Enum.filter(order_keys, fn k -> k not in child_keys ++ Keyword.keys(nds.attr_list) end)
+      |> Enum.reduce([], fn k, acc -> acc ++ order_item(k, nds.data[k]) end)
 
-      rezip(text_keys, child_keys)
-    end
-    filter_list(meta, fun)
+    interleave(text_keys, child_keys)
   end
 
   @doc """
@@ -335,7 +263,7 @@ defmodule FnXML.Stream.NativeDataStruct.EncoderDefault do
       iex> NDS.EncoderDefault.order_item("a", "hello")
       ["a"]
   """
-  def order_item(k, value) when is_list(value), do: value |> Enum.map(fn _ -> k end)
+  def order_item(k, value) when is_list(value), do: List.duplicate(k, length(value))
   def order_item(k, _), do: [k]
 
   @doc """
@@ -345,21 +273,21 @@ defmodule FnXML.Stream.NativeDataStruct.EncoderDefault do
 
   ## Examples
 
-      iex> NDS.EncoderDefault.rezip([1, 2, 3], ["a", "b"])
+      iex> NDS.EncoderDefault.interleave([1, 2, 3], ["a", "b"])
       [1, "a", 2, "b", 3]
 
-      iex> NDS.EncoderDefault.rezip([1, 2], ["a", "b", "c"])
-      [1, "a", 2, "b", "c"]
+      iex> NDS.EncoderDefault.interleave([1, 2], ["a", "b", "c"])
+      ["a", 1, "b", 2, "c"]
 
-      iex> NDS.EncoderDefault.rezip([1, 2, 3], ["a"])
+      iex> NDS.EncoderDefault.interleave([1, 2, 3], ["a"])
       [1, "a", 2, 3]
   """
-  def rezip(a, b) when length(a) >= length(b), do: rezip(a, b, [])
-  def rezip(a, b), do: rezip(b, a, [])
+  def interleave(a, b) when length(a) >= length(b), do: interleave(a, b, [])
+  def interleave(a, b), do: interleave(b, a, [])
   
-  defp rezip([], [], acc), do: acc
-  defp rezip([a|a_rest], [b|b_rest], acc), do: rezip(a_rest, b_rest, acc ++ [a, b])
-  defp rezip(a, [], acc), do: acc ++ a
-  defp rezip([], b, acc), do: acc ++ b
+  defp interleave([], [], acc), do: acc
+  defp interleave([a|a_rest], [b|b_rest], acc), do: interleave(a_rest, b_rest, acc ++ [a, b])
+  defp interleave(a, [], acc), do: acc ++ a
+  defp interleave([], b, acc), do: acc ++ b
 end
 

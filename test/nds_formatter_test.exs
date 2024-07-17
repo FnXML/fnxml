@@ -43,7 +43,6 @@ defmodule FnXML.Stream.NativeDataStruct.Format.XMLTest do
       ]
     end
 
-    @tag focus: true
     test "nested map with child list" do
       map = %{
         :a => "1",
@@ -60,13 +59,13 @@ defmodule FnXML.Stream.NativeDataStruct.Format.XMLTest do
         open_tag: [tag: "child", attr_list: [b: "1"]],
         text: ["child world"],
         close_tag: [tag: "child"],
+        text: ["world"],
         open_tag: [tag: "child", attr_list: [b: "2"]],
         text: ["child alt world"],
         close_tag: [tag: "child"],
         open_tag: [tag: "child", attr_list: [b: "3"]],
         text: ["child other world"],
         close_tag: [tag: "child"],
-        text: ["world"],
         close_tag: [tag: "hello"]
       ]
     end

@@ -27,7 +27,7 @@ defimpl FnXML.Type, for: List do
 end
 
 defimpl FnXML.Type, for: Map do
-  def type(_value), do: Map |> IO.inspect(label: "type:")
+  def type(_value), do: Map
 end
 
 defimpl FnXML.Type, for: Tuple do

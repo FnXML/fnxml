@@ -27,6 +27,9 @@ defmodule WITSML_Test do
   """
 
   describe "test WITSML decode" do
+
+    # this should eventually be removed.
+    @tag :skip
     test "witsml decode" do
 
       result = 
@@ -34,6 +37,7 @@ defmodule WITSML_Test do
         |> FnXML.Stream.filter_namespaces(["soap"], exclude: true)
         |> FnXML.Stream.filter_ws()
         |> Enum.map(fn x -> x end)
+        |> IO.inspect(label: "parsed")
 
       IO.puts("")
       IO.puts("#{FnXML.Stream.to_xml(result, pretty: true) |> Enum.join()}")

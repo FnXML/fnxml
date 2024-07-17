@@ -47,6 +47,19 @@ defmodule FnXML.StreamTest do
       close_tag: [tag: "foo"]
     ]
   end
-  
-  
+
+  test "open/close tag, depth 1 decode" do
+    # this requires the open tag to add the tag to the stack, then immediately remove it before going to the
+    # next element
+    stream = [
+      open_tag: [tag: "bar"],
+      open_tag: [tag: "foo", close: true],
+      close_tag: [tag: "bar"]
+    ]
+    result =
+      FnXML.Stream.transform(stream, fn el, _path, acc -> {el, acc} end)
+      |> Enum.map(fn x -> x end)
+    
+    assert result == stream
+  end
 end

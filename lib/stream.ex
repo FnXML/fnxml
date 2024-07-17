@@ -48,10 +48,14 @@ defmodule FnXML.Stream do
     ns = Keyword.get(parts, :namespace)
     ns = if ns, do: "#{ns}:", else: ""
     close = if Keyword.get(parts, :close, false), do: "/", else: ""
-    attrs = 
+    attrs =
       Keyword.get(parts, :attr_list, [])
-      |> Enum.map(fn {k, v} -> " #{k}=\"#{v}\"" end)
+      |> Enum.map(fn {k, v} -> "#{k}=\"#{v}\"" end)
       |> Enum.join(" ")
+      |> fn
+        "" -> ""
+        x -> " " <> x
+      end.()
 
     { length(path) - 1, "<#{ns}#{tag}#{attrs}#{close}>" }
   end
@@ -94,10 +98,10 @@ defmodule FnXML.Stream do
 
   defp process_item({:open_tag, parts} = element, {stack, acc, fun}) do
     tag = Keyword.get(parts, :tag)
-    stack = [tag | stack]
+    close = Keyword.get(parts, :close, false)
 
-    fun.(element, stack, acc)
-    |> next(stack, fun)
+    fun.(element, [tag | stack], acc)
+    |> next((if close, do: stack, else: [tag | stack]), fun)
   end
 
   defp process_item({:text, _} = element, {stack, acc, fun}) do

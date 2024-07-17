@@ -13,7 +13,7 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderDefault do
   Decode an XML stream to a Native Data Struct (NDS).
   """
   @impl NDS.Decoder
-  def decode(stream, opts), do: stream |> FnXML.Stream.transform(decode_fn(opts))
+  def decode(stream, opts), do: stream |> FnXML.Stream.transform(decode_fn(opts)) |> Enum.map(fn x -> x end)
 
   def decode_fn(opts \\ []) do
     fn element, path, acc -> decode_element(element, path, acc, opts) |> emit(element) end
@@ -28,10 +28,13 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderDefault do
   def append(existing_value, new_value), do: [existing_value, new_value]
 
   def emit([h], {:close_tag, [{:tag, tag}|_]}) when h.tag == tag, do: {h, []}
+  def emit([h] = acc, {:open_tag, [{:tag, tag}|rest]}) when h.tag == tag do
+    if Keyword.get(rest, :close, false), do: {h, []}, else: acc
+  end
   def emit(acc, _), do: acc
 
   def update_order([], _item), do: [] # no NDS struct, so nothing to do (should probably raise here)
-  def update_order([h | t], item), do: [%{h | order_id_list: [item | h.order_id_list]} | t]
+  def update_order([h | t], item), do: [%NDS{h | order_id_list: [item | h.order_id_list]} | t]
 
   def append_text([], _text), do: [] # no NDS struct, so nothing to do (should probably raise here)
   def append_text([h|t], text), do: [%NDS{h | data: Map.put(h.data, "text", append_text_item(h.data["text"], text))} | t]
@@ -52,12 +55,17 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderDefault do
     }
   end
 
+  def open_tag([_ | [{:close, true} | _]], [child | [p | ancestors]]) do
+    [%NDS{p | child_list: update_child_map(p.child_list, child)} | ancestors]
+  end
+  def open_tag(_meta, acc), do: acc
+
   def decode_element(element, path, acc \\ [], opts \\ [])
 
   def decode_element({:open_tag, meta}, _path, acc, _opts) do
     element = struct(NDS, meta |> Enum.into(%{}))
     element = %NDS{element | data: element.attr_list |> Enum.into(%{})}
-    [ element | update_order(acc, element.tag) ]
+    open_tag(meta, [ element | update_order(acc, element.tag) ])
   end
 
   def decode_element({:text, [text | _rest]}, _path, acc, _opts) do

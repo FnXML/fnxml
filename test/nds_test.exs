@@ -30,14 +30,13 @@ defmodule FnXML.Stream.NativeDataStructTest do
   test "base map" do
     map = %{ :a => "1" }
     assert NDS.encode(map, tag: "foo") == [
-      open_tag: [tag: "foo", attr_list: [a: "1"]],
-      close_tag: [tag: "foo"]
+      open_tag: [tag: "foo", close: true, attr_list: [a: "1"]],
     ]
   end
 
   test "minimal map" do
-    map = %{ :_meta => %{tag: "minimal"}, "text" => "hi" }
-    assert NDS.encode(map, []) == [
+    map = %{ "text" => "hi" }
+    assert NDS.encode(map, [tag: "minimal"]) == [
       open_tag: [tag: "minimal"],
       text: ["hi"],
       close_tag: [tag: "minimal"]
@@ -46,11 +45,10 @@ defmodule FnXML.Stream.NativeDataStructTest do
 
   test "encode 1" do
     map = %{
-      :_meta => %{tag: "foo", namespace: "ns", loc: {{1, 0}, 1}, order: [:_text]},
       :a => "1",
-      :_text => ["bar"]
+      :text => ["bar"]
     }
-    assert NDS.encode(map, []) == [
+    assert NDS.encode(map, [tag_from_parent: "foo", namespace: "ns", order: [:text]]) == [
       open_tag: [tag: "foo", namespace: "ns", attr_list: [a: "1"]],
       text: ["bar"],
       close_tag: [tag: "foo", namespace: "ns"]
@@ -59,7 +57,6 @@ defmodule FnXML.Stream.NativeDataStructTest do
 
   test "complex encode 1" do
     map = %{
-      :_meta => %{tag: "bar", namespace: "foo", order: ["baz", "baz", "baz", :_text, "biz", :_text]},
       :a => "1",
       :ook => "2",
       :_text => [ "text goes between baz and biz tags", "at the end"],
@@ -68,13 +65,15 @@ defmodule FnXML.Stream.NativeDataStructTest do
         %{ :b => "2", :_text => ["other message"] },
         %{ :_text => ["other message"], "deep_tag" => %{ "t" => "deep message" } }
       ],
-      "biz" => %{
-        :_meta => %{tag: "boing", order: [:_text]},
-        :_text => ["last tag message"]
-      }
+      "biz" => %{ :_text => ["last tag message"] }
     }
-    NDS.EncoderDefault.encode(map, [])
-    assert NDS.encode(map, []) == [
+
+    encode =
+      NDS.encode(
+        map, tag_from_parent: "bar", namespace: "foo", order: ["baz", "baz", "baz", :_text, "biz", :_text]
+      )
+    
+    assert encode == [
       open_tag: [tag: "bar", namespace: "foo", attr_list: [{:a, "1"}, {:ook, "2"}]],
       open_tag: [tag: "baz", attr_list: [{:a, "1"}]],
       text: ["message"],
@@ -89,11 +88,33 @@ defmodule FnXML.Stream.NativeDataStructTest do
       close_tag: [tag: "deep_tag"],
       close_tag: [tag: "baz"],
       text: ["text goes between baz and biz tags"],
-      open_tag: [tag: "boing"],
+      open_tag: [tag: "biz"],
       text: ["last tag message"],
-      close_tag: [tag: "boing"],
+      close_tag: [tag: "biz"],
       text: ["at the end"],
       close_tag: [tag: "bar", namespace: "foo"]
     ]
+
+    assert FnXML.Stream.to_xml(encode, pretty: true) |> Enum.join() == """
+    <foo:bar a=\"1\" ook=\"2\">
+      <baz a=\"1\">
+        message
+      </baz>
+      <baz b=\"2\">
+        other message
+      </baz>
+      <baz>
+        other message
+        <deep_tag>
+          deep message
+        </deep_tag>
+      </baz>
+      text goes between baz and biz tags
+      <biz>
+        last tag message
+      </biz>
+      at the end
+    </foo:bar>
+    """
   end
 end
