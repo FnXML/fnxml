@@ -74,4 +74,12 @@ defmodule FnXML.ParserTest do
       {:close_tag, [tag: "Envelope", namespace: "soap", loc: {{1, 0}, 482}]}
     ]
   end
+
+  test "that '-', '_', '.' can be included in tags and namespaces" do
+    input = "<my-env:fancy_tag.with-punc></my-env:fancy_tag.with-punc>"
+    assert parse_xml(input) |> Enum.to_list() == [
+      open_tag: [tag: "fancy_tag.with-punc", namespace: "my-env", loc: {{1, 0}, 1}],
+      close_tag: [tag: "fancy_tag.with-punc", namespace: "my-env", loc: {{1, 0}, 30}]
+    ]
+  end
 end

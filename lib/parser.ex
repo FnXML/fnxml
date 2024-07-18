@@ -22,7 +22,7 @@ defmodule FnXML.Parser do
     debug: true
   )
 
-  tag_chars = [?a..?z, ?A..?Z, ?0..?9, ?_]
+  tag_chars = [?a..?z, ?A..?Z, ?0..?9, ?_, ?-, ?.]
   tag_id = ascii_string(tag_chars, min: 1)
   ns_id = ascii_string([?: | tag_chars], min: 1)
   namespace = tag_id |> ignore(string(":")) |> tag(:namespace) |> reduce(:deconvolute)
