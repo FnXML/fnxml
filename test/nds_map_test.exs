@@ -32,23 +32,6 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
     assert encoded_data == xml
   end
 
-  # def apply_test(xml, data, opts) do
-  #   parsed_data =
-  #     FnXML.Parser.parse(xml)
-  #     |> Enum.map(fn x -> x end)
-  #     |> NDS.decode(opts)
-  #     |> Enum.at(0)
-  #   assert parsed_data == data
-
-  #   key = Map.keys(parsed_data) |> Enum.at(0)
-  #   encoded_data =
-  #     NDS.encode(parsed_data[key], tag_from_parent: key)
-  #     |> FnXML.Stream.to_xml([])
-  #     |> Enum.join()
-  #   assert encoded_data == xml
-  # end
-
-  def no_meta(_), do: %{}
   def ns_only_meta(%NDS{namespace: ns}) do
     if ns != nil, do: %{_meta: %{namespace: ns}}, else: %{}
   end
@@ -65,7 +48,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
     data = %{"foo" => %{}}
     decode =
       FnXML.Parser.parse("<foo></foo>")
-      |> NDS.decode(decode_meta: &no_meta/1)
+      |> NDS.decode(format_meta: &NDS.no_meta/1)
       |> Enum.at(0)
 
     encode =
@@ -77,18 +60,22 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
   end
   
    test "parse short tag" do
-     apply_test("<bar/>", %{"bar" => %{}}, decode_meta: &no_meta/1)
+     apply_test("<bar/>", %{"bar" => %{}}, format_meta: &NDS.no_meta/1)
    end
   
   test "parse tag with content" do
-    apply_test("<tag>content</tag>", %{"tag" => %{ "text" => "content"}}, decode_meta: &no_meta/1)
+     apply_test("<tag>content</tag>", %{"tag" => %{ "text" => "content"}},
+       format_meta: &NDS.no_meta/1,
+       format_finalize: &NDS.format_raw/1
+     )
   end
 
   test "parse tag with nested tags" do
     apply_test(
       "<tag><nested>content</nested></tag>",
       %{"tag" => %{"nested" => %{ "text" => "content"}}},
-      decode_meta: &no_meta/1
+      format_meta: &NDS.no_meta/1,
+      format_finalize: fn map -> map end
     )
   end
 
@@ -101,7 +88,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
 #          order: ["nested", "nested"]
         }
       },
-      decode_meta: &no_meta/1
+      format_meta: &NDS.no_meta/1
     )
   end
 
@@ -114,7 +101,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
           "text" => ["sandwich content", "other info"],
         }
       },
-      decode_meta: &no_meta/1
+      format_meta: &NDS.no_meta/1
     )
   end
 
@@ -132,7 +119,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
           "xmlns:myapp": "http://org/app/"
         }
       },
-      decode_meta: &ns_only_meta/1,
+      format_meta: &NDS.meta_ns_only/1,
       namespace: fn nds -> get_in(nds.data, [:_meta, :namespace]) || "" end
     )
   end
@@ -142,7 +129,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
     apply_test(
       "<tag attr1=\"value1\" attr2=\"value2\"/>",
       %{"tag" => %{attr1: "value1", attr2: "value2"}},
-      decode_meta: &no_meta/1
+      format_meta: &NDS.no_meta/1
     )
   end
 
@@ -150,7 +137,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
     apply_test(
       "<tag attr1=\"value1\" attr2=\"value2\">content</tag>",
       %{"tag" => %{"text" => "content", attr1: "value1", attr2: "value2"}},
-      decode_meta: &no_meta/1
+      format_meta: &NDS.no_meta/1
     )
   end
 
@@ -158,7 +145,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
     apply_test(
       "<tag><nested attr1=\"value1\" attr2=\"value2\">content</nested></tag>",
       %{"tag" => %{"nested" => %{"text" => "content", attr1: "value1", attr2: "value2"}}},
-      decode_meta: &no_meta/1
+      format_meta: &NDS.no_meta/1
     )
   end
 end

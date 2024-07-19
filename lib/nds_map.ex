@@ -18,18 +18,23 @@ defmodule FnXML.Stream.NativeDataStruct.Format.Map do
           _meta: %{tag: "foo", order: ["a", "b"]}
         }
       }
+
+      iex> xml = "<foo>hi<bar>hello</bar><baz>world</baz></foo>"
+      iex> FnXML.Parser.parse(xml) |> NDS.decode(format_meta: &NDS.no_meta/1)
+      [%{"foo" => %{ "text" => "hi", "bar" => "hello", "baz" => "world" }}]
   """
   @impl NDS.Formatter
   def emit(nds, opts \\ [])
   def emit(%NDS{} = nds, opts) do
-    [emit_child(nds, opts)] |> Enum.into(%{})
+    finalize = Keyword.get(opts, :format_finalize, &default_finalize/1)
+    [emit_child(nds, opts)] |> Enum.into(%{}) |> finalize.()
   end
   def emit(list, opts) when is_list(list) do
     Enum.map(list, fn x -> emit(x, opts) end)
   end
 
   def emit_child(%NDS{} = nds, opts) do
-    meta_fun = Keyword.get(opts, :decode_meta, &default_meta/1)
+    meta_fun = Keyword.get(opts, :format_meta, &default_meta/1)
     attr = Enum.map(nds.attr_list, fn
       {k, v} when is_atom(k) -> {k, v}
       {k, v} -> { to_string(k) |> String.to_atom(), v}
@@ -70,5 +75,26 @@ defmodule FnXML.Stream.NativeDataStruct.Format.Map do
     
     %{_meta: meta}
   end
+
+  # *** test and validate this function
+  @doc """
+  Finalize the map by removing any nested maps with a single key and a value of a map with a single key of "text"
+
+  ## Examples:
+
+      iex> map = %{"a" => %{"text" => "hello"}}
+      iex> NDS.Format.Map.default_finalize(map)
+      %{"a" => "hello"}
+  """
+  def default_finalize(map) when is_map(map) do
+    Enum.map(map, fn
+      {k, v} when is_map(v) ->
+        { k, (if length(Map.keys(v)) == 1 and Map.has_key?(v, "text"), do: v["text"], else: default_finalize(v)) }
+      {k, v} ->
+        {k, v}
+    end)
+    |> Enum.into(%{})
+  end
+  def default_finalize(x), do: x 
 end
 

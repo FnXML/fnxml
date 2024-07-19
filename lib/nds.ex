@@ -127,7 +127,7 @@ defmodule FnXML.Stream.NativeDataStruct do
   ## Examples
 
       iex> stream = [ open_tag: [tag: "foo"], close_tag: [tag: "foo"] ]
-      iex> NDS.decode(stream, decode_meta: &NDS.no_meta_decode/1)
+      iex> NDS.decode(stream, format_meta: &NDS.no_meta/1)
       [%{"foo" => %{}}]
   """
   def decode(xml_stream, opts \\ [])
@@ -139,6 +139,11 @@ defmodule FnXML.Stream.NativeDataStruct do
     |> formatter.emit(opts)
   end
 
-  def no_meta_decode(_), do: %{}
+  # various helper functions
+  def no_meta(_), do: %{}
+  def meta_ns_only(%NDS{namespace: ns}) do
+    if ns != nil, do: %{_meta: %{namespace: ns}}, else: %{}
+  end
 
+  def format_raw(map), do: map
 end

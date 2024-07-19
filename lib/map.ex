@@ -38,11 +38,11 @@ defmodule FnXML.Map do
       [%{"foo" => %{ "text" => "content", _meta: %{tag: "foo", namespace: "ns", order: ["text"]}}}]
 
       # do not produce meta data
-      iex> FnXML.Map.decode("<ns:foo>content</ns:foo>", decode_meta: fn _ -> %{} end)
-      [%{"foo" => %{"text" => "content"}}]
+      iex> FnXML.Map.decode("<ns:foo>content</ns:foo>", format_meta: &NDS.no_meta/1)
+      [%{"foo" => "content"}]
 
       # only namespace in main map
-      iex> FnXML.Map.decode("<ns:foo>content</ns:foo>", decode_meta: fn nds -> %{namespace: nds.namespace} end)
+      iex> FnXML.Map.decode("<ns:foo>content</ns:foo>", format_meta: fn nds -> %{namespace: nds.namespace} end)
       [%{"foo" => %{ "text" => "content", namespace: "ns"}}]
   """
   def decode(xml, opts \\ []) do
