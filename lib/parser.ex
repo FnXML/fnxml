@@ -27,7 +27,7 @@ defmodule FnXML.Parser do
   ns_id = ascii_string([?: | tag_chars], min: 1)
   namespace = tag_id |> ignore(string(":")) |> tag(:namespace) |> reduce(:deconvolute)
   tag = optional(namespace) |> concat(tag_id) |> tag(:tag) |> reduce(:deconvolute)
-  ws = ascii_string([?\s], min: 1)
+  ws = ascii_string([?\s, ?\n], min: 1)
 
   defcombinatorp(
     :attribute,
