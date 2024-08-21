@@ -13,7 +13,7 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderDefault do
   Decode an XML stream to a Native Data Struct (NDS).
   """
   @impl NDS.Decoder
-  def decode(stream, opts), do: stream |> FnXML.Stream.transform(decode_fn(opts)) |> Enum.map(fn x -> x end)
+  def decode(stream, opts), do: stream |> FnXML.Stream.transform(decode_fn(opts))
 
   def decode_fn(opts \\ []) do
     fn element, path, acc -> decode_element(element, path, acc, opts) |> emit(element) end
@@ -55,17 +55,17 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderDefault do
     }
   end
 
-  def open_tag([_ | [{:close, true} | _]], [child | [p | ancestors]]) do
+  def open_close_tag(true, [child | [p | ancestors]]) do
     [%NDS{p | child_list: update_child_map(p.child_list, child)} | ancestors]
   end
-  def open_tag(_meta, acc), do: acc
+  def open_close_tag(_, acc), do: acc
 
   def decode_element(element, path, acc \\ [], opts \\ [])
 
   def decode_element({:open_tag, meta}, _path, acc, _opts) do
     element = struct(NDS, meta |> Enum.into(%{}))
     element = %NDS{element | data: element.attr_list |> Enum.into(%{})}
-    open_tag(meta, [ element | update_order(acc, element.tag) ])
+    open_close_tag(Keyword.get(meta, :close), [ element | update_order(acc, element.tag) ])
   end
 
   def decode_element({:text, [text | _rest]}, _path, acc, _opts) do
