@@ -35,14 +35,10 @@ defimpl FnXML.Type, for: Tuple do
 end
 
 defimpl FnXML.Type, for: Function do
-  def type(_value), do: Funcion
-end
-
-defimpl FnXML.Type, for: String do
-  def type(_value), do: String
+  def type(_value), do: Function
 end
 
 defimpl FnXML.Type, for: BitString do
-  def type(value) when is_binary(value), do: Binary
+  def type(value) when is_binary(value), do: String
   def type(_value), do: BitString
 end

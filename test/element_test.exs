@@ -14,6 +14,16 @@ defmodule FnXML.ElementsTest do
     end
   end
 
+  describe "tag name" do
+    test "tag name without namespace" do
+      assert Element.tag_name({"foo", nil}) == "foo"
+      assert Element.tag_name({"foo", ""}) == "foo"
+    end
+    test "tag name with namespace" do
+      assert Element.tag_name({"foo", "bar"}) == "bar:foo"
+    end
+  end
+
   describe "attributes" do
     test "element without attributes" do
       assert Element.attributes({:open, [tag: "foo"]}) == []
@@ -39,6 +49,16 @@ defmodule FnXML.ElementsTest do
 
     test "element with zero position" do
       assert Element.position({:open, [tag: "foo", position: 0]}) == {0, 0}
+    end
+  end
+
+  describe "close?" do
+    test "element is not closed" do
+      assert Element.close?({:open, [tag: "foo"]}) == false
+    end
+
+    test "element is closed" do
+      assert Element.close?({:open, [tag: "foo", close: true]}) == true
     end
   end
 end

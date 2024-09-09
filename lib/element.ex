@@ -36,6 +36,7 @@ defmodule FnXML.Element do
   "matrix:foo"
   """
   def tag_name({tag, ""}), do: tag
+  def tag_name({tag, nil}), do: tag
   def tag_name({tag, namespace}), do: namespace <> ":" <> tag
 
   @doc """

@@ -108,7 +108,7 @@
   def attributes(src) do
     Map.keys(src)
     |> Enum.map(fn k -> {k, src[k], FnXML.Type.type(src[k])} end)
-    |> Enum.filter(fn {k, _, type} -> is_atom(k) and type in [Binary, Integer, Float, Boolean] end)
+    |> Enum.filter(fn {k, _, type} -> is_atom(k) and type in [String, Integer, Float, Boolean] end)
     |> Enum.map(fn {k, v, _} -> {to_string(k), to_string(v)} end)
     |> Enum.sort(fn {k1, _}, {k2, _} -> k1 < k2 end)
   end

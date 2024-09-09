@@ -49,48 +49,6 @@ defmodule FnXML.Stream.NativeDataStruct do
     content: [],
     private: %{}               # private data for the encoder/decoder
 
-#  def update(nds, key, value), do: Map.put(nds, key, value)
-
-  # @doc """
-  # set the NDS tag
-  # """
-  # def tag(nds, tag) when is_binary(tag), do: %NDS{nds | tag: tag}
-  # def tag(nds, tag_fun) when is_function(tag_fun, 1), do: %NDS{nds | tag: tag_fun.(nds)}
-
-  # @doc """
-  # set the NDS namespace
-  # """
-  # def namespace(nds, namespace) when is_binary(namespace), do: %NDS{nds | namespace: namespace}
-  # def namespace(nds, namespace_fun) when is_function(namespace_fun, 1), do: %NDS{nds | namespace: namespace_fun.(nds)}
-
-  # @doc """
-  # set the attribute list for the NDS
-
-  # ## Examples
-        
-  #   iex> nds = %NDS{}
-  #   iex> NDS.attributes(nds, [a: 1, b: 2])
-  #   %NDS{attributes: [a: 1, b: 2]}
-
-  #   iex> nds = %NDS{data: %{"a" => 1, b: 2, c: 3}}
-  #   iex> NDS.attributes(nds, fn nds -> Enum.filter(nds.data, fn {k, _} -> is_atom(k) end) |> Enum.sort() end)
-  #   %NDS{attributes: [b: 2, c: 3], data: %{"a" => 1, b: 2, c: 3}}
-  # """
-  # def attributes(nds, attributes) when is_list(attributes), do: %NDS{nds | attributes: attributes}
-  # def attributes(nds, attr_fun) when is_function(attr_fun, 1), do: %NDS{nds | attributes: attr_fun.(nds)}
-
-  # @doc """
-  # set the child list for the NDS
-  # """
-  # def child_list(nds, child_list) when is_map(child_list), do: %NDS{nds | child_list: child_list}
-  # def child_list(nds, child_fun) when is_function(child_fun, 1), do: %NDS{nds | child_list: child_fun.(nds)}
-
-  # @doc """
-  # set the order_id_list for the NDS
-  # """
-  # def order_id_list(nds, order_id_list) when is_list(order_id_list), do: %NDS{nds | order_id_list: order_id_list}
-  # def order_id_list(nds, order_fun) when is_function(order_fun, 1), do: %NDS{nds | order_id_list: order_fun.(nds)}
-  
   @doc """
   convert native data type to an FnXML.Stream representation
 

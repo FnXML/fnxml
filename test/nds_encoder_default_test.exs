@@ -82,17 +82,6 @@ defmodule FnXML.Stream.NativeDataStruct.Encoder.DefaultTest do
         private: %{ opts: [tag: "a"], meta: %{} }
       }
     end
-
-    test "parsed from text" do
-      xml = "<root ns:myapp=\"http://org/app/\"><nested><myapp:info>content</myapp:info></nested></root>"
-      parsed_data = FnXML.Map.decode(xml) |> IO.inspect(label: "parsed_data")
-      # parsed_data = (
-      #   FnXML.Parser.parse(xml)
-      #   |> NDS.Decoder.decode()
-      #   |> Enum.to_list()
-      #   |> IO.inspect(label: "parsed_data")
-      # )
-    end
   end
   
   describe "text keys" do

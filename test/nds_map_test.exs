@@ -3,7 +3,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
 
   alias FnXML.Stream.NativeDataStruct, as: NDS
 
-  #doctest NDS.Format.Map
+  doctest NDS.Format.Map
 
   test "map test" do
     data = %{"a" => "hi", "b" => %{"info" => "info", a: 1, b: 1}, c: "hi", d: 4}
@@ -78,7 +78,6 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
       %{
         "tag" => %{
           "nested" => ["content1", "content2"],
-#          order: ["nested", "nested"]
         }
       },
       format_meta: &NDS.no_meta/1

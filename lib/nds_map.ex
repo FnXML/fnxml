@@ -10,7 +10,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.Map do
 
       iex> data = %{"a" => "hi", "b" => %{"info" => "info", a: 1, b: 1}, c: "hi", d: 4}
       iex> nds = NDS.Encoder.encode(data, [tag_from_parent: "foo"])
-      iex> #NDS.Format.Map.emit(nds)
+      iex> NDS.Format.Map.emit(nds)
       %{
         "foo" => %{
           "a" => "hi", :c => "hi", :d => "4",

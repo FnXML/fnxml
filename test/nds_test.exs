@@ -69,11 +69,6 @@ defmodule FnXML.Stream.NativeDataStructTest do
       "biz" => %{ "text" => ["last tag message"] }
     }
 
-#    encode =
-#      NDS.encode(
-#        map, tag_from_parent: "bar", namespace: "foo", order: ["baz", "baz", "baz", "text", "biz", "text"]
-#      )
-
     encode =
       NDS.Encoder.encode(
         map, tag_from_parent: "bar", namespace: "foo", order: ["baz", "baz", "baz", "text", "biz", "text"]
