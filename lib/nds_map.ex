@@ -123,6 +123,7 @@ defmodule FnXML.Stream.NativeDataStruct.Format.Map do
       iex> NDS.Format.Map.default_finalize(map)
       %{"a" => "hello"}
   """
+  def default_finalize(%{__struct__: _} = struct), do: struct   # skip for structs
   def default_finalize(map) when is_map(map) do
     Enum.map(map, fn
       {:_meta, _} = meta -> meta
