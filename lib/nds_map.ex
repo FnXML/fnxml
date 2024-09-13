@@ -31,7 +31,9 @@ defmodule FnXML.Stream.NativeDataStruct.Format.Map do
     # finalize is run on the final map result
 
     # emit child is the main function of this module
-    [emit_child(nds, opts)] |> child_fun.() |> Enum.into(%{}) |> finalize.()
+    [emit_child(nds, opts) |> child_fun.()]
+    |> Enum.into(%{})
+    |> finalize.()
   end
 
   # emits a list by iterating over each item
