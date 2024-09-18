@@ -105,7 +105,9 @@ defmodule FnXML.Parser.Attributes do
   def attribute() do
     C.ignore_opt_ws()
     |> concat(C.name())
+    |> C.ignore_opt_ws()
     |> ignore(string("="))
+    |> C.ignore_opt_ws()
     |> choice([Quoted.string(?"), Quoted.string(?')])
     |> reduce({Attributes, :into_keyword, []})
   end
