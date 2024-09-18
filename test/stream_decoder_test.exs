@@ -18,37 +18,36 @@ defmodule FnXML.Stream.DecoderTest do
   test "tag with all meta" do
     result =
       [
-        open: [tag: "hello", namespace: "ns", attributes: [{"a", "1"}]],
-        text: ["world"],
-        close: [tag: "hello", namespace: "ns"]
+        open: [tag: "ns:hello", attributes: [{"a", "1"}]],
+        text: [content: "world"],
+        close: [tag: "ns:hello"]
       ]
       |> FnXML.Stream.Decoder.decode()
       |> Enum.at(0)
 
-    assert result == [tag: "hello", namespace: "ns", attributes: [{"a", "1"}], text: "world"]
+    assert result == [tag: "ns:hello", attributes: [{"a", "1"}], text: [content: "world"]]
   end
 
   test "decode with child" do
     result =
       [
-        open: [tag: "hello", namespace: "ns", attributes: [{"a", "1"}]],
-        text: ["hello"],
+        open: [tag: "ns:hello", attributes: [{"a", "1"}]],
+        text: [content: "hello"],
         open: [tag: "child", attributes: [{"b", "2"}]],
-        text: ["child world"],
+        text: [content: "child world"],
         close: [tag: "child"],
-        text: ["world"],
-        close: [tag: "hello", namespace: "ns"]
+        text: [content: "world"],
+        close: [tag: "ns:hello"]
       ]
       |> FnXML.Stream.Decoder.decode()
       |> Enum.at(0)
 
     assert result ==  [
-      tag: "hello",
-      namespace: "ns",
+      tag: "ns:hello",
       attributes: [{"a", "1"}],
-      text: "hello",
-      child: [tag: "child", attributes: [{"b", "2"}], text: "child world"],
-      text: "world"
+      text: [content: "hello"],
+      child: [tag: "child", attributes: [{"b", "2"}], text: [content: "child world"]],
+      text: [content: "world"]
     ]
   end
 end

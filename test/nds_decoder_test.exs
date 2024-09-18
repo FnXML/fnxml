@@ -16,7 +16,7 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
 
   test "tag with namespace" do
     result = 
-      [ open: [tag: "a", namespace: "ns"], close: [tag: "a", namespace: "ns"] ]
+      [ open: [tag: "ns:a"], close: [tag: "ns:a"] ]
       |> NDS.Decoder.decode()
       |> Enum.at(0)
 
@@ -34,7 +34,7 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
 
   test "tag with text" do
     result = 
-      [ open: [tag: "a"], text: ["b"], close: [tag: "a"] ]
+      [ open: [tag: "a"], text: [content: "b"], close: [tag: "a"] ]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
 
@@ -44,9 +44,9 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
   test "tag with all meta" do
     result =
       [
-        open: [tag: "hello", namespace: "ns", attributes: [{"a", "1"}]],
-        text: ["world"],
-        close: [tag: "hello", namespace: "ns"]
+        open: [tag: "ns:hello", attributes: [{"a", "1"}]],
+        text: [content: "world"],
+        close: [tag: "ns:hello"]
       ]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
@@ -57,13 +57,13 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
   test "decode with child" do
     result =
       [
-        open: [tag: "hello", namespace: "ns", attributes: [{"a", "1"}]],
-        text: ["hello"],
+        open: [tag: "ns:hello", attributes: [{"a", "1"}]],
+        text: [content: "hello"],
         open: [tag: "child", attributes: [{"b", "2"}]],
-        text: ["child world"],
+        text: [content: "child world"],
         close: [tag: "child"],
-        text: ["world"],
-        close: [tag: "hello", namespace: "ns"]
+        text: [content: "world"],
+        close: [tag: "ns:hello"]
       ]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
@@ -81,23 +81,22 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
       }
   end
 
-  @tag focus: true
   test "decode with child list" do
     result =
       [
-        open: [tag: "hello", namespace: "ns", attributes: [{"a", "1"}]],
-        text: ["hello"],
+        open: [tag: "ns:hello", attributes: [{"a", "1"}]],
+        text: [content: "hello"],
         open: [tag: "child1", attributes: [{"b", "2"}]],
-        text: ["child world"],
+        text: [content: "child world"],
         close: [tag: "child1"],
         open: [tag: "child1", attributes: [{"b", "2"}]],
-        text: ["alt world"],
+        text: [content: "alt world"],
         close: [tag: "child1"],
         open: [tag: "child2", attributes: [{"b", "2"}]],
-        text: ["other worldly"],
+        text: [content: "other worldly"],
         close: [tag: "child2"],
-        text: ["world"],
-        close: [tag: "hello", namespace: "ns"]
+        text: [content: "world"],
+        close: [tag: "ns:hello"]
       ]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
