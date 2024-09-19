@@ -33,12 +33,10 @@ defmodule FnXML.Stream.NativeDataStruct.Decoder do
     {tag, ns} = Element.tag(meta)
     loc = Element.position(meta)
     meta =
-      Keyword.drop(meta, [:tag])
-      |> Keyword.put(:tag, tag)
-      |> Keyword.put(:namespace, ns)
-      |> Keyword.put(:source, [loc])
+      [{:tag, tag}, {:namespace, ns}, {:source, [loc]} | Keyword.drop(meta, [:tag])]
+      |> Enum.into(%{})
     
-    [ struct(NDS, meta |> Enum.into(%{})) | acc ]
+    [ struct(NDS, meta) | acc ]
   end
 
   @impl true
