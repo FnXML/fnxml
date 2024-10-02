@@ -124,8 +124,6 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
   end
 
   test "parse tag with attributes" do
-    IO.puts("test start.")
-
     apply_test(
       "<tag attr1=\"value1\" attr2=\"value2\"/>",
       %{"tag" => %{attr1: "value1", attr2: "value2"}},
