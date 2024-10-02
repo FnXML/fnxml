@@ -20,8 +20,8 @@ defmodule FnXML.Element do
   iex> FnXML.Element.tag({:open, [tag: "matrix:foo"]})
   {"foo", "matrix"}
   """
-  def tag(meta) when is_list(meta) do
-    ns_tag = Keyword.get(meta, :tag, "") |> String.split(":", parts: 2)
+  def tag(id) when is_binary(id) do
+    ns_tag = id |> String.split(":", parts: 2)
 
     if length(ns_tag) == 1 do
       {Enum.at(ns_tag, 0), ""}
@@ -30,8 +30,10 @@ defmodule FnXML.Element do
     end
   end
 
-  def tag({_element, meta}) when is_list(meta), do: tag(meta)
+  def tag(meta) when is_list(meta), do: tag(Keyword.get(meta, :tag, ""))
 
+  def tag({_element, meta}) when is_list(meta), do: tag(meta)
+  
   @doc """
   given a tag name tuple returned from the tag function
   (above). return a string representation of the tag name, which
