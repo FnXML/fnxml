@@ -87,7 +87,7 @@ defmodule FnXML.Stream do
   defp format_element({:text, parts}, path, _acc) do
     content = Element.content(parts)
 
-    if Regex.match?(~r/[<>&]/, content) do
+    if Regex.match?(~r/[<>]/, content) do
       {length(path), "<![CDATA[#{content}]]>"}
     else
       {length(path), content}
