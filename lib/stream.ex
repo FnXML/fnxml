@@ -169,7 +169,7 @@ defmodule FnXML.Stream do
     if Element.content(element) |> String.match?(~r/^[\s\n]*$/) do
       acc |> next([], fun)
     else
-      error(element, "Text element outside of a tag, a root elment is required")
+      error(element, "Text element outside of a tag: '#{element |> inspect()}', a root element is required")
     end
   end
 
