@@ -29,19 +29,20 @@ defmodule FnXML.Stream.NativeDataStruct.Encoder.Default do
   @behaviour NDS.Encoder
 
   @impl NDS.Encoder
-  def meta(nds, map) do
-    %NDS{nds | private: put_in(nds.private, [:meta], Map.get(map, :_meta, %{}))}
-    |> (fn nds -> %NDS{nds | namespace: namespace(nds)} end).()
-    |> (fn nds -> %NDS{nds | tag: tag(nds, map)} end).()
-    |> (fn nds -> %NDS{nds | attributes: attributes(map)} end).()
+  def meta(%NDS{} = nds, map) do
+    nds
+    |> then(fn nds -> %{nds | private: put_in(nds.private, [:meta], Map.get(map, :_meta, %{}))} end)
+    |> then(fn nds -> %{nds | namespace: namespace(nds)} end)
+    |> then(fn nds -> %{nds | tag: tag(nds, map)} end)
+    |> then(fn nds -> %{nds | attributes: attributes(map)} end)
   end
 
   @impl NDS.Encoder
-  def content(nds, map) do
+  def content(%NDS{} = nds, map) do
     text_keys = text_keys(nds, map)
     attribute_keys = Enum.map(nds.attributes, fn {k, _} -> String.to_atom(k) end)
 
-    %NDS{
+    %{
       nds
       | content:
           key_order(nds, map, [:_meta | attribute_keys], text_keys)

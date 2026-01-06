@@ -27,9 +27,9 @@ defmodule FnXML.Parser.Constructs do
     |> reduce({List, :to_string, []})
   end
 
-  def open_bracket(combinator \\ empty()), do: combinator |> ignore(ascii_char([?<]))
+  def open_bracket(combinator \\ empty()), do: combinator |> ignore(ascii_char([?<]) |> label("'<'"))
 
-  def close_bracket(combinator \\ empty()), do: combinator |> ignore(ascii_char([?>]))
+  def close_bracket(combinator \\ empty()), do: combinator |> ignore(ascii_char([?>]) |> label("'>'"))
 
   def ignore_opt_ws(combinator \\ empty()), do: combinator |> ignore(optional(ws()))
 
@@ -50,8 +50,10 @@ defmodule FnXML.Parser.Constructs do
     name_char = [?-, ?., ?0..?9, 0x00B7, 0x0300..0x036F, 0x203F..0x2040 | start_char]
 
     ascii_char(start_char)
+    |> label("letter, underscore, or colon")
     |> ascii_string(name_char, min: 0)
     |> reduce({List, :to_string, []})
+    |> label("element name")
   end
 
   def tag_name do
@@ -75,10 +77,13 @@ defmodule FnXML.Parser.Quoted do
   import NimbleParsec
 
   def string(char) do
+    quote_char = if char == ?", do: "double quote", else: "single quote"
+
     ignore(ascii_char([char]))
     |> repeat(ascii_char(not: char))
-    |> ignore(ascii_char([char]))
+    |> ignore(ascii_char([char]) |> label("closing #{quote_char}"))
     |> reduce({List, :to_string, []})
+    |> label("quoted string")
   end
 end
 
@@ -116,10 +121,12 @@ defmodule FnXML.Parser.Attributes do
     C.ignore_opt_ws()
     |> concat(C.name())
     |> C.ignore_opt_ws()
-    |> ignore(string("="))
+    |> ignore(string("=") |> label("'=' after attribute name"))
     |> C.ignore_opt_ws()
     |> choice([Quoted.string(?"), Quoted.string(?')])
+    |> label("attribute value")
     |> reduce({Attributes, :into_keyword, []})
+    |> label("attribute")
   end
 
   def attributes() do
@@ -168,10 +175,10 @@ defmodule FnXML.Parser.Element do
     Pos.get(empty())
     |> ignore(string("!--"))
     |> repeat(lookahead_not(string("--")) |> ascii_char([]))
-    |> ignore(string("--"))
+    |> ignore(string("--") |> label("'-->' to close comment"))
     |> reduce({Element, :format_content, []})
     |> unwrap_and_tag(:comment)
-    |> label("comment '<!-- text -->'")
+    |> label("comment")
   end
 
   def processing_instruction do
@@ -180,10 +187,10 @@ defmodule FnXML.Parser.Element do
     |> concat(C.tag_name())
     |> C.ignore_opt_ws()
     |> repeat(lookahead_not(string("?")) |> ascii_char([]))
-    |> ignore(string("?"))
+    |> ignore(string("?") |> label("'?>' to close processing instruction"))
     |> reduce({Element, :format_content, []})
     |> unwrap_and_tag(:proc_inst)
-    |> label("processing_instruction '<?tag text?>'")
+    |> label("processing instruction")
   end
 
   def prolog do
@@ -193,10 +200,10 @@ defmodule FnXML.Parser.Element do
     |> concat(C.tag_name())
     |> concat(Attr.attributes())
     |> C.ignore_opt_ws()
-    |> ignore(string("?"))
+    |> ignore(string("?") |> label("'?>' to close XML declaration"))
     |> reduce({C, :sort_components, [[:tag, :attributes, :loc]]})
     |> unwrap_and_tag(:prolog)
-    |> label("prolog '<?tag version=\"...\", encoding=\"...\">'")
+    |> label("XML declaration")
     |> C.close_bracket()
     |> C.ignore_opt_ws()
   end
@@ -206,17 +213,17 @@ defmodule FnXML.Parser.Element do
     |> ascii_string([not: ?<], min: 1)
     |> reduce({Element, :format_content, []})
     |> unwrap_and_tag(:text)
-    |> label("text")
+    |> label("text content")
   end
 
   def cdata do
     Pos.get(empty())
     |> ignore(string("![CDATA["))
     |> repeat(lookahead_not(string("]]")) |> ascii_char([]))
-    |> ignore(string("]]"))
+    |> ignore(string("]]") |> label("']]>' to close CDATA"))
     |> reduce({Element, :format_content, []})
     |> unwrap_and_tag(:text)
-    |> label("cdata '![CDATA[ text ]]'")
+    |> label("CDATA section")
   end
 
   def element do

@@ -15,12 +15,12 @@ defmodule FnXML.Stream.NativeDataStruct.Decoder do
   """
   # no NDS struct, so nothing to do this should only happen for the root tag
   def update_content([], _item), do: []
-  def update_content([h | t], item), do: [%NDS{h | content: [item | h.content]} | t]
+  def update_content([%NDS{} = h | t], item), do: [%{h | content: [item | h.content]} | t]
 
   @doc """
   Reverse generated lists so they are in the correct order
   """
-  def finalize_nds(nds), do: %NDS{nds | content: Enum.reverse(nds.content)}
+  def finalize_nds(%NDS{} = nds), do: %{nds | content: Enum.reverse(nds.content)}
 
   @impl true
   def handle_prolog(_meta, _path, acc, _opts), do: acc
