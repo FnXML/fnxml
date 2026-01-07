@@ -3,6 +3,23 @@ defmodule FnXML.Stream.ValidateTest do
 
   alias FnXML.Stream.Validate
 
+  # Helper to match open/close tags in new format
+  defp is_open?({:open, _, _, _}), do: true
+  defp is_open?(_), do: false
+
+  defp is_close?({:close, _}), do: true
+  defp is_close?({:close, _, _}), do: true
+  defp is_close?(_), do: false
+
+  defp is_text?({:text, _, _}), do: true
+  defp is_text?(_), do: false
+
+  defp is_comment?({:comment, _, _}), do: true
+  defp is_comment?(_), do: false
+
+  defp is_prolog?({:prolog, _, _, _}), do: true
+  defp is_prolog?(_), do: false
+
   describe "well_formed/2" do
     test "valid nested tags pass" do
       tokens =
@@ -10,9 +27,10 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.well_formed()
         |> Enum.to_list()
 
-      assert length(tokens) == 4
-      assert Enum.any?(tokens, &match?({:open, _}, &1))
-      assert Enum.any?(tokens, &match?({:close, _}, &1))
+      # +2 for doc_start and doc_end events
+      assert length(tokens) == 6
+      assert Enum.any?(tokens, &is_open?/1)
+      assert Enum.any?(tokens, &is_close?/1)
     end
 
     test "mismatched tags raise error" do
@@ -47,7 +65,8 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.well_formed()
         |> Enum.to_list()
 
-      assert length(tokens) == 8
+      # +2 for doc_start and doc_end events
+      assert length(tokens) == 10
     end
 
     test "on_error: :emit returns error tuple" do
@@ -78,8 +97,8 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.well_formed()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:text, _}, &1))
-      assert Enum.any?(tokens, &match?({:comment, _}, &1))
+      assert Enum.any?(tokens, &is_text?/1)
+      assert Enum.any?(tokens, &is_comment?/1)
     end
 
     test "prolog passes through" do
@@ -88,7 +107,7 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.well_formed()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:prolog, _}, &1))
+      assert Enum.any?(tokens, &is_prolog?/1)
     end
   end
 
@@ -99,7 +118,7 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.attributes()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:open, _}, &1))
+      assert Enum.any?(tokens, &is_open?/1)
     end
 
     test "duplicate attributes raise error" do
@@ -128,8 +147,8 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.attributes()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:text, _}, &1))
-      assert Enum.any?(tokens, &match?({:close, _}, &1))
+      assert Enum.any?(tokens, &is_text?/1)
+      assert Enum.any?(tokens, &is_close?/1)
     end
   end
 
@@ -157,7 +176,7 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.namespaces()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:open, _}, &1))
+      assert Enum.any?(tokens, &is_open?/1)
     end
 
     test "xmlns prefix always valid" do
@@ -166,7 +185,7 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.namespaces()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:open, _}, &1))
+      assert Enum.any?(tokens, &is_open?/1)
     end
 
     test "default namespace works" do
@@ -214,7 +233,7 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.namespaces()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:open, _}, &1))
+      assert Enum.any?(tokens, &is_open?/1)
     end
   end
 
@@ -234,7 +253,8 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.all(validators: [:structure])
         |> Enum.to_list()
 
-      assert length(tokens) == 4
+      # +2 for doc_start and doc_end events
+      assert length(tokens) == 6
     end
 
     test "catches structure errors" do
@@ -280,8 +300,8 @@ defmodule FnXML.Stream.ValidateTest do
         |> Validate.namespaces()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:prolog, _}, &1))
-      assert Enum.count(tokens, &match?({:open, _}, &1)) >= 2
+      assert Enum.any?(tokens, &is_prolog?/1)
+      assert Enum.count(tokens, &is_open?/1) >= 2
     end
   end
 end

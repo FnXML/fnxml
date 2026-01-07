@@ -23,7 +23,7 @@ defmodule FnXML.Stream.Entities do
   - `:entities` - Map of custom entity name => replacement
   - `:on_unknown` - How to handle unknown named entities:
     - `:raise` (default) - Raise FnXML.Error
-    - `:emit` - Emit error token in stream
+    - `:emit` - Emit error event in stream
     - `:keep` - Keep the entity reference as-is
     - `:remove` - Remove the entity reference
 
@@ -34,9 +34,8 @@ defmodule FnXML.Stream.Entities do
       ...> |> FnXML.Parser.parse()
       ...> |> FnXML.Stream.Entities.resolve()
       ...> |> Enum.to_list()
-      ...> |> Enum.find(&match?({:text, _}, &1))
+      ...> |> Enum.find(&match?({:text, _, _}, &1))
       ...> |> elem(1)
-      ...> |> Keyword.get(:content)
       "Tom & Jerry"
 
       # Custom entities
@@ -44,9 +43,8 @@ defmodule FnXML.Stream.Entities do
       ...> |> FnXML.Parser.parse()
       ...> |> FnXML.Stream.Entities.resolve(entities: %{"copy" => "©"})
       ...> |> Enum.to_list()
-      ...> |> Enum.find(&match?({:text, _}, &1))
+      ...> |> Enum.find(&match?({:text, _, _}, &1))
       ...> |> elem(1)
-      ...> |> Keyword.get(:content)
       "©"
   """
 
@@ -79,11 +77,11 @@ defmodule FnXML.Stream.Entities do
     on_unknown = Keyword.get(opts, :on_unknown, :raise)
 
     Stream.flat_map(stream, fn
-      {:text, meta} ->
-        resolve_text_token(meta, entities, on_unknown)
+      {:text, content, loc} ->
+        resolve_text_event(content, loc, entities, on_unknown)
 
-      {:open, meta} ->
-        resolve_open_token(meta, entities, on_unknown)
+      {:open, tag, attrs, loc} ->
+        resolve_open_event(tag, attrs, loc, entities, on_unknown)
 
       elem ->
         [elem]
@@ -91,12 +89,10 @@ defmodule FnXML.Stream.Entities do
   end
 
   # Resolve entities in text content
-  defp resolve_text_token(meta, entities, on_unknown) do
-    content = Keyword.get(meta, :content, "")
-
+  defp resolve_text_event(content, loc, entities, on_unknown) do
     case resolve_text(content, entities, on_unknown) do
       {:ok, resolved} ->
-        [{:text, Keyword.put(meta, :content, resolved)}]
+        [{:text, resolved, loc}]
 
       {:error, error} ->
         handle_resolution_error(error, on_unknown)
@@ -104,12 +100,10 @@ defmodule FnXML.Stream.Entities do
   end
 
   # Resolve entities in attribute values
-  defp resolve_open_token(meta, entities, on_unknown) do
-    attrs = Keyword.get(meta, :attributes, [])
-
+  defp resolve_open_event(tag, attrs, loc, entities, on_unknown) do
     case resolve_attrs(attrs, entities, on_unknown) do
       {:ok, resolved_attrs} ->
-        [{:open, Keyword.put(meta, :attributes, resolved_attrs)}]
+        [{:open, tag, resolved_attrs, loc}]
 
       {:error, error} ->
         handle_resolution_error(error, on_unknown)

@@ -1,8 +1,9 @@
 defmodule FnXML.ParserTest do
   use ExUnit.Case
 
-  alias FnXML.Parser
-  doctest Parser
+  # These tests are for the NimbleParsec parser (legacy)
+  alias FnXML.Parser.NimbleParsec, as: Parser
+  doctest FnXML.Parser
 
   def parse_xml(xml) do
     xml
@@ -41,7 +42,7 @@ defmodule FnXML.ParserTest do
     end
 
     test "no prolog" do
-      {_xml, _, _} = FnXML.Parser.parse_prolog("<a></a>")
+      {_xml, _, _} = Parser.parse_prolog("<a></a>")
       assert true
     end
   end

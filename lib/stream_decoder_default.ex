@@ -1,33 +1,48 @@
 defmodule FnXML.Stream.Decoder.Default do
   @moduledoc """
   Default implementation of the stream decoder behaviour.
+
+  Event formats:
+  - `{:open, tag, attrs, loc}` - Opening tag with attributes
+  - `{:close, tag}` or `{:close, tag, loc}` - Closing tag
+  - `{:text, content, loc}` - Text content
+  - `{:comment, content, loc}` - Comment
+  - `{:prolog, "xml", attrs, loc}` - XML prolog
+  - `{:proc_inst, name, content, loc}` - Processing instruction
   """
   @behaviour FnXML.Stream.Decoder
 
   @impl true
   @doc """
-  pushes the current element on to the accumulator
+  Pushes a new element context onto the accumulator for the open tag.
+  Stores tag, attributes and loc for later use when building the element.
   """
-  def handle_open(meta, _path, acc, _opts), do: [meta |> Enum.reverse() | acc]
+  def handle_open({:open, tag, attrs, loc}, _path, acc, _opts) do
+    # Store element info as a list that will accumulate children/text
+    [[{:tag, tag}, {:attributes, attrs}, {:loc, loc}] | acc]
+  end
 
   @impl true
   @doc """
-  pushes the current text on to the top element of the accumulator
+  Adds text content to the current element being built.
   """
-  def handle_text(text, _path, [h | t], _opts), do: [[{:text, text} | h] | t]
+  def handle_text({:text, content, _loc}, _path, [h | t], _opts) do
+    [[{:text, content} | h] | t]
+  end
 
   @impl true
   @doc """
-  case 1: only one element on the stack, reverse the element and return it
-  case 2: more than one element on the stack, reverse the top element and add it to the second element
+  Finalizes an element when its close tag is encountered.
+  case 1: only one element on the stack, finalize and return it
+  case 2: more than one element on the stack, finalize and add as child to parent
   """
-  def handle_close(_meta, path, [h], opts) do
-    element = process_element(h |> Enum.reverse(), path, opts)
+  def handle_close(_elem, path, [h], opts) do
+    element = process_element(Enum.reverse(h), path, opts)
     {element, []}
   end
 
-  def handle_close(_meta, path, [h, p | anc], opts) do
-    element = process_element(h |> Enum.reverse(), path, opts)
+  def handle_close(_elem, path, [h, p | anc], opts) do
+    element = process_element(Enum.reverse(h), path, opts)
     [[element | p] | anc]
   end
 
@@ -37,13 +52,19 @@ defmodule FnXML.Stream.Decoder.Default do
     handler = Keyword.get(opts, :handle_element, fn element, _path, _opts -> {:child, element} end)
     handler.(element, path, opts)
   end
-  
-  @impl true
-  def handle_prolog(meta, _path, acc, _opts), do: [{:prolog, meta} |acc]
 
   @impl true
-  def handle_comment(meta, _path, acc, _opts), do: [{:comment, meta} | acc]
+  def handle_prolog({:prolog, _tag, attrs, loc}, _path, acc, _opts) do
+    [{:prolog, [{:attributes, attrs}, {:loc, loc}]} | acc]
+  end
 
   @impl true
-  def handle_proc_inst(meta, _path, acc, _opts), do: [{:proc_inst, meta} | acc]
+  def handle_comment({:comment, content, loc}, _path, acc, _opts) do
+    [{:comment, [{:content, content}, {:loc, loc}]} | acc]
+  end
+
+  @impl true
+  def handle_proc_inst({:proc_inst, name, content, loc}, _path, acc, _opts) do
+    [{:proc_inst, [{:name, name}, {:content, content}, {:loc, loc}]} | acc]
+  end
 end

@@ -58,16 +58,16 @@ defmodule FnXML.Stream.NativeDataStruct do
       iex> data = %{"a" => "hi", "b" => %{"_" => "info", a: 1, b: 1}, c: "hi", d: 4}
       iex> NDS.encode(data, [])
       [
-        open: [tag: "root", attributes: [{"c", "hi"}, {"d", "4"}]],
-        open: [tag: "a"],
-        text: [content: "hi"],
-        close: [tag: "a"],
-        open: [tag: "b", attributes: [{"a", "1"}, {"b", "1"}]],
-        open: [tag: "_"],
-        text: [content: "info"],
-        close: [tag: "_"],
-        close: [tag: "b"],
-        close: [tag: "root"]
+        {:open, "root", [{"c", "hi"}, {"d", "4"}], nil},
+        {:open, "a", [], nil},
+        {:text, "hi", nil},
+        {:close, "a"},
+        {:open, "b", [{"a", "1"}, {"b", "1"}], nil},
+        {:open, "_", [], nil},
+        {:text, "info", nil},
+        {:close, "_"},
+        {:close, "b"},
+        {:close, "root"}
       ]
   """
   def encode(map, opts \\ [])
@@ -90,7 +90,7 @@ defmodule FnXML.Stream.NativeDataStruct do
 
   ## Examples
 
-      iex> stream = [ open: [tag: "foo"], close: [tag: "foo"] ]
+      iex> stream = [{:open, "foo", [], nil}, {:close, "foo"}]
       iex> NDS.decode(stream, format_meta: &NDS.no_meta/1)
       [%{"foo" => %{}}]
   """

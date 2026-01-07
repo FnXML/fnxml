@@ -1,229 +1,14 @@
-defmodule FnXML.Parser do
+defmodule FnXML.Parser.RecursiveCPS do
   @moduledoc """
-  Streaming XML parser using recursive descent with continuation-passing style.
-
-  Parses XML into a stream of events (SAX-style). Each event represents a
-  structural element of the XML document, emitted as the parser encounters it.
-
-  ## Basic Usage
-
-  ### Stream Mode (Lazy Evaluation)
-
-  The most common way to use the parser. Events are generated lazily as you
-  consume the stream:
-
-      # Parse and inspect all events
-      FnXML.Parser.parse("<root><item>Hello</item></root>")
-      |> Enum.each(&IO.inspect/1)
-
-      # Extract specific data
-      FnXML.Parser.parse(xml)
-      |> Enum.filter(fn {:text, _, _} -> true; _ -> false end)
-      |> Enum.map(fn {:text, content, _} -> content end)
-
-      # Take only the first N events (efficient - stops parsing early)
-      FnXML.Parser.parse(large_xml)
-      |> Enum.take(10)
-
-      # Pipe through stream transformations
-      FnXML.Parser.parse(xml)
-      |> FnXML.Stream.filter_ws()           # Remove whitespace-only text
-      |> FnXML.Stream.resolve_entities()    # Expand &amp; etc.
-      |> Enum.to_list()
-
-  ### Callback Mode (Eager, Zero Allocation)
-
-  For maximum performance when processing the entire document. The callback
-  receives each event directly with no intermediate data structures:
-
-      # Send events to a process
-      FnXML.Parser.parse(xml, fn event -> send(pid, event) end)
-
-      # Collect in an agent (building result in reverse for efficiency)
-      {:ok, agent} = Agent.start_link(fn -> [] end)
-      FnXML.Parser.parse(xml, fn event -> Agent.update(agent, &[event | &1]) end)
-      events = Agent.get(agent, &Enum.reverse/1)
-
-      # Direct processing with side effects
-      FnXML.Parser.parse(xml, fn
-        {:open, "target", attrs, _} -> handle_target(attrs)
-        {:text, content, _} -> accumulate_text(content)
-        _ -> :ok
-      end)
-
-  ## Event Types
-
-  The parser emits these event types:
-
-  ### Document Start: `{:doc_start, nil}`
-
-  Emitted as the very first event when parsing begins. Useful for
-  initialization in stream consumers.
-
-  ### Document End: `{:doc_end, nil}`
-
-  Emitted as the very last event when parsing completes. Useful for
-  finalization in stream consumers.
-
-  ### Open Tag: `{:open, tag, attrs, loc}`
-
-  Emitted when an opening tag is encountered. Self-closing tags like `<br/>`
-  emit both an `:open` and `:close` event.
-
-      {:open, "div", [{"class", "container"}], {1, 0, 0}}
-      {:open, "ns:element", [{"attr", "value"}], {2, 15, 20}}
-
-  - `tag` - The tag name as a string (includes namespace prefix if present)
-  - `attrs` - List of `{name, value}` tuples (both strings)
-  - `loc` - Position tuple (see Position Information below)
-
-  ### Close Tag: `{:close, tag}` or `{:close, tag, loc}`
-
-  Emitted when a closing tag is encountered. Self-closing tags emit `{:close, tag}`
-  without location. Explicit closing tags include location.
-
-      {:close, "div"}                        # From self-closing <div/>
-      {:close, "div", {1, 0, 25}}            # From explicit </div>
-
-  ### Text: `{:text, content, loc}`
-
-  Emitted for text content between tags. CDATA sections are also emitted as
-  text events (the CDATA markers are stripped).
-
-      {:text, "Hello, World!", {1, 0, 5}}
-      {:text, "  whitespace  ", {2, 20, 25}}
-
-  Note: Whitespace-only text between elements is preserved. Use
-  `FnXML.Stream.filter_ws/1` to remove it.
-
-  ### Comment: `{:comment, content, loc}`
-
-  Emitted for XML comments. The `<!--` and `-->` delimiters are stripped.
-
-      {:comment, " This is a comment ", {1, 0, 0}}
-
-  ### Prolog: `{:prolog, "xml", attrs, loc}`
-
-  Emitted for the XML declaration at the start of a document.
-
-      {:prolog, "xml", [{"version", "1.0"}, {"encoding", "UTF-8"}], {1, 0, 1}}
-
-  ### Processing Instruction: `{:proc_inst, target, content, loc}`
-
-  Emitted for processing instructions like `<?target content?>`.
-
-      {:proc_inst, "xml-stylesheet", "type=\"text/xsl\" href=\"style.xsl\"", {1, 0, 1}}
-
-  ### Error: `{:error, message, loc}`
-
-  Emitted when the parser encounters malformed XML. See Error Handling below.
-
-      {:error, "Expected '>'", {3, 45, 67}}
-
-  ## Position Information
-
-  Every event includes a location tuple `{line, line_start, byte_offset}`:
-
-  | Field | Description |
-  |-------|-------------|
-  | `line` | 1-based line number |
-  | `line_start` | Byte offset where the current line begins |
-  | `byte_offset` | Absolute byte position from document start |
-
-  The position points to the **start** of each event:
-  - For tags: the `<` character
-  - For text: the first character of content
-  - For comments: the `<` of `<!--`
-
-  To calculate the column number:
-
-      {line, line_start, byte_offset} = loc
-      column = byte_offset - line_start    # 0-based column
-
-  Use `FnXML.Element.position/1` to get `{line, column}` directly:
-
-      FnXML.Element.position({:open, "div", [], {2, 15, 20}})
-      # => {2, 5}
-
-  ## Error Handling
-
-  The parser handles errors by emitting `{:error, message, loc}` events.
-  Unlike exception-based parsers, this allows:
-
-  - **Partial processing**: Extract valid data even from malformed documents
-  - **Error collection**: Gather all errors in a single pass
-  - **Graceful degradation**: Continue processing after recoverable errors
-
-  Common error messages:
-
-  | Error | Cause |
-  |-------|-------|
-  | `"Expected '?>'"` | Unterminated XML declaration |
-  | `"Expected '>' "` | Unclosed tag |
-  | `"Expected quoted value"` | Attribute value not quoted |
-  | `"Unterminated comment"` | Missing `-->` |
-  | `"Unterminated CDATA"` | Missing `]]>` |
-  | `"Invalid element"` | Malformed tag syntax |
-
-  Example error handling:
-
-      events = FnXML.Parser.parse(xml) |> Enum.to_list()
-
-      errors = Enum.filter(events, fn {:error, _, _} -> true; _ -> false end)
-      if errors != [] do
-        Enum.each(errors, fn {:error, msg, {line, _, _}} ->
-          IO.puts("Line \#{line}: \#{msg}")
-        end)
-      end
-
-  ## Performance Optimizations
-
-  This parser is designed for high throughput and low memory usage:
-
-  ### Memory Efficiency
-
-  - **Single binary reference**: The original XML string is kept as one binary.
-    Content is extracted using `binary_part/3` which creates sub-binary
-    references, not copies. This means parsing a 100MB file uses ~100MB, not
-    multiples thereof.
-
-  - **Position tracking over sub-binaries**: Instead of creating new "rest"
-    binaries at each step (which would copy), the parser tracks position as
-    an integer offset into the original binary.
-
-  - **No intermediate AST**: Events are emitted directly without building a
-    tree structure. This enables processing documents larger than available
-    memory via streaming.
-
-  ### Speed Optimizations
-
-  - **Continuation-passing style (CPS)**: Parsing state flows through function
-    arguments rather than return values, enabling tail-call optimization and
-    reducing stack frame allocation.
-
-  - **Inlined name scanning**: Tag and attribute name parsing is inlined at
-    each call site, avoiding function call overhead for the most frequent
-    operations.
-
-  - **Dual code paths**: Stream mode uses accumulator-based functions optimized
-    for batch collection. Callback mode avoids accumulator overhead entirely.
-
-  - **Binary pattern matching**: The BEAM's optimized binary matching is used
-    throughout. Multi-byte patterns like `<!--` are matched directly.
-
-  - **Whitespace skipping**: Whitespace between elements is skipped without
-    creating events, reducing downstream processing.
-
-  - **Guard-based dispatch**: Character class checks use guards and ranges,
-    which the BEAM optimizes into efficient jump tables.
-
-  ### Benchmarks
-
-  Typical performance on modern hardware (2024):
-
-  - **~500+ MB/s** throughput for simple documents
-  - **~100,000+ elements/s** for typical XML structures
-  - **Constant memory** regardless of document size (streaming mode)
+  Recursive descent parser using continuation-passing style.
+
+  Uses binary pattern matching with `rest`, but never stores `rest` in state.
+  Only `original` + `pos` are stored for Stream.resource state.
+
+  Accepts an emit callback for flexible event handling:
+  - Stream accumulation (default)
+  - Message passing to another process
+  - Direct processing
   """
 
   defguardp is_name_start(c) when
@@ -237,123 +22,45 @@ defmodule FnXML.Parser do
     c == 0x00B7 or c in 0x0300..0x036F or c in 0x203F..0x2040
 
   @doc """
-  Parse XML into a lazy stream of events.
-
-  Returns an `Enumerable` that emits events as they are consumed. Parsing
-  happens on-demand, making this memory-efficient for large documents and
-  allowing early termination with functions like `Enum.take/2`.
-
-  ## Parameters
-
-  - `xml` - The XML document as a binary string
-
-  ## Returns
-
-  A `Stream` of events. See module documentation for event types.
-
-  ## Examples
-
-      iex> FnXML.Parser.parse("<root>Hello</root>") |> Enum.to_list()
-      [
-        {:doc_start, nil},
-        {:open, "root", [], {1, 0, 1}},
-        {:text, "Hello", {1, 0, 6}},
-        {:close, "root", {1, 0, 12}},
-        {:doc_end, nil}
-      ]
-
-      iex> FnXML.Parser.parse("<a><b/></a>") |> Enum.take(3)
-      [{:doc_start, nil}, {:open, "a", [], {1, 0, 1}}, {:open, "b", [], {1, 0, 4}}]
-
+  Parse XML into a stream of events.
   """
   def parse(xml) when is_binary(xml) do
     Stream.resource(
-      fn -> {:start, xml, 0, 1, 0} end,
-      &next_event/1,
+      fn -> {xml, 0, 1, 0} end,
+      &next_token/1,
       fn _ -> :ok end
     )
   end
 
   @doc """
-  Parse XML with a custom emit callback for maximum performance.
+  Parse XML with a custom emit callback.
 
-  This is the fastest way to parse XML when you need to process the entire
-  document. Each event is passed directly to your callback with zero
-  intermediate allocations.
-
-  ## Parameters
-
-  - `xml` - The XML document as a binary string
-  - `emit` - A function that receives each event as it's parsed
-
-  ## Returns
-
-  `{:ok, final_pos, final_line, final_line_start}` on successful completion,
-  where these values represent the parser's final position in the document.
+  The callback receives each event as it's parsed.
+  Returns `{:ok, final_pos, final_line, final_ls}` or `{:error, reason}`.
 
   ## Examples
 
-      # Count elements
-      counter = :counters.new(1, [:atomics])
-      FnXML.Parser.parse(xml, fn
-        {:open, _, _, _} -> :counters.add(counter, 1, 1)
-        _ -> :ok
-      end)
-      :counters.get(counter, 1)
-
       # Send events to a process
-      FnXML.Parser.parse(xml, fn event -> send(pid, event) end)
+      parse(xml, fn event -> send(pid, event) end)
 
-      # Build a result (note: prepend for efficiency, reverse at end)
-      {:ok, agent} = Agent.start_link(fn -> [] end)
-      FnXML.Parser.parse(xml, fn event ->
-        Agent.update(agent, &[event | &1])
-      end)
-      events = Agent.get(agent, &Enum.reverse/1)
-
-  ## When to Use
-
-  Use callback mode when:
-  - Processing very large documents where stream overhead matters
-  - You need to process every event (no early termination)
-  - Building custom accumulators or sending to other processes
-  - Maximum throughput is critical
-
-  Use `parse/1` (stream mode) when:
-  - You want lazy evaluation
-  - You might terminate early (`Enum.take`, `Enum.find`, etc.)
-  - You want to compose with other stream operations
-  - Code readability is prioritized over raw performance
-
+      # Collect in an agent
+      parse(xml, fn event -> Agent.update(agent, &[event | &1]) end)
   """
   def parse(xml, emit) when is_binary(xml) and is_function(emit, 1) do
-    emit.({:doc_start, nil})
-    result = do_parse_all(xml, xml, 0, 1, 0, emit)
-    emit.({:doc_end, nil})
-    result
+    rest = xml
+    do_parse_all(rest, xml, 0, 1, 0, emit)
   end
 
   # === Stream interface (fast accumulator path) ===
 
-  # Emit :doc_start as the first event
-  defp next_event({:start, xml, pos, line, ls}) do
-    {[{:doc_start, nil}], {xml, pos, line, ls}}
-  end
-
-  # End of document - emit :doc_end and halt
-  defp next_event({xml, pos, _line, _ls}) when pos >= byte_size(xml) do
-    {[{:doc_end, nil}], :done}
-  end
-
-  # Already done - halt the stream
-  defp next_event(:done) do
+  defp next_token({xml, pos, _line, _ls}) when pos >= byte_size(xml) do
     {:halt, nil}
   end
 
-  defp next_event({xml, pos, line, ls}) do
+  defp next_token({xml, pos, line, ls}) do
     rest = binary_part(xml, pos, byte_size(xml) - pos)
-    {events, pos, line, ls} = do_parse_one_acc(rest, xml, pos, line, ls, [])
-    {Enum.reverse(events), {xml, pos, line, ls}}
+    {tokens, pos, line, ls} = do_parse_one_acc(rest, xml, pos, line, ls, [])
+    {Enum.reverse(tokens), {xml, pos, line, ls}}
   end
 
   # Fast accumulator-based parsing for streams (no callback overhead)
@@ -421,7 +128,7 @@ defmodule FnXML.Parser do
 
   defp parse_prolog(<<"?>", _::binary>>, _xml, pos, line, ls, loc, emit) do
     emit.({:prolog, "xml", [], loc})
-    {pos + 2, line, ls}
+    skip_ws_then_done(pos + 2, line, ls)
   end
 
   defp parse_prolog(<<c, rest::binary>>, xml, pos, line, ls, loc, emit) when c in [?\s, ?\t, ?\r] do
@@ -433,7 +140,7 @@ defmodule FnXML.Parser do
   end
 
   defp parse_prolog(<<c, _::binary>> = rest, xml, pos, line, ls, loc, emit) when is_name_start(c) do
-    parse_prolog_attr_name(rest, xml, pos, line, ls, loc, [], pos, emit)
+    parse_name(rest, xml, pos, line, ls, :prolog_attr, {loc, [], emit})
   end
 
   defp parse_prolog(_, _xml, pos, line, ls, _loc, emit) do
@@ -444,7 +151,7 @@ defmodule FnXML.Parser do
   # Prolog with attrs
   defp parse_prolog_attrs(<<"?>", _::binary>>, _xml, pos, line, ls, loc, attrs, emit) do
     emit.({:prolog, "xml", Enum.reverse(attrs), loc})
-    {pos + 2, line, ls}
+    skip_ws_then_done(pos + 2, line, ls)
   end
 
   defp parse_prolog_attrs(<<c, rest::binary>>, xml, pos, line, ls, loc, attrs, emit) when c in [?\s, ?\t, ?\r] do
@@ -456,7 +163,7 @@ defmodule FnXML.Parser do
   end
 
   defp parse_prolog_attrs(<<c, _::binary>> = rest, xml, pos, line, ls, loc, attrs, emit) when is_name_start(c) do
-    parse_prolog_attr_name(rest, xml, pos, line, ls, loc, attrs, pos, emit)
+    parse_name(rest, xml, pos, line, ls, :prolog_attr, {loc, attrs, emit})
   end
 
   defp parse_prolog_attrs(_, _xml, pos, line, ls, _loc, _attrs, emit) do
@@ -475,16 +182,16 @@ defmodule FnXML.Parser do
   end
 
   defp parse_element(<<"</", rest::binary>>, xml, pos, line, ls, emit) do
-    parse_close_tag_name(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, pos + 2, emit)
+    parse_close_tag_start(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, emit)
   end
 
   defp parse_element(<<"<?", rest::binary>>, xml, pos, line, ls, emit) do
-    parse_pi_name(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, pos + 2, emit)
+    parse_pi_start(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, emit)
   end
 
   defp parse_element(<<"<", c, _::binary>> = rest, xml, pos, line, ls, emit) when is_name_start(c) do
     <<"<", rest2::binary>> = rest
-    parse_open_tag_name(rest2, xml, pos + 1, line, ls, {line, ls, pos + 1}, pos + 1, emit)
+    parse_name(rest2, xml, pos + 1, line, ls, :open_tag, {{line, ls, pos + 1}, emit})
   end
 
   defp parse_element(_, _xml, pos, line, ls, emit) do
@@ -492,18 +199,7 @@ defmodule FnXML.Parser do
     {pos, line, ls}
   end
 
-  # === Open tag name scanning (inlined) ===
-
-  defp parse_open_tag_name(<<c, rest::binary>>, xml, pos, line, ls, loc, start, emit) when is_name_char(c) do
-    parse_open_tag_name(rest, xml, pos + 1, line, ls, loc, start, emit)
-  end
-
-  defp parse_open_tag_name(rest, xml, pos, line, ls, loc, start, emit) do
-    name = binary_part(xml, start, pos - start)
-    finish_open_tag(rest, xml, pos, line, ls, name, [], loc, emit)
-  end
-
-  # === Open tag finish ===
+  # === Open tag ===
 
   defp finish_open_tag(<<"/>", _::binary>>, _xml, pos, line, ls, name, attrs, loc, emit) do
     emit.({:open, name, Enum.reverse(attrs), loc})
@@ -525,7 +221,7 @@ defmodule FnXML.Parser do
   end
 
   defp finish_open_tag(<<c, _::binary>> = rest, xml, pos, line, ls, name, attrs, loc, emit) when is_name_start(c) do
-    parse_attr_name(rest, xml, pos, line, ls, name, attrs, loc, pos, emit)
+    parse_name(rest, xml, pos, line, ls, :attr_name, {name, attrs, loc, emit})
   end
 
   defp finish_open_tag(_, _xml, pos, line, ls, _name, _attrs, _loc, emit) do
@@ -533,15 +229,15 @@ defmodule FnXML.Parser do
     {pos, line, ls}
   end
 
-  # === Close tag name scanning (inlined) ===
+  # === Close tag ===
 
-  defp parse_close_tag_name(<<c, rest::binary>>, xml, pos, line, ls, loc, start, emit) when is_name_char(c) do
-    parse_close_tag_name(rest, xml, pos + 1, line, ls, loc, start, emit)
+  defp parse_close_tag_start(<<c, _::binary>> = rest, xml, pos, line, ls, loc, emit) when is_name_start(c) do
+    parse_name(rest, xml, pos, line, ls, :close_tag, {loc, emit})
   end
 
-  defp parse_close_tag_name(rest, xml, pos, line, ls, loc, start, emit) do
-    name = binary_part(xml, start, pos - start)
-    finish_close_tag(rest, xml, pos, line, ls, name, loc, emit)
+  defp parse_close_tag_start(_, _xml, pos, line, ls, _loc, emit) do
+    emit.({:error, "Expected element name", {line, ls, pos}})
+    {pos, line, ls}
   end
 
   defp finish_close_tag(<<">", _::binary>>, _xml, pos, line, ls, name, loc, emit) do
@@ -604,27 +300,15 @@ defmodule FnXML.Parser do
     {pos, line, ls}
   end
 
-  # === Processing Instruction name scanning (inlined) ===
+  # === Processing Instruction ===
 
-  defp parse_pi_name(<<c, rest::binary>>, xml, pos, line, ls, loc, start, emit) when is_name_char(c) do
-    parse_pi_name(rest, xml, pos + 1, line, ls, loc, start, emit)
+  defp parse_pi_start(<<c, _::binary>> = rest, xml, pos, line, ls, loc, emit) when is_name_start(c) do
+    parse_name(rest, xml, pos, line, ls, :pi_name, {loc, emit})
   end
 
-  defp parse_pi_name(rest, xml, pos, line, ls, loc, start, emit) do
-    name = binary_part(xml, start, pos - start)
-    skip_ws_then_pi(rest, xml, pos, line, ls, name, loc, emit)
-  end
-
-  defp skip_ws_then_pi(<<c, rest::binary>>, xml, pos, line, ls, name, loc, emit) when c in [?\s, ?\t, ?\r] do
-    skip_ws_then_pi(rest, xml, pos + 1, line, ls, name, loc, emit)
-  end
-
-  defp skip_ws_then_pi(<<?\n, rest::binary>>, xml, pos, line, _ls, name, loc, emit) do
-    skip_ws_then_pi(rest, xml, pos + 1, line + 1, pos + 1, name, loc, emit)
-  end
-
-  defp skip_ws_then_pi(rest, xml, pos, line, ls, name, loc, emit) do
-    parse_pi_content(rest, xml, pos, line, ls, name, loc, pos, emit)
+  defp parse_pi_start(_, _xml, pos, line, ls, _loc, emit) do
+    emit.({:error, "Expected PI target name", {line, ls, pos}})
+    {pos, line, ls}
   end
 
   defp parse_pi_content(<<"?>", _::binary>>, xml, pos, line, ls, name, loc, start, emit) do
@@ -668,15 +352,41 @@ defmodule FnXML.Parser do
     {pos, line, ls}
   end
 
-  # === Attribute name scanning (inlined) ===
+  # === Name parsing with continuation ===
 
-  defp parse_attr_name(<<c, rest::binary>>, xml, pos, line, ls, tag, attrs, loc, start, emit) when is_name_char(c) do
-    parse_attr_name(rest, xml, pos + 1, line, ls, tag, attrs, loc, start, emit)
+  defp parse_name(rest, xml, pos, line, ls, context, extra) do
+    scan_name(rest, xml, pos, line, ls, context, extra, pos)
   end
 
-  defp parse_attr_name(rest, xml, pos, line, ls, tag, attrs, loc, start, emit) do
+  defp scan_name(<<c, rest::binary>>, xml, pos, line, ls, context, extra, start) when is_name_char(c) do
+    scan_name(rest, xml, pos + 1, line, ls, context, extra, start)
+  end
+
+  defp scan_name(rest, xml, pos, line, ls, context, extra, start) do
     name = binary_part(xml, start, pos - start)
+    continue(context, rest, xml, pos, line, ls, name, extra)
+  end
+
+  # === Continuations ===
+
+  defp continue(:open_tag, rest, xml, pos, line, ls, name, {loc, emit}) do
+    finish_open_tag(rest, xml, pos, line, ls, name, [], loc, emit)
+  end
+
+  defp continue(:close_tag, rest, xml, pos, line, ls, name, {loc, emit}) do
+    finish_close_tag(rest, xml, pos, line, ls, name, loc, emit)
+  end
+
+  defp continue(:attr_name, rest, xml, pos, line, ls, name, {tag, attrs, loc, emit}) do
     parse_attr_eq(rest, xml, pos, line, ls, tag, name, attrs, loc, emit)
+  end
+
+  defp continue(:prolog_attr, rest, xml, pos, line, ls, name, {loc, attrs, emit}) do
+    parse_prolog_attr_eq(rest, xml, pos, line, ls, name, loc, attrs, emit)
+  end
+
+  defp continue(:pi_name, rest, xml, pos, line, ls, name, {loc, emit}) do
+    skip_ws_then_pi(rest, xml, pos, line, ls, name, loc, emit)
   end
 
   # === Attribute parsing ===
@@ -742,17 +452,6 @@ defmodule FnXML.Parser do
     {pos, line, ls}
   end
 
-  # === Prolog attribute name scanning (inlined) ===
-
-  defp parse_prolog_attr_name(<<c, rest::binary>>, xml, pos, line, ls, loc, attrs, start, emit) when is_name_char(c) do
-    parse_prolog_attr_name(rest, xml, pos + 1, line, ls, loc, attrs, start, emit)
-  end
-
-  defp parse_prolog_attr_name(rest, xml, pos, line, ls, loc, attrs, start, emit) do
-    name = binary_part(xml, start, pos - start)
-    parse_prolog_attr_eq(rest, xml, pos, line, ls, name, loc, attrs, emit)
-  end
-
   # === Prolog attribute ===
 
   defp parse_prolog_attr_eq(<<"=", rest::binary>>, xml, pos, line, ls, name, loc, attrs, emit) do
@@ -816,6 +515,24 @@ defmodule FnXML.Parser do
     {pos, line, ls}
   end
 
+  # === Helpers ===
+
+  defp skip_ws_then_done(pos, line, ls) do
+    {pos, line, ls}
+  end
+
+  defp skip_ws_then_pi(<<c, rest::binary>>, xml, pos, line, ls, name, loc, emit) when c in [?\s, ?\t, ?\r] do
+    skip_ws_then_pi(rest, xml, pos + 1, line, ls, name, loc, emit)
+  end
+
+  defp skip_ws_then_pi(<<?\n, rest::binary>>, xml, pos, line, _ls, name, loc, emit) do
+    skip_ws_then_pi(rest, xml, pos + 1, line + 1, pos + 1, name, loc, emit)
+  end
+
+  defp skip_ws_then_pi(rest, xml, pos, line, ls, name, loc, emit) do
+    parse_pi_content(rest, xml, pos, line, ls, name, loc, pos, emit)
+  end
+
   # ============================================================
   # ACCUMULATOR-BASED FUNCTIONS (fast path for streams)
   # ============================================================
@@ -835,7 +552,7 @@ defmodule FnXML.Parser do
   end
 
   defp parse_prolog_acc(<<c, _::binary>> = rest, xml, pos, line, ls, loc, acc) when is_name_start(c) do
-    parse_prolog_attr_name_acc(rest, xml, pos, line, ls, loc, [], pos, acc)
+    parse_name_acc(rest, xml, pos, line, ls, :prolog_attr, {loc, [], acc})
   end
 
   defp parse_prolog_acc(_, _xml, pos, line, ls, _loc, acc) do
@@ -855,7 +572,7 @@ defmodule FnXML.Parser do
   end
 
   defp parse_prolog_attrs_acc(<<c, _::binary>> = rest, xml, pos, line, ls, loc, attrs, acc) when is_name_start(c) do
-    parse_prolog_attr_name_acc(rest, xml, pos, line, ls, loc, attrs, pos, acc)
+    parse_name_acc(rest, xml, pos, line, ls, :prolog_attr, {loc, attrs, acc})
   end
 
   defp parse_prolog_attrs_acc(_, _xml, pos, line, ls, _loc, _attrs, acc) do
@@ -873,31 +590,20 @@ defmodule FnXML.Parser do
   end
 
   defp parse_element_acc(<<"</", rest::binary>>, xml, pos, line, ls, acc) do
-    parse_close_tag_name_acc(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, pos + 2, acc)
+    parse_close_tag_start_acc(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, acc)
   end
 
   defp parse_element_acc(<<"<?", rest::binary>>, xml, pos, line, ls, acc) do
-    parse_pi_name_acc(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, pos + 2, acc)
+    parse_pi_start_acc(rest, xml, pos + 2, line, ls, {line, ls, pos + 1}, acc)
   end
 
   defp parse_element_acc(<<"<", c, _::binary>> = rest, xml, pos, line, ls, acc) when is_name_start(c) do
     <<"<", rest2::binary>> = rest
-    parse_open_tag_name_acc(rest2, xml, pos + 1, line, ls, {line, ls, pos + 1}, pos + 1, acc)
+    parse_name_acc(rest2, xml, pos + 1, line, ls, :open_tag, {{line, ls, pos + 1}, acc})
   end
 
   defp parse_element_acc(_, _xml, pos, line, ls, acc) do
     {[{:error, "Invalid element", {line, ls, pos}} | acc], pos, line, ls}
-  end
-
-  # === Open tag name scanning (acc, inlined) ===
-
-  defp parse_open_tag_name_acc(<<c, rest::binary>>, xml, pos, line, ls, loc, start, acc) when is_name_char(c) do
-    parse_open_tag_name_acc(rest, xml, pos + 1, line, ls, loc, start, acc)
-  end
-
-  defp parse_open_tag_name_acc(rest, xml, pos, line, ls, loc, start, acc) do
-    name = binary_part(xml, start, pos - start)
-    finish_open_tag_acc(rest, xml, pos, line, ls, name, [], loc, acc)
   end
 
   # === Open tag (acc) ===
@@ -920,25 +626,22 @@ defmodule FnXML.Parser do
   end
 
   defp finish_open_tag_acc(<<c, _::binary>> = rest, xml, pos, line, ls, name, attrs, loc, acc) when is_name_start(c) do
-    parse_attr_name_acc(rest, xml, pos, line, ls, name, attrs, loc, pos, acc)
+    parse_name_acc(rest, xml, pos, line, ls, :attr_name, {name, attrs, loc, acc})
   end
 
   defp finish_open_tag_acc(_, _xml, pos, line, ls, _name, _attrs, _loc, acc) do
     {[{:error, "Expected '>', '/>', or attribute", {line, ls, pos}} | acc], pos, line, ls}
   end
 
-  # === Close tag name scanning (acc, inlined) ===
-
-  defp parse_close_tag_name_acc(<<c, rest::binary>>, xml, pos, line, ls, loc, start, acc) when is_name_char(c) do
-    parse_close_tag_name_acc(rest, xml, pos + 1, line, ls, loc, start, acc)
-  end
-
-  defp parse_close_tag_name_acc(rest, xml, pos, line, ls, loc, start, acc) do
-    name = binary_part(xml, start, pos - start)
-    finish_close_tag_acc(rest, xml, pos, line, ls, name, loc, acc)
-  end
-
   # === Close tag (acc) ===
+
+  defp parse_close_tag_start_acc(<<c, _::binary>> = rest, xml, pos, line, ls, loc, acc) when is_name_start(c) do
+    parse_name_acc(rest, xml, pos, line, ls, :close_tag, {loc, acc})
+  end
+
+  defp parse_close_tag_start_acc(_, _xml, pos, line, ls, _loc, acc) do
+    {[{:error, "Expected element name", {line, ls, pos}} | acc], pos, line, ls}
+  end
 
   defp finish_close_tag_acc(<<">", _::binary>>, _xml, pos, line, ls, name, loc, acc) do
     {[{:close, name, loc} | acc], pos + 1, line, ls}
@@ -994,27 +697,14 @@ defmodule FnXML.Parser do
     {[{:error, "Unterminated CDATA", {line, ls, pos}} | acc], pos, line, ls}
   end
 
-  # === PI name scanning (acc, inlined) ===
+  # === PI (acc) ===
 
-  defp parse_pi_name_acc(<<c, rest::binary>>, xml, pos, line, ls, loc, start, acc) when is_name_char(c) do
-    parse_pi_name_acc(rest, xml, pos + 1, line, ls, loc, start, acc)
+  defp parse_pi_start_acc(<<c, _::binary>> = rest, xml, pos, line, ls, loc, acc) when is_name_start(c) do
+    parse_name_acc(rest, xml, pos, line, ls, :pi_name, {loc, acc})
   end
 
-  defp parse_pi_name_acc(rest, xml, pos, line, ls, loc, start, acc) do
-    name = binary_part(xml, start, pos - start)
-    skip_ws_then_pi_acc(rest, xml, pos, line, ls, name, loc, acc)
-  end
-
-  defp skip_ws_then_pi_acc(<<c, rest::binary>>, xml, pos, line, ls, name, loc, acc) when c in [?\s, ?\t, ?\r] do
-    skip_ws_then_pi_acc(rest, xml, pos + 1, line, ls, name, loc, acc)
-  end
-
-  defp skip_ws_then_pi_acc(<<?\n, rest::binary>>, xml, pos, line, _ls, name, loc, acc) do
-    skip_ws_then_pi_acc(rest, xml, pos + 1, line + 1, pos + 1, name, loc, acc)
-  end
-
-  defp skip_ws_then_pi_acc(rest, xml, pos, line, ls, name, loc, acc) do
-    parse_pi_content_acc(rest, xml, pos, line, ls, name, loc, pos, acc)
+  defp parse_pi_start_acc(_, _xml, pos, line, ls, _loc, acc) do
+    {[{:error, "Expected PI target name", {line, ls, pos}} | acc], pos, line, ls}
   end
 
   defp parse_pi_content_acc(<<"?>", _::binary>>, xml, pos, line, ls, name, loc, start, acc) do
@@ -1054,15 +744,41 @@ defmodule FnXML.Parser do
     {[{:text, content, loc} | acc], pos, line, ls}
   end
 
-  # === Attribute name scanning (acc, inlined) ===
+  # === Name parsing (acc) ===
 
-  defp parse_attr_name_acc(<<c, rest::binary>>, xml, pos, line, ls, tag, attrs, loc, start, acc) when is_name_char(c) do
-    parse_attr_name_acc(rest, xml, pos + 1, line, ls, tag, attrs, loc, start, acc)
+  defp parse_name_acc(rest, xml, pos, line, ls, context, extra) do
+    scan_name_acc(rest, xml, pos, line, ls, context, extra, pos)
   end
 
-  defp parse_attr_name_acc(rest, xml, pos, line, ls, tag, attrs, loc, start, acc) do
+  defp scan_name_acc(<<c, rest::binary>>, xml, pos, line, ls, context, extra, start) when is_name_char(c) do
+    scan_name_acc(rest, xml, pos + 1, line, ls, context, extra, start)
+  end
+
+  defp scan_name_acc(rest, xml, pos, line, ls, context, extra, start) do
     name = binary_part(xml, start, pos - start)
+    continue_acc(context, rest, xml, pos, line, ls, name, extra)
+  end
+
+  # === Continuations (acc) ===
+
+  defp continue_acc(:open_tag, rest, xml, pos, line, ls, name, {loc, acc}) do
+    finish_open_tag_acc(rest, xml, pos, line, ls, name, [], loc, acc)
+  end
+
+  defp continue_acc(:close_tag, rest, xml, pos, line, ls, name, {loc, acc}) do
+    finish_close_tag_acc(rest, xml, pos, line, ls, name, loc, acc)
+  end
+
+  defp continue_acc(:attr_name, rest, xml, pos, line, ls, name, {tag, attrs, loc, acc}) do
     parse_attr_eq_acc(rest, xml, pos, line, ls, tag, name, attrs, loc, acc)
+  end
+
+  defp continue_acc(:prolog_attr, rest, xml, pos, line, ls, name, {loc, attrs, acc}) do
+    parse_prolog_attr_eq_acc(rest, xml, pos, line, ls, name, loc, attrs, acc)
+  end
+
+  defp continue_acc(:pi_name, rest, xml, pos, line, ls, name, {loc, acc}) do
+    skip_ws_then_pi_acc(rest, xml, pos, line, ls, name, loc, acc)
   end
 
   # === Attribute parsing (acc) ===
@@ -1125,17 +841,6 @@ defmodule FnXML.Parser do
     {[{:error, "Unterminated attribute value", {line, ls, pos}} | acc], pos, line, ls}
   end
 
-  # === Prolog attribute name scanning (acc, inlined) ===
-
-  defp parse_prolog_attr_name_acc(<<c, rest::binary>>, xml, pos, line, ls, loc, attrs, start, acc) when is_name_char(c) do
-    parse_prolog_attr_name_acc(rest, xml, pos + 1, line, ls, loc, attrs, start, acc)
-  end
-
-  defp parse_prolog_attr_name_acc(rest, xml, pos, line, ls, loc, attrs, start, acc) do
-    name = binary_part(xml, start, pos - start)
-    parse_prolog_attr_eq_acc(rest, xml, pos, line, ls, name, loc, attrs, acc)
-  end
-
   # === Prolog attribute (acc) ===
 
   defp parse_prolog_attr_eq_acc(<<"=", rest::binary>>, xml, pos, line, ls, name, loc, attrs, acc) do
@@ -1196,4 +901,17 @@ defmodule FnXML.Parser do
     {[{:error, "Unterminated attribute value", {line, ls, pos}} | acc], pos, line, ls}
   end
 
+  # === Helpers (acc) ===
+
+  defp skip_ws_then_pi_acc(<<c, rest::binary>>, xml, pos, line, ls, name, loc, acc) when c in [?\s, ?\t, ?\r] do
+    skip_ws_then_pi_acc(rest, xml, pos + 1, line, ls, name, loc, acc)
+  end
+
+  defp skip_ws_then_pi_acc(<<?\n, rest::binary>>, xml, pos, line, _ls, name, loc, acc) do
+    skip_ws_then_pi_acc(rest, xml, pos + 1, line + 1, pos + 1, name, loc, acc)
+  end
+
+  defp skip_ws_then_pi_acc(rest, xml, pos, line, ls, name, loc, acc) do
+    parse_pi_content_acc(rest, xml, pos, line, ls, name, loc, pos, acc)
+  end
 end

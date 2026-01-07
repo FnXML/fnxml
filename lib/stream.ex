@@ -5,6 +5,16 @@ end
 defmodule FnXML.Stream do
   @moduledoc """
   This module provides functions for transforming a stream of XML elements.
+
+  Event formats:
+  - `{:doc_start, nil}` - Document start marker
+  - `{:doc_end, nil}` - Document end marker
+  - `{:open, tag, attrs, loc}` - Opening tag
+  - `{:close, tag}` or `{:close, tag, loc}` - Closing tag
+  - `{:text, content, loc}` - Text content
+  - `{:comment, content, loc}` - Comment
+  - `{:prolog, "xml", attrs, loc}` - XML prolog
+  - `{:proc_inst, name, content, loc}` - Processing instruction
   """
 
   alias FnXML.Element
@@ -15,13 +25,13 @@ defmodule FnXML.Stream do
   options:
     - pretty: if true, format the XML with newlines and indentation (defaults to false)
     - indent: the number of spaces to use for indentation (defaults to 2)
-    
+
   ## Example
 
       iex> [
-      iex>   {:open, [tag: "fizz:foo", attributes: [{"a", "1"}]]},
-      iex>   {:text, [content: "hello"]},
-      iex>   {:close, [tag: "fizz:foo"]}
+      iex>   {:open, "fizz:foo", [{"a", "1"}], {1, 0, 1}},
+      iex>   {:text, "hello", {1, 0, 20}},
+      iex>   {:close, "fizz:foo"}
       iex> ]
       iex> |> FnXML.Stream.to_xml()
       iex> |> Enum.join()
@@ -63,30 +73,29 @@ defmodule FnXML.Stream do
     |> add_leading_space()
   end
 
-  defp format_element({:prolog, parts}, path, _acc) do
-    tag = Element.tag(parts) |> Element.tag_name()
-    attrs = format_attributes(Element.attributes(parts))
+  # Document start/end markers emit nothing
+  defp format_element({:doc_start, _}, path, _acc), do: {length(path), ""}
+  defp format_element({:doc_end, _}, path, _acc), do: {length(path), ""}
 
-    {length(path), "<?#{tag}#{attrs}?>"}
+  defp format_element({:prolog, tag, attrs, _loc}, path, _acc) do
+    attrs_str = format_attributes(attrs)
+    {length(path), "<?#{tag}#{attrs_str}?>"}
   end
 
-  defp format_element({:open, parts}, path, _acc) do
-    tag = Element.tag(parts) |> Element.tag_name()
-    close = %{true: "/", false: ""}[Element.close?(parts)]
-    attrs = format_attributes(Element.attributes(parts))
-
-    {length(path) - 1, "<#{tag}#{attrs}#{close}>"}
+  defp format_element({:open, tag, attrs, _loc}, path, _acc) do
+    attrs_str = format_attributes(attrs)
+    {length(path) - 1, "<#{tag}#{attrs_str}>"}
   end
 
-  defp format_element({:close, parts}, path, _acc) do
-    tag = Element.tag(parts) |> Element.tag_name()
-
+  defp format_element({:close, tag}, path, _acc) do
     {length(path) - 1, "</#{tag}>"}
   end
 
-  defp format_element({:text, parts}, path, _acc) do
-    content = Element.content(parts)
+  defp format_element({:close, tag, _loc}, path, _acc) do
+    {length(path) - 1, "</#{tag}>"}
+  end
 
+  defp format_element({:text, content, _loc}, path, _acc) do
     if Regex.match?(~r/[<>]/, content) do
       {length(path), "<![CDATA[#{content}]]>"}
     else
@@ -94,15 +103,12 @@ defmodule FnXML.Stream do
     end
   end
 
-  defp format_element({:comment, parts}, path, _acc) do
-    {length(path), "<!--#{Element.content(parts)}-->"}
+  defp format_element({:comment, content, _loc}, path, _acc) do
+    {length(path), "<!--#{content}-->"}
   end
 
-  defp format_element({:proc_inst, parts}, path, _acc) do
-    tag = Element.tag(parts) |> Element.tag_name()
-    content = Element.content(parts)
-
-    {length(path), "<?#{tag} #{content}?>"}
+  defp format_element({:proc_inst, name, content, _loc}, path, _acc) do
+    {length(path), "<?#{name} #{content}?>"}
   end
 
   @doc """
@@ -112,7 +118,7 @@ defmodule FnXML.Stream do
 
   fun:
       a function that takes three arguments:
-          - element: the current element, ex: {:open, %{tag: "foo"}}
+          - element: the current element, ex: {:open, "foo", [], {1, 0, 1}}
           - stack: the current stack of open tags (the path), ex: [ {"bar", ""}, {"foo", ""} ], each element on the stack
             contains a tuple: {tag, namespace}.
           - the current accumulator
@@ -136,49 +142,79 @@ defmodule FnXML.Stream do
 
   defp initial_acc(acc, fun), do: {[], acc, fun}
 
-  defp process_item({:open, parts} = element, {stack, acc, fun}) do
-    tag = Element.tag(parts)
-    new_stack = if not Element.close?(parts), do: [tag | stack], else: stack
-
+  defp process_item({:open, tag, _attrs, _loc} = element, {stack, acc, fun}) do
+    tag_tuple = Element.tag(tag)
+    new_stack = [tag_tuple | stack]
     fun.(element, new_stack, acc) |> next(new_stack, fun)
   end
 
-  defp process_item({:close, parts} = element, {[], _, _}) do
-    error(
-      element,
-      "unexpected close tag #{Element.tag(parts) |> Element.tag_name()}, missing open tag"
-    )
+  defp process_item({:close, _tag} = element, {[], _, _}) do
+    tag_str = Element.tag_string(element)
+    error(element, "unexpected close tag #{tag_str}, missing open tag")
   end
 
-  defp process_item({:close, parts} = element, {[head | new_stack] = stack, acc, fun}) do
-    tag = Element.tag(parts)
+  defp process_item({:close, _tag, _loc} = element, {[], _, _}) do
+    tag_str = Element.tag_string(element)
+    error(element, "unexpected close tag #{tag_str}, missing open tag")
+  end
+
+  defp process_item({:close, tag} = element, {[head | new_stack] = stack, acc, fun}) do
+    tag_tuple = Element.tag(tag)
 
     cond do
-      tag == head ->
+      tag_tuple == head ->
         fun.(element, stack, acc) |> next(new_stack, fun)
 
-      tag != head ->
+      tag_tuple != head ->
         error(
           element,
-          "mis-matched close tag #{inspect(tag)}, expecting: #{Element.tag_name(head)}"
+          "mis-matched close tag #{inspect(tag_tuple)}, expecting: #{Element.tag_name(head)}"
         )
     end
   end
 
-  defp process_item({:text, _} = element, {[], acc, fun}) do
-    if Element.content(element) |> String.match?(~r/^[\s\n]*$/) do
+  defp process_item({:close, tag, _loc} = element, {[head | new_stack] = stack, acc, fun}) do
+    tag_tuple = Element.tag(tag)
+
+    cond do
+      tag_tuple == head ->
+        fun.(element, stack, acc) |> next(new_stack, fun)
+
+      tag_tuple != head ->
+        error(
+          element,
+          "mis-matched close tag #{inspect(tag_tuple)}, expecting: #{Element.tag_name(head)}"
+        )
+    end
+  end
+
+  defp process_item({:text, content, _loc} = element, {[], acc, fun}) do
+    if String.match?(content, ~r/^[\s\n]*$/) do
       acc |> next([], fun)
     else
       error(element, "Text element outside of a tag: '#{element |> inspect()}', a root element is required")
     end
   end
 
-  defp process_item({id, _} = element, {stack, acc, fun}) when id in @valid_element_id do
+  defp process_item({id, _, _} = element, {stack, acc, fun}) when id in @valid_element_id do
     fun.(element, stack, acc) |> next(stack, fun)
   end
 
-  defp process_item({id, _} = element, {_stack, _acc, _fun}) do
-    error(element, "unknown element type #{inspect(id)}")
+  defp process_item({id, _, _, _} = element, {stack, acc, fun}) when id in @valid_element_id do
+    fun.(element, stack, acc) |> next(stack, fun)
+  end
+
+  # Document start/end markers - pass through without modifying stack
+  defp process_item({:doc_start, _} = element, {stack, acc, fun}) do
+    fun.(element, stack, acc) |> next(stack, fun)
+  end
+
+  defp process_item({:doc_end, _} = element, {stack, acc, fun}) do
+    fun.(element, stack, acc) |> next(stack, fun)
+  end
+
+  defp process_item(element, {_stack, _acc, _fun}) do
+    error(element, "unknown element type #{inspect(element)}")
   end
 
   defp next({element, acc}, stack, fun), do: {:cont, element, {stack, acc, fun}}
@@ -205,8 +241,8 @@ defmodule FnXML.Stream do
 
   if fun is nil, the default function will display each element to the console.
   otherwise fun must be a function that takes two arguments:
-    - element: the current element, ex: {:open, %{tag: "foo"}}
-    - path: the current stack of open tags (the path), ex: [ "bar", "foo" ], where "foo" is the parent of "bar"
+    - element: the current element, ex: {:open, "foo", [], {1, 0, 1}}
+    - path: the current stack of open tags (the path), ex: [ {"bar", ""}, {"foo", ""} ]
 
   The return value of the fun is discarded, and has no effect on the stream.  With tap, there is no way to modify the stream.
   """
@@ -216,8 +252,8 @@ defmodule FnXML.Stream do
 
     inspect_fun =
       fun ||
-        fn {type, meta}, path ->
-          IO.puts("#{label}: #{type}#{inspect(meta)}, path: #{inspect(path)}")
+        fn element, path ->
+          IO.puts("#{label}: #{inspect(element)}, path: #{inspect(path)}")
         end
 
     inspector = fn element, path, _ ->
@@ -229,42 +265,13 @@ defmodule FnXML.Stream do
   end
 
   @doc """
-  Strip the location meta data from the stream of XML elements.
-
-  ## Example
-
-    iex> FnXML.Parser.parse("<foo>with loc meta</foo>")
-    iex> |> Enum.map(fn x -> x end)
-    [
-      open: [tag: "foo", loc: {1, 0, 1}],
-      text: [content: "with loc meta", loc: {1, 0, 5}],
-      close: [tag: "foo", loc: {1, 0, 19}]
-    ]  
-
-    iex> FnXML.Parser.parse("<foo>no loc meta</foo>")
-    iex> |> FnXML.Stream.strip_location_meta()
-    iex> |> Enum.map(fn x -> x end)
-    [
-      {:open, [tag: "foo"]},
-      {:text, [content: "no loc meta"]},
-      {:close, [tag: "foo"]}
-    ]  
-
-  """
-  def strip_location_meta(stream) do
-    transform(stream, fn {id, [tag | meta]}, _, _ ->
-      {{id, [tag | Keyword.drop(meta, [:loc])]}, []}
-    end)
-  end
-
-  @doc """
   Filter the stream of XML elements.
 
   arguments:
     - stream: the stream to filter
     - fun: a function that takes two arguments:
-      - element: the current element, ex: {:open, %{tag: "foo"}}
-      - path: the current stack of open tags (the path), ex: [ "bar", "foo" ], where "foo" is the parent of "bar"
+      - element: the current element, ex: {:open, "foo", [], {1, 0, 1}}
+      - path: the current stack of open tags (the path), ex: [ {"bar", ""}, {"foo", ""} ]
       - acc: an accumulator which can be used to keep state between invocations.
 
       The function must return a tuple with `{ filter boolean, acc }`  The filter boolean indicates if the element
@@ -273,23 +280,28 @@ defmodule FnXML.Stream do
 
   ## Example
 
-    iex> stream = FnXML.Parser.parse("<foo><bar>1</bar><bar>2</bar></foo>")
-    iex> FnXML.Stream.filter(stream, fn _, [{tag, ""} | _], _ -> {tag == "bar", []} end)
-    iex> |> Enum.map(fn x -> x end)
-    [
-      {:open, [tag: "bar", loc: {1, 0, 6}]},
-      {:text, [content: "1", loc: {1, 0, 10}]},
-      {:close, [tag: "bar", loc: {1, 0, 12}]},
-      {:open, [tag: "bar", loc: {1, 0, 18}]},
-      {:text, [content: "2", loc: {1, 0, 22}]},
-      {:close, [tag: "bar", loc: {1, 0, 24}]}
-    ]  
+      iex> stream = FnXML.Parser.parse("<foo><bar>1</bar><bar>2</bar></foo>")
+      iex> FnXML.Stream.filter(stream, fn _, [{tag, ""} | _], _ -> {tag == "bar", []} end)
+      iex> |> Enum.map(fn x -> x end)
+      [
+        {:doc_start, nil},
+        {:open, "bar", [], {1, 0, 6}},
+        {:text, "1", {1, 0, 10}},
+        {:close, "bar", {1, 0, 12}},
+        {:open, "bar", [], {1, 0, 18}},
+        {:text, "2", {1, 0, 22}},
+        {:close, "bar", {1, 0, 24}},
+        {:doc_end, nil}
+      ]
   """
   def filter(stream, fun, acc \\ []) do
     FnXML.Stream.transform(
       stream,
       acc,
       fn
+        # Pass through document start/end markers
+        {:doc_start, _} = element, _path, acc -> {element, acc}
+        {:doc_end, _} = element, _path, acc -> {element, acc}
         element, path, acc ->
           case fun.(element, path, acc) do
             {true, acc} -> {element, acc}
@@ -304,7 +316,7 @@ defmodule FnXML.Stream do
   """
   def filter_ws(stream) do
     filter(stream, fn
-      {:text, meta}, _, acc -> {not (Element.content(meta) |> String.match?(~r/^\s*$/)), acc}
+      {:text, content, _loc}, _, acc -> {not String.match?(content, ~r/^\s*$/), acc}
       _, _, acc -> {true, acc}
     end)
   end
@@ -316,15 +328,18 @@ defmodule FnXML.Stream do
     include = Keyword.get(opts, :include, not Keyword.get(opts, :exclude, false))
 
     filter(stream, fn
-      {:open, meta}, _, acc ->
-        {_tag, ns} = Element.tag(meta)
+      {:open, tag, _attrs, _loc}, _, acc ->
+        {_tag, ns} = Element.tag(tag)
         result = if ns in ns_list, do: include, else: not include
         {result, [result | acc]}
 
-      {:close, _}, _, [result | rest] ->
+      {:close, _tag}, _, [result | rest] ->
         {result, rest}
 
-      {_, _}, _, [result | _] = acc ->
+      {:close, _tag, _loc}, _, [result | rest] ->
+        {result, rest}
+
+      _, _, [result | _] = acc ->
         {result, acc}
     end)
   end

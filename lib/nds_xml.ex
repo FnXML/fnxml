@@ -4,7 +4,12 @@ defmodule FnXML.Stream.NativeDataStruct.Format.XML do
   @behaviour NDS.Formatter
 
   @doc """
-  Emit returns a list of XML stream elements.
+  Emit returns a list of XML stream events in the new event format.
+
+  Event formats:
+  - `{:open, tag, attrs, loc}` - Opening tag with attributes
+  - `{:close, tag}` - Closing tag
+  - `{:text, content, loc}` - Text content
 
   ## Examples
 
@@ -12,40 +17,33 @@ defmodule FnXML.Stream.NativeDataStruct.Format.XML do
       iex> nds = NDS.Encoder.encode(data, [tag_from_parent: "foo"])
       iex> NDS.Format.XML.emit(nds)
       [
-        open: [tag: "foo", attributes: [{"c", "hi"}, {"d", "4"}]],
-        open: [tag: "a"],
-        text: [content: "hi"],
-        close: [tag: "a"],
-        open: [tag: "b", attributes: [{"a", "1"}, {"b",  "1"}]],
-        open: [tag: "info"],
-        text: [content: "info"],
-        close: [tag: "info"],
-        close: [tag: "b"],
-        close: [tag: "foo"]
-      ]      
+        {:open, "foo", [{"c", "hi"}, {"d", "4"}], nil},
+        {:open, "a", [], nil},
+        {:text, "hi", nil},
+        {:close, "a"},
+        {:open, "b", [{"a", "1"}, {"b", "1"}], nil},
+        {:open, "info", [], nil},
+        {:text, "info", nil},
+        {:close, "info"},
+        {:close, "b"},
+        {:close, "foo"}
+      ]
   """
   @impl NDS.Formatter
   def emit(nds, opts \\ [])
-  def emit(%NDS{content: []} = nds, _opts), do: [open_tag(nds) |> close()]
+  def emit(%NDS{content: []} = nds, _opts), do: [open_tag(nds), close_tag(nds)]
 
   def emit(%NDS{} = nds, _opts),
     do: [open_tag(nds)] ++ content_list(nds.content) ++ [close_tag(nds)]
 
-  def open_tag(%NDS{tag: tag, namespace: "", attributes: []}), do: {:open, [tag: tag]}
-
   def open_tag(%NDS{tag: tag, namespace: "", attributes: attrs}),
-    do: {:open, [tag: tag, attributes: attrs]}
-
-  def open_tag(%NDS{tag: tag, namespace: namespace, attributes: []}),
-    do: {:open, [tag: "#{namespace}:#{tag}"]}
+    do: {:open, tag, attrs, nil}
 
   def open_tag(%NDS{tag: tag, namespace: namespace, attributes: attrs}),
-    do: {:open, [tag: "#{namespace}:#{tag}", attributes: attrs]}
+    do: {:open, "#{namespace}:#{tag}", attrs, nil}
 
-  def close({el, [tag | rest]}), do: {el, [tag | [{:close, true} | rest]]}
-
-  def close_tag(%NDS{tag: tag, namespace: ""}), do: {:close, [tag: tag]}
-  def close_tag(%NDS{tag: tag, namespace: namespace}), do: {:close, [tag: "#{namespace}:#{tag}"]}
+  def close_tag(%NDS{tag: tag, namespace: ""}), do: {:close, tag}
+  def close_tag(%NDS{tag: tag, namespace: namespace}), do: {:close, "#{namespace}:#{tag}"}
 
   @doc """
   this iterates over content and generates content elements.  It needs to track the order of the content
@@ -58,14 +56,14 @@ defmodule FnXML.Stream.NativeDataStruct.Format.XML do
       iex> nds = [{:child, "a", NDS.Encoder.encode(data, [tag_from_parent: "foo"])}]
       iex> NDS.Format.XML.content_list(nds)
       [
-        {:open, [tag: "foo"]},
-        {:open, [tag: "a"]},
-        {:text, [content: "hello"]},
-        {:close, [tag: "a"]},
-        {:open, [tag: "a"]},
-        {:text, [content: "world"]},
-        {:close, [tag: "a"]},
-        {:close, [tag: "foo"]}
+        {:open, "foo", [], nil},
+        {:open, "a", [], nil},
+        {:text, "hello", nil},
+        {:close, "a"},
+        {:open, "a", [], nil},
+        {:text, "world", nil},
+        {:close, "a"},
+        {:close, "foo"}
       ]
   """
 
@@ -73,6 +71,6 @@ defmodule FnXML.Stream.NativeDataStruct.Format.XML do
     Enum.map(list, &content/1) |> List.flatten()
   end
 
-  def content({:text, _k, text}), do: {:text, [content: text]}
+  def content({:text, _k, text}), do: {:text, text, nil}
   def content({:child, _k, %NDS{} = nds}), do: emit(nds)
 end

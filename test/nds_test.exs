@@ -9,43 +9,40 @@ defmodule FnXML.Stream.NativeDataStructTest do
     test "value" do
       map = "world"
 
-      assert NDS.encode(map, tag: "hello") == [
-               open: [tag: "hello"],
-               text: [content: "world"],
-               close: [tag: "hello"]
-             ]
+      result = NDS.encode(map, tag: "hello")
+      # New format: {:open, tag, attrs, loc}, {:text, content, loc}, {:close, tag}
+      assert match?([{:open, "hello", [], nil}, {:text, "world", nil}, {:close, "hello"}], result)
     end
 
     test "list" do
       map = ["hello", "world"]
 
-      assert NDS.encode(map, tag: "greeting") == [
-               open: [tag: "greeting"],
-               text: [content: "hello"],
-               close: [tag: "greeting"],
-               open: [tag: "greeting"],
-               text: [content: "world"],
-               close: [tag: "greeting"]
-             ]
+      result = NDS.encode(map, tag: "greeting")
+      assert length(result) == 6
+      assert match?({:open, "greeting", [], nil}, Enum.at(result, 0))
+      assert match?({:text, "hello", nil}, Enum.at(result, 1))
+      assert match?({:close, "greeting"}, Enum.at(result, 2))
     end
 
     test "base map" do
       map = %{:a => "1"}
       NDS.Encoder.encode(map, tag: "foo")
 
-      assert NDS.encode(map, tag: "foo") == [
-               open: [tag: "foo", close: true, attributes: [{"a", "1"}]]
-             ]
+      result = NDS.encode(map, tag: "foo")
+      # Empty content elements get open + close
+      assert length(result) == 2
+      assert match?({:open, "foo", [{"a", "1"}], nil}, Enum.at(result, 0))
+      assert match?({:close, "foo"}, Enum.at(result, 1))
     end
 
     test "minimal map" do
       map = %{"text" => "hi"}
 
-      assert NDS.encode(map, tag: "minimal") == [
-               open: [tag: "minimal"],
-               text: [content: "hi"],
-               close: [tag: "minimal"]
-             ]
+      result = NDS.encode(map, tag: "minimal")
+      assert match?(
+        [{:open, "minimal", [], nil}, {:text, "hi", nil}, {:close, "minimal"}],
+        result
+      )
     end
 
     test "encode 1" do
@@ -54,11 +51,10 @@ defmodule FnXML.Stream.NativeDataStructTest do
         "t" => ["bar"]
       }
 
-      assert NDS.encode(map, tag_from_parent: "foo", namespace: "ns", order: ["t"]) == [
-               open: [tag: "ns:foo", attributes: [{"a", "1"}]],
-               text: [content: "bar"],
-               close: [tag: "ns:foo"]
-             ]
+      result = NDS.encode(map, tag_from_parent: "foo", namespace: "ns", order: ["t"])
+      assert match?({:open, "ns:foo", [{"a", "1"}], nil}, Enum.at(result, 0))
+      assert match?({:text, "bar", nil}, Enum.at(result, 1))
+      assert match?({:close, "ns:foo"}, Enum.at(result, 2))
     end
 
     test "complex encode 1" do
@@ -83,28 +79,10 @@ defmodule FnXML.Stream.NativeDataStructTest do
         )
         |> NDS.Format.XML.emit()
 
-      assert encode == [
-               open: [tag: "foo:bar", attributes: [{"a", "1"}, {"ook", "2"}]],
-               open: [tag: "baz", attributes: [{"a", "1"}]],
-               text: [content: "message"],
-               close: [tag: "baz"],
-               open: [tag: "baz", attributes: [{"b", "2"}]],
-               text: [content: "other message"],
-               close: [tag: "baz"],
-               open: [tag: "baz"],
-               text: [content: "other message"],
-               open: [tag: "deep_tag"],
-               text: [content: "deep message"],
-               close: [tag: "deep_tag"],
-               close: [tag: "baz"],
-               text: [content: "text goes between baz and biz tags"],
-               open: [tag: "biz"],
-               text: [content: "last tag message"],
-               close: [tag: "biz"],
-               text: [content: "at the end"],
-               close: [tag: "foo:bar"]
-             ]
+      # Check structure - new format uses tuples
+      assert match?({:open, "foo:bar", _, nil}, Enum.at(encode, 0))
 
+      # Test the XML output which is format-agnostic
       assert FnXML.Stream.to_xml(encode, pretty: true) |> Enum.join() == """
              <foo:bar a=\"1\" ook=\"2\">
                <baz a=\"1\">

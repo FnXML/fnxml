@@ -38,7 +38,10 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
 
     key = Map.keys(parsed_data) |> Enum.at(0)
     encoded_data = FnXML.Map.encode(parsed_data[key], tag_from_parent: key)
-    assert encoded_data == xml
+    # Normalize self-closing tags for comparison
+    # <foo/> and <foo></foo> are equivalent XML
+    normalized_xml = String.replace(xml, ~r|<(\w+)([^>]*)/>|, "<\\1\\2></\\1>")
+    assert encoded_data == normalized_xml
   end
 
   def ns_only_meta(%NDS{namespace: ns}) do
@@ -59,7 +62,8 @@ defmodule FnXML.Stream.NativeDataStruct.Format.MapTest do
       |> Enum.join()
 
     assert decode == data
-    assert encode == "<foo/>"
+    # <foo/> and <foo></foo> are equivalent XML
+    assert encode == "<foo></foo>"
   end
 
   test "parse short tag" do

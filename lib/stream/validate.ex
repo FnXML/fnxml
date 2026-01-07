@@ -1,6 +1,6 @@
 defmodule FnXML.Stream.Validate do
   @moduledoc """
-  Composable validation functions for XML token streams.
+  Composable validation functions for XML event streams.
 
   These functions can be included in a stream pipeline to validate
   well-formedness, attribute uniqueness, and namespace declarations.
@@ -50,7 +50,7 @@ defmodule FnXML.Stream.Validate do
       iex> FnXML.Parser.parse("<a><b></b></a>")
       ...> |> FnXML.Stream.Validate.well_formed()
       ...> |> Enum.to_list()
-      [{:open, [...]}, {:open, [...]}, {:close, [...]}, {:close, [...]}]
+      [{:open, "a", [], _}, {:open, "b", [], _}, {:close, "b"}, {:close, "a"}]
 
       iex> FnXML.Parser.parse("<a></b>")
       ...> |> FnXML.Stream.Validate.well_formed()
@@ -65,27 +65,30 @@ defmodule FnXML.Stream.Validate do
     end)
   end
 
-  defp validate_structure({:open, meta} = elem, stack, _on_error) do
-    if Element.close?(meta) do
-      # Self-closing tag, don't push to stack
-      {[elem], stack}
-    else
-      tag = Element.tag(meta)
-      {[elem], [tag | stack]}
-    end
+  defp validate_structure({:open, tag, _attrs, _loc} = elem, stack, _on_error) do
+    tag_tuple = Element.tag(tag)
+    {[elem], [tag_tuple | stack]}
   end
 
-  defp validate_structure({:close, meta} = elem, [], on_error) do
-    {tag_name, ns} = Element.tag(meta)
+  defp validate_structure({:close, tag} = elem, [], on_error) do
+    {tag_name, ns} = Element.tag(tag)
     full_tag = if ns == "", do: tag_name, else: "#{ns}:#{tag_name}"
-    {line, col} = Element.position(meta)
+
+    error = Error.unexpected_close(full_tag, {0, 0})
+    handle_error(error, elem, [], on_error)
+  end
+
+  defp validate_structure({:close, tag, loc} = elem, [], on_error) do
+    {tag_name, ns} = Element.tag(tag)
+    full_tag = if ns == "", do: tag_name, else: "#{ns}:#{tag_name}"
+    {line, col} = loc_to_position(loc)
 
     error = Error.unexpected_close(full_tag, {line, col})
     handle_error(error, elem, [], on_error)
   end
 
-  defp validate_structure({:close, meta} = elem, [expected | rest], on_error) do
-    actual = Element.tag(meta)
+  defp validate_structure({:close, tag} = elem, [expected | rest], on_error) do
+    actual = Element.tag(tag)
 
     if actual == expected do
       {[elem], rest}
@@ -94,7 +97,23 @@ defmodule FnXML.Stream.Validate do
       {act_name, act_ns} = actual
       expected_str = if exp_ns == "", do: exp_name, else: "#{exp_ns}:#{exp_name}"
       actual_str = if act_ns == "", do: act_name, else: "#{act_ns}:#{act_name}"
-      {line, col} = Element.position(meta)
+
+      error = Error.tag_mismatch(expected_str, actual_str, {0, 0})
+      handle_error(error, elem, [expected | rest], on_error)
+    end
+  end
+
+  defp validate_structure({:close, tag, loc} = elem, [expected | rest], on_error) do
+    actual = Element.tag(tag)
+
+    if actual == expected do
+      {[elem], rest}
+    else
+      {exp_name, exp_ns} = expected
+      {act_name, act_ns} = actual
+      expected_str = if exp_ns == "", do: exp_name, else: "#{exp_ns}:#{exp_name}"
+      actual_str = if act_ns == "", do: act_name, else: "#{act_ns}:#{act_name}"
+      {line, col} = loc_to_position(loc)
 
       error = Error.tag_mismatch(expected_str, actual_str, {line, col})
       handle_error(error, elem, [expected | rest], on_error)
@@ -121,7 +140,7 @@ defmodule FnXML.Stream.Validate do
       iex> FnXML.Parser.parse(~s(<a x="1" y="2"/>))
       ...> |> FnXML.Stream.Validate.attributes()
       ...> |> Enum.to_list()
-      [{:open, [...]}]
+      [{:open, "a", [{"x", "1"}, {"y", "2"}], _}, {:close, "a"}]
 
       iex> FnXML.Parser.parse(~s(<a x="1" x="2"/>))
       ...> |> FnXML.Stream.Validate.attributes()
@@ -132,13 +151,13 @@ defmodule FnXML.Stream.Validate do
     on_error = Keyword.get(opts, :on_error, :raise)
 
     Stream.map(stream, fn
-      {:open, meta} = elem ->
-        case check_duplicate_attrs(Element.attributes(meta)) do
+      {:open, _tag, attrs, loc} = elem ->
+        case check_duplicate_attrs(attrs) do
           :ok ->
             elem
 
           {:error, dup_attr} ->
-            {line, col} = Element.position(meta)
+            {line, col} = loc_to_position(loc)
             error = Error.duplicate_attribute(dup_attr, {line, col})
 
             case on_error do
@@ -180,7 +199,7 @@ defmodule FnXML.Stream.Validate do
       iex> FnXML.Parser.parse(~s(<root xmlns:ns="http://example.com"><ns:child/></root>))
       ...> |> FnXML.Stream.Validate.namespaces()
       ...> |> Enum.to_list()
-      [{:open, [...]}, {:open, [...]}, {:close, [...]}, {:close, [...]}]
+      [{:open, "root", _, _}, {:open, "ns:child", [], _}, {:close, "ns:child"}, {:close, "root"}]
 
       iex> FnXML.Parser.parse("<ns:root/>")
       ...> |> FnXML.Stream.Validate.namespaces()
@@ -199,26 +218,20 @@ defmodule FnXML.Stream.Validate do
     end)
   end
 
-  defp validate_namespaces({:open, meta} = elem, [current_scope | rest_scopes], on_error) do
+  defp validate_namespaces({:open, tag, attrs, loc} = elem, [current_scope | rest_scopes], on_error) do
     # Extract xmlns declarations from attributes
-    attrs = Element.attributes(meta)
     new_decls = extract_xmlns_decls(attrs)
     new_scope = Map.merge(current_scope, new_decls)
 
     # Check element namespace prefix
-    {_tag_name, prefix} = Element.tag(meta)
+    {_tag_name, prefix} = Element.tag(tag)
 
-    case validate_prefix(prefix, new_scope, meta) do
+    case validate_prefix(prefix, new_scope, loc) do
       :ok ->
         # Check attribute namespace prefixes too
-        case validate_attr_prefixes(attrs, new_scope, meta) do
+        case validate_attr_prefixes(attrs, new_scope, loc) do
           :ok ->
-            if Element.close?(meta) do
-              # Self-closing, don't push scope
-              {[elem], [current_scope | rest_scopes]}
-            else
-              {[elem], [new_scope, current_scope | rest_scopes]}
-            end
+            {[elem], [new_scope, current_scope | rest_scopes]}
 
           {:error, error} ->
             handle_error(error, elem, [current_scope | rest_scopes], on_error)
@@ -229,12 +242,22 @@ defmodule FnXML.Stream.Validate do
     end
   end
 
-  defp validate_namespaces({:close, _meta} = elem, [_current | rest], _on_error) do
+  defp validate_namespaces({:close, _tag} = elem, [_current | rest], _on_error) do
     # Pop namespace scope
     {[elem], rest}
   end
 
-  defp validate_namespaces({:close, _meta} = elem, [], _on_error) do
+  defp validate_namespaces({:close, _tag, _loc} = elem, [_current | rest], _on_error) do
+    # Pop namespace scope
+    {[elem], rest}
+  end
+
+  defp validate_namespaces({:close, _tag} = elem, [], _on_error) do
+    # Edge case: more closes than opens (will be caught by well_formed)
+    {[elem], []}
+  end
+
+  defp validate_namespaces({:close, _tag, _loc} = elem, [], _on_error) do
     # Edge case: more closes than opens (will be caught by well_formed)
     {[elem], []}
   end
@@ -256,18 +279,18 @@ defmodule FnXML.Stream.Validate do
     |> Enum.into(%{})
   end
 
-  defp validate_prefix("", _scope, _meta), do: :ok
+  defp validate_prefix("", _scope, _loc), do: :ok
 
-  defp validate_prefix(prefix, scope, meta) do
+  defp validate_prefix(prefix, scope, loc) do
     if Map.has_key?(scope, prefix) do
       :ok
     else
-      {line, col} = Element.position(meta)
+      {line, col} = loc_to_position(loc)
       {:error, Error.undeclared_namespace(prefix, {line, col})}
     end
   end
 
-  defp validate_attr_prefixes(attrs, scope, meta) do
+  defp validate_attr_prefixes(attrs, scope, loc) do
     # Check namespace prefixes in attribute names (e.g., ns:attr="value")
     attrs
     |> Enum.reject(fn {name, _} ->
@@ -280,13 +303,15 @@ defmodule FnXML.Stream.Validate do
           nil
 
         [prefix, _local] ->
-          case validate_prefix(prefix, scope, meta) do
+          case validate_prefix(prefix, scope, loc) do
             :ok -> nil
             error -> error
           end
       end
     end)
   end
+
+  defp loc_to_position({line, line_start, abs_pos}), do: {line, abs_pos - line_start}
 
   # Handle errors according to on_error setting
   defp handle_error(error, _elem, _stack, :raise), do: raise(error)

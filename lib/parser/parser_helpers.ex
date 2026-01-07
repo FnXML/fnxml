@@ -61,12 +61,63 @@ defmodule FnXML.Parser.Constructs do
     |> unwrap_and_tag(:tag)
   end
 
-  def sort_components(list, key_order \\ [:tag, :close, :attributes, :loc]) do
-    list = List.flatten(list)
-    index = fn list, item -> Enum.find_index(list, &Kernel.==(&1, item)) end
+  # Legacy sort_components - kept for reference, replaced by direct builders below
+  # def sort_components(list, key_order \\ [:tag, :close, :attributes, :loc]) do
+  #   list = List.flatten(list)
+  #   index = fn list, item -> Enum.find_index(list, &Kernel.==(&1, item)) end
+  #   Enum.sort_by(list, fn {k, _} -> index.(key_order, k) end)
+  #   |> Enum.filter(fn {_, v} -> v != nil and v != "" and v != [] end)
+  # end
 
-    Enum.sort_by(list, fn {k, _} -> index.(key_order, k) end)
-    |> Enum.filter(fn {_, v} -> v != nil and v != "" and v != [] end)
+  @doc """
+  Build open tag meta directly via pattern matching.
+  Input order from combinators: [{:loc, ...}], {:tag, ...}, {:attributes, ...}?, {:close, true}?
+  Output order: [tag: ..., close: ...?, attributes: ...?, loc: ...]
+  """
+  def build_open_meta([[{:loc, loc}], {:tag, tag}]) do
+    [tag: tag, loc: loc]
+  end
+
+  def build_open_meta([[{:loc, loc}], {:tag, tag}, {:close, true}]) do
+    [tag: tag, close: true, loc: loc]
+  end
+
+  def build_open_meta([[{:loc, loc}], {:tag, tag}, {:attributes, []}]) do
+    [tag: tag, loc: loc]
+  end
+
+  def build_open_meta([[{:loc, loc}], {:tag, tag}, {:attributes, attrs}]) do
+    [tag: tag, attributes: attrs, loc: loc]
+  end
+
+  def build_open_meta([[{:loc, loc}], {:tag, tag}, {:attributes, []}, {:close, true}]) do
+    [tag: tag, close: true, loc: loc]
+  end
+
+  def build_open_meta([[{:loc, loc}], {:tag, tag}, {:attributes, attrs}, {:close, true}]) do
+    [tag: tag, close: true, attributes: attrs, loc: loc]
+  end
+
+  @doc """
+  Build close tag meta directly via pattern matching.
+  Input order: [{:loc, ...}], {:tag, ...}
+  Output order: [tag: ..., loc: ...]
+  """
+  def build_close_meta([[{:loc, loc}], {:tag, tag}]) do
+    [tag: tag, loc: loc]
+  end
+
+  @doc """
+  Build prolog meta directly via pattern matching.
+  Input order: [{:loc, ...}], {:tag, ...}, {:attributes, ...}
+  Output order: [tag: ..., attributes: ..., loc: ...]
+  """
+  def build_prolog_meta([[{:loc, loc}], {:tag, tag}, {:attributes, []}]) do
+    [tag: tag, loc: loc]
+  end
+
+  def build_prolog_meta([[{:loc, loc}], {:tag, tag}, {:attributes, attrs}]) do
+    [tag: tag, attributes: attrs, loc: loc]
   end
 end
 
@@ -155,7 +206,7 @@ defmodule FnXML.Parser.Element do
     |> optional(Attr.attributes())
     |> C.ignore_opt_ws()
     |> optional(string("/") |> tag(:close) |> reduce({Element, :set_true, []}))
-    |> reduce({C, :sort_components, []})
+    |> reduce({C, :build_open_meta, []})
     |> unwrap_and_tag(:open)
     |> C.ignore_opt_ws()
     |> label("open_tag '<tag name=\"...\">'")
@@ -165,7 +216,7 @@ defmodule FnXML.Parser.Element do
     Pos.get(empty())
     |> ignore(string("/"))
     |> concat(C.tag_name())
-    |> reduce({C, :sort_components, []})
+    |> reduce({C, :build_close_meta, []})
     |> unwrap_and_tag(:close)
     |> C.ignore_opt_ws()
     |> label("close_tag '</tag>'")
@@ -201,7 +252,7 @@ defmodule FnXML.Parser.Element do
     |> concat(Attr.attributes())
     |> C.ignore_opt_ws()
     |> ignore(string("?") |> label("'?>' to close XML declaration"))
-    |> reduce({C, :sort_components, [[:tag, :attributes, :loc]]})
+    |> reduce({C, :build_prolog_meta, []})
     |> unwrap_and_tag(:prolog)
     |> label("XML declaration")
     |> C.close_bracket()

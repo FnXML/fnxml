@@ -27,7 +27,9 @@ defmodule FnXML.MixProject do
       {:benchee, "~> 1.3", only: :dev},
       {:benchee_html, "~> 1.0", only: :dev},
       {:saxy, "~> 1.5", only: :dev},
-      {:erlsom, "~> 1.5", only: :dev}
+      {:erlsom, "~> 1.5", only: :dev},
+      {:nx, "~> 0.7", only: :dev},
+      {:zigler, "~> 0.13", runtime: false}
     ]
   end
 end

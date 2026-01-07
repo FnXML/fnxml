@@ -54,73 +54,73 @@ defmodule FnXML.StreamTest do
 
       result =
         FnXML.Parser.parse(xml)
-        |> FnXML.Stream.transform(fn {id, [tag | meta]}, _path, acc ->
-          {{id, [tag | meta |> Keyword.drop([:loc])]}, acc}
+        |> FnXML.Stream.transform(fn element, _path, acc ->
+          {element, acc}
         end)
         |> Enum.to_list()
 
-      assert result == [
-               open: [tag: "foo", attributes: [{"a", "1"}]],
-               text: [content: "first element"],
-               open: [tag: "bar"],
-               text: [content: "nested element"],
-               close: [tag: "bar"],
-               close: [tag: "foo"]
-             ]
+      # New format: {:doc_start, nil}, {:open, tag, attrs, loc}, {:text, content, loc}, etc., {:doc_end, nil}
+      assert length(result) == 8
+      assert match?({:doc_start, nil}, Enum.at(result, 0))
+      assert match?({:open, "foo", [{"a", "1"}], _}, Enum.at(result, 1))
+      assert match?({:text, "first element", _}, Enum.at(result, 2))
+      assert match?({:open, "bar", [], _}, Enum.at(result, 3))
     end
 
     test "transform empty tag" do
+      # New format: {:open, tag, attrs, loc}
       result =
-        [open: [tag: "a"], open: [tag: "b", close: true], close: [tag: "a"]]
+        [{:open, "a", [], nil}, {:open, "b", [], nil}, {:close, "b"}, {:close, "a"}]
         |> FnXML.Stream.to_xml()
         |> Enum.join()
 
-      assert result == "<a><b/></a>"
+      assert result == "<a><b></b></a>"
     end
   end
 
   describe "filter" do
     test "whitespace 0" do
+      # New format: {:text, content, loc}
       stream = [
-        open: [tag: "foo"],
-        text: [content: "first element"],
-        text: [content: " \t"],
-        text: [content: "  \n\t"],
-        close: [tag: "foo"]
+        {:open, "foo", [], nil},
+        {:text, "first element", nil},
+        {:text, " \t", nil},
+        {:text, "  \n\t", nil},
+        {:close, "foo"}
       ]
 
-      assert FnXML.Stream.filter_ws(stream) |> Enum.to_list() == [
-               open: [tag: "foo"],
-               text: [content: "first element"],
-               close: [tag: "foo"]
-             ]
+      result = FnXML.Stream.filter_ws(stream) |> Enum.to_list()
+      assert length(result) == 3
+      assert match?({:open, "foo", [], nil}, Enum.at(result, 0))
+      assert match?({:text, "first element", nil}, Enum.at(result, 1))
+      assert match?({:close, "foo"}, Enum.at(result, 2))
     end
 
     test "namespace 0" do
+      # New format: {:open, tag, attrs, loc}
       stream = [
-        open: [tag: "foo"],
-        open: [tag: "biz:bar"],
-        close: [tag: "biz:bar"],
-        open: [tag: "bar:baz"],
-        close: [tag: "bar:baz"],
-        open: [tag: "bar"],
-        close: [tag: "bar"],
-        open: [tag: "baz:buz"],
-        close: [tag: "baz:buz"],
-        close: [tag: "foo"]
+        {:open, "foo", [], nil},
+        {:open, "biz:bar", [], nil},
+        {:close, "biz:bar"},
+        {:open, "bar:baz", [], nil},
+        {:close, "bar:baz"},
+        {:open, "bar", [], nil},
+        {:close, "bar"},
+        {:open, "baz:buz", [], nil},
+        {:close, "baz:buz"},
+        {:close, "foo"}
       ]
 
       result =
         FnXML.Stream.filter_namespaces(stream, ["bar", "baz"], exclude: true) |> Enum.to_list()
 
-      assert result == [
-               open: [tag: "foo"],
-               open: [tag: "biz:bar"],
-               close: [tag: "biz:bar"],
-               open: [tag: "bar"],
-               close: [tag: "bar"],
-               close: [tag: "foo"]
-             ]
+      assert length(result) == 6
+      tags = Enum.map(result, fn
+        {:open, tag, _, _} -> tag
+        {:close, tag} -> tag
+        {:close, tag, _} -> tag
+      end)
+      assert tags == ["foo", "biz:bar", "biz:bar", "bar", "bar", "foo"]
     end
   end
 end

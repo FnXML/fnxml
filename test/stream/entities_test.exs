@@ -5,22 +5,23 @@ defmodule FnXML.Stream.EntitiesTest do
   alias FnXML.Error
 
   # Helper to extract text content from parsed XML
+  # New token format: {:text, content, loc}
   defp extract_text(stream) do
     stream
     |> Enum.to_list()
     |> Enum.find_value(fn
-      {:text, meta} -> Keyword.get(meta, :content)
+      {:text, content, _loc} -> content
       _ -> nil
     end)
   end
 
   # Helper to extract first attribute value
+  # New token format: {:open, tag, attrs, loc}
   defp extract_attr(stream, attr_name) do
     stream
     |> Enum.to_list()
     |> Enum.find_value(fn
-      {:open, meta} ->
-        attrs = Keyword.get(meta, :attributes, [])
+      {:open, _tag, attrs, _loc} ->
         Enum.find_value(attrs, fn {name, val} -> if name == attr_name, do: val end)
 
       _ ->
@@ -210,9 +211,8 @@ defmodule FnXML.Stream.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      open = Enum.find(tokens, &match?({:open, _}, &1))
-      {:open, meta} = open
-      attrs = Keyword.get(meta, :attributes, [])
+      open = Enum.find(tokens, &match?({:open, _, _, _}, &1))
+      {:open, _tag, attrs, _loc} = open
 
       assert Enum.find_value(attrs, fn {n, v} -> if n == "x", do: v end) == "a&b"
       assert Enum.find_value(attrs, fn {n, v} -> if n == "y", do: v end) == "c<d"
@@ -321,8 +321,14 @@ defmodule FnXML.Stream.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      assert Enum.count(tokens, &match?({:open, _}, &1)) == 2
-      assert Enum.count(tokens, &match?({:close, _}, &1)) == 2
+      # New format: {:open, tag, attrs, loc}
+      assert Enum.count(tokens, &match?({:open, _, _, _}, &1)) == 2
+      # Close tags can be {:close, tag} or {:close, tag, loc}
+      assert Enum.count(tokens, fn
+        {:close, _} -> true
+        {:close, _, _} -> true
+        _ -> false
+      end) == 2
     end
 
     test "comments pass through unchanged" do
@@ -331,11 +337,12 @@ defmodule FnXML.Stream.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      comment = Enum.find(tokens, &match?({:comment, _}, &1))
+      # New format: {:comment, content, loc}
+      comment = Enum.find(tokens, &match?({:comment, _, _}, &1))
       assert comment != nil
-      {:comment, meta} = comment
+      {:comment, content, _loc} = comment
       # Comment content should NOT have entities resolved
-      assert Keyword.get(meta, :content) =~ "&amp;"
+      assert content =~ "&amp;"
     end
 
     test "prolog passes through" do
@@ -344,7 +351,8 @@ defmodule FnXML.Stream.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:prolog, _}, &1))
+      # New format: {:prolog, "xml", attrs, loc}
+      assert Enum.any?(tokens, &match?({:prolog, _, _, _}, &1))
     end
   end
 

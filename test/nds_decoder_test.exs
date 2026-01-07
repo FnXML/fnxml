@@ -6,47 +6,48 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
   doctest NDS.Decoder
 
   test "tag" do
+    # New format: {:open, tag, attrs, loc}
     result =
-      [open: [tag: "a"], close: [tag: "a"]]
+      [{:open, "a", [], {1, 0, 1}}, {:close, "a"}]
       |> NDS.Decoder.decode()
       |> Enum.at(0)
 
-    assert result == %NDS{tag: "a"}
+    assert result == %NDS{tag: "a", source: [{1, 1}]}
   end
 
   test "tag with namespace" do
     result =
-      [open: [tag: "ns:a"], close: [tag: "ns:a"]]
+      [{:open, "ns:a", [], {1, 0, 1}}, {:close, "ns:a"}]
       |> NDS.Decoder.decode()
       |> Enum.at(0)
 
-    assert result == %NDS{tag: "a", namespace: "ns"}
+    assert result == %NDS{tag: "a", namespace: "ns", source: [{1, 1}]}
   end
 
   test "tag with attributes" do
     result =
-      [open: [tag: "a", attributes: [{"b", "c"}, {"d", "e"}]], close: [tag: "a"]]
+      [{:open, "a", [{"b", "c"}, {"d", "e"}], {1, 0, 1}}, {:close, "a"}]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
 
-    assert result == %NDS{tag: "a", attributes: [{"b", "c"}, {"d", "e"}]}
+    assert result == %NDS{tag: "a", attributes: [{"b", "c"}, {"d", "e"}], source: [{1, 1}]}
   end
 
   test "tag with text" do
     result =
-      [open: [tag: "a"], text: [content: "b"], close: [tag: "a"]]
+      [{:open, "a", [], {1, 0, 1}}, {:text, "b", {1, 0, 4}}, {:close, "a"}]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
 
-    assert result == %NDS{tag: "a", content: ["b"]}
+    assert result == %NDS{tag: "a", content: ["b"], source: [{1, 1}]}
   end
 
   test "tag with all meta" do
     result =
       [
-        open: [tag: "ns:hello", attributes: [{"a", "1"}]],
-        text: [content: "world"],
-        close: [tag: "ns:hello"]
+        {:open, "ns:hello", [{"a", "1"}], {1, 0, 1}},
+        {:text, "world", {1, 0, 20}},
+        {:close, "ns:hello"}
       ]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
@@ -55,20 +56,21 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
              tag: "hello",
              namespace: "ns",
              attributes: [{"a", "1"}],
-             content: ["world"]
+             content: ["world"],
+             source: [{1, 1}]
            }
   end
 
   test "decode with child" do
     result =
       [
-        open: [tag: "ns:hello", attributes: [{"a", "1"}]],
-        text: [content: "hello"],
-        open: [tag: "child", attributes: [{"b", "2"}]],
-        text: [content: "child world"],
-        close: [tag: "child"],
-        text: [content: "world"],
-        close: [tag: "ns:hello"]
+        {:open, "ns:hello", [{"a", "1"}], {1, 0, 1}},
+        {:text, "hello", {1, 0, 20}},
+        {:open, "child", [{"b", "2"}], {1, 0, 30}},
+        {:text, "child world", {1, 0, 45}},
+        {:close, "child"},
+        {:text, "world", {1, 0, 70}},
+        {:close, "ns:hello"}
       ]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
@@ -80,28 +82,29 @@ defmodule FnXML.Stream.NativeDataStruct.DecoderTest do
                namespace: "ns",
                content: [
                  "hello",
-                 %NDS{tag: "child", attributes: [{"b", "2"}], content: ["child world"]},
+                 %NDS{tag: "child", attributes: [{"b", "2"}], content: ["child world"], source: [{1, 30}]},
                  "world"
-               ]
+               ],
+               source: [{1, 1}]
              }
   end
 
   test "decode with child list" do
     result =
       [
-        open: [tag: "ns:hello", attributes: [{"a", "1"}], loc: {1, 0, 1}],
-        text: [content: "hello"],
-        open: [tag: "child1", attributes: [{"b", "2"}], loc: {2, 13, 14}],
-        text: [content: "child world"],
-        close: [tag: "child1"],
-        open: [tag: "child1", attributes: [{"b", "2"}], loc: {2, 13, 34}],
-        text: [content: "alt world"],
-        close: [tag: "child1"],
-        open: [tag: "child2", attributes: [{"b", "2"}], loc: {3, 35, 36}],
-        text: [content: "other worldly"],
-        close: [tag: "child2"],
-        text: [content: "world"],
-        close: [tag: "ns:hello"]
+        {:open, "ns:hello", [{"a", "1"}], {1, 0, 1}},
+        {:text, "hello", {1, 0, 15}},
+        {:open, "child1", [{"b", "2"}], {2, 13, 14}},
+        {:text, "child world", {2, 13, 28}},
+        {:close, "child1"},
+        {:open, "child1", [{"b", "2"}], {2, 13, 34}},
+        {:text, "alt world", {2, 13, 48}},
+        {:close, "child1"},
+        {:open, "child2", [{"b", "2"}], {3, 35, 36}},
+        {:text, "other worldly", {3, 35, 50}},
+        {:close, "child2"},
+        {:text, "world", {3, 35, 70}},
+        {:close, "ns:hello"}
       ]
       |> NDS.Decoder.decode([])
       |> Enum.at(0)
