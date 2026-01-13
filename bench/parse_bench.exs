@@ -42,7 +42,7 @@ defmodule ParseBench do
   def run do
     IO.puts("\n" <> String.duplicate("=", 70))
     IO.puts("PARSE BENCHMARKS")
-    IO.puts("Comparing: FnXML (string & stream) vs Saxy (string & stream) vs others")
+    IO.puts("Comparing: FnXML vs Saxy (string & stream) vs others")
     IO.puts(String.duplicate("=", 70) <> "\n")
 
     IO.puts("File sizes:")
@@ -53,35 +53,27 @@ defmodule ParseBench do
 
     Benchee.run(
       %{
-        # FnXML - string mode (binary input)
-        "fnxml_string" => fn {xml, _path} ->
-          FnXML.Parser.parse(xml) |> Stream.run()
+        # FnXML parsers
+        "ex_blk_parser" => fn {xml, _path} ->
+          FnXML.ExBlkParser.parse(xml)
+        end,
+        "fast_ex_blk" => fn {xml, _path} ->
+          FnXML.FastExBlkParser.parse(xml)
         end,
 
-        # FnXML - stream mode (file stream input)
-        "fnxml_stream" => fn {_xml, path} ->
-          File.stream!(path, [], 65536)
-          |> FnXML.ParserStream.parse(mode: :lazy)
-          |> Stream.run()
-        end,
-
-        # Saxy - string mode
+        # Saxy
         "saxy_string" => fn {xml, _path} ->
           Saxy.parse_string(xml, NullHandler, nil)
         end,
-
-        # Saxy - stream mode
         "saxy_stream" => fn {_xml, path} ->
           File.stream!(path, [], 65536)
           |> Saxy.parse_stream(NullHandler, nil)
         end,
 
-        # erlsom
+        # Others
         "erlsom" => fn {xml, _path} ->
           :erlsom.simple_form(xml)
         end,
-
-        # xmerl
         "xmerl" => fn {xml, _path} ->
           :xmerl_scan.string(String.to_charlist(xml))
         end
@@ -103,21 +95,22 @@ defmodule ParseBench do
   def run_quick do
     IO.puts("\n" <> String.duplicate("=", 70))
     IO.puts("QUICK PARSE BENCHMARKS (medium file only)")
-    IO.puts("Comparing: FnXML (string & stream) vs Saxy (string & stream) vs others")
+    IO.puts("Comparing: FnXML vs Saxy (string & stream) vs others")
     IO.puts(String.duplicate("=", 70) <> "\n")
 
     IO.puts("File: medium.xml (#{byte_size(@medium)} bytes)\n")
 
     Benchee.run(
       %{
-        "fnxml_string" => fn ->
-          FnXML.Parser.parse(@medium) |> Stream.run()
+        # FnXML parsers
+        "ex_blk_parser" => fn ->
+          FnXML.ExBlkParser.parse(@medium)
         end,
-        "fnxml_stream" => fn ->
-          File.stream!(@medium_path, [], 65536)
-          |> FnXML.ParserStream.parse(mode: :lazy)
-          |> Stream.run()
+        "fast_ex_blk" => fn ->
+          FnXML.FastExBlkParser.parse(@medium)
         end,
+
+        # Saxy
         "saxy_string" => fn ->
           Saxy.parse_string(@medium, NullHandler, nil)
         end,
@@ -125,6 +118,8 @@ defmodule ParseBench do
           File.stream!(@medium_path, [], 65536)
           |> Saxy.parse_stream(NullHandler, nil)
         end,
+
+        # Others
         "erlsom" => fn ->
           :erlsom.simple_form(@medium)
         end,

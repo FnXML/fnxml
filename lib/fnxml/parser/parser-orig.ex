@@ -1,4 +1,4 @@
-defmodule FnXML.Parser do
+defmodule FnXML.ParserOrig do
   @moduledoc """
   Streaming XML parser using recursive descent with continuation-passing style.
 
