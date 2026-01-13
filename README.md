@@ -19,9 +19,14 @@ A functional XML library for Elixir with streaming support and three standard AP
  │  Namespace resolution      │  Saxy compatibility                │
  ├─────────────────────────────────────────────────────────────────┤
  │                      FnXML.Parser                               │
- │              NimbleParsec-based streaming parser                │
+ │      Auto-selects: Zig NIF (>60KB) or ExBlkParser (<60KB)       │
+ ├─────────────────────────────────────────────────────────────────┤
+ │  FnXML.ExBlkParser         │  FnXML.FastExBlkParser             │
+ │  Pure Elixir, streaming    │  Optimized variant                 │
  └─────────────────────────────────────────────────────────────────┘
 ```
+
+The parser uses CPS (continuation-passing style) recursive descent for efficient tail-call optimization and minimal memory usage.
 
 ## Quick Start
 
@@ -147,15 +152,22 @@ xml = FnXML.StAX.Writer.new()
 Direct access to the event stream for custom processing.
 
 ```elixir
-# Parse to event stream
+# Parse to event stream (auto-selects NIF or Elixir)
 FnXML.Parser.parse("<root><child/></root>")
+# => [{:start_document, nil}, {:start_element, "root", [], {1, 0, 1}}, ...]
+
+# Stream from file (64KB chunks, lazy evaluation)
+File.stream!("large.xml", [], 65536)
+|> FnXML.Parser.stream()
 |> Enum.to_list()
-# => [
-#   {:start_element, "root", [], {1, 0, 1}},
-#   {:start_element, "child", [], {1, 0, 7}},
-#   {:end_element, "child", {1, 0, 14}},
-#   {:end_element, "root", {1, 0, 22}}
-# ]
+
+# Force specific parser backend
+FnXML.Parser.stream(xml, parser: :nif)     # Force Zig NIF
+FnXML.Parser.stream(xml, parser: :elixir)  # Force pure Elixir
+
+# Direct access to block parsers
+events = FnXML.ExBlkParser.parse("<root/>")
+events = FnXML.FastExBlkParser.parse("<root/>")
 
 # With namespace resolution
 FnXML.Parser.parse("<root xmlns=\"http://example.org\"><child/></root>")
@@ -168,6 +180,11 @@ events
 |> FnXML.Stream.to_xml()
 |> Enum.join()
 ```
+
+**Parser Options:**
+- `:parser` - Force parser: `:nif`, `:elixir`, or `:auto` (default)
+- `:threshold` - Auto-selection cutoff in bytes (default: 60KB)
+- `:block_size` - For streams, hint about chunk size for auto-selection
 
 **Event types (W3C StAX-compatible):**
 - `{:start_element, tag, attrs, location}` - Start element
@@ -206,12 +223,15 @@ tuple = FnXML.Stream.SimpleForm.from_dom(elem)
 
 ## Features
 
+- **NIF acceleration** - Optional Zig NIF for high-throughput parsing (auto-selected for large inputs)
 - **Streaming parser** - Process XML incrementally without loading entire document
+- **Chunk boundary handling** - Mini-block approach handles elements spanning chunk boundaries
 - **Namespace support** - Full XML namespace resolution
 - **Three standard APIs** - DOM, SAX, StAX for different use cases
 - **Lazy evaluation** - StAX Reader uses O(1) memory
 - **Location tracking** - Line/column info for error reporting
 - **Saxy compatible** - SimpleForm format for easy migration
+- **Disable NIF** - Set `FNXML_NIF=false` or `{:fnxml, "~> x.x", nif: false}` for pure Elixir
 
 ## License
 

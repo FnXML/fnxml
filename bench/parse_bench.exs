@@ -53,12 +53,24 @@ defmodule ParseBench do
 
     Benchee.run(
       %{
-        # FnXML parsers
+        # FnXML parsers - single block
         "ex_blk_parser" => fn {xml, _path} ->
           FnXML.ExBlkParser.parse(xml)
         end,
         "fast_ex_blk" => fn {xml, _path} ->
           FnXML.FastExBlkParser.parse(xml)
+        end,
+
+        # FnXML parsers - 64KB chunked streaming
+        "ex_blk_stream" => fn {_xml, path} ->
+          File.stream!(path, [], 65536)
+          |> FnXML.ExBlkParser.stream()
+          |> Enum.to_list()
+        end,
+        "fast_ex_blk_stream" => fn {_xml, path} ->
+          File.stream!(path, [], 65536)
+          |> FnXML.FastExBlkParser.stream()
+          |> Enum.to_list()
         end,
 
         # Saxy
@@ -102,12 +114,24 @@ defmodule ParseBench do
 
     Benchee.run(
       %{
-        # FnXML parsers
+        # FnXML parsers - single block
         "ex_blk_parser" => fn ->
           FnXML.ExBlkParser.parse(@medium)
         end,
         "fast_ex_blk" => fn ->
           FnXML.FastExBlkParser.parse(@medium)
+        end,
+
+        # FnXML parsers - 64KB chunked streaming
+        "ex_blk_stream" => fn ->
+          File.stream!(@medium_path, [], 65536)
+          |> FnXML.ExBlkParser.stream()
+          |> Enum.to_list()
+        end,
+        "fast_ex_blk_stream" => fn ->
+          File.stream!(@medium_path, [], 65536)
+          |> FnXML.FastExBlkParser.stream()
+          |> Enum.to_list()
         end,
 
         # Saxy

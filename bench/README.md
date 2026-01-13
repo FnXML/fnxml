@@ -24,126 +24,71 @@ Comprehensive benchmarks comparing FnXML parsers against other Elixir/Erlang XML
 
 | Parser | Type | Description |
 |--------|------|-------------|
-| **FnXML.Parser** | Stream/Callback | Main parser - CPS recursive descent (fastest) |
-| **saxy** | SAX | External, highly optimized callback-based parser |
+| **fast_ex_blk** | Block | FnXML optimized CPS parser (fastest) |
+| **ex_blk_parser** | Block | FnXML standard CPS parser |
+| **fast_ex_blk_stream** | Stream | FnXML streaming with 64KB chunks |
+| **ex_blk_stream** | Stream | FnXML streaming with 64KB chunks |
+| **saxy_string** | SAX | External, highly optimized callback parser |
+| **saxy_stream** | SAX | External, streaming 64KB chunks |
 | **erlsom** | SAX/DOM | External Erlang library, simple_form mode |
 | **xmerl** | DOM | Erlang stdlib, full DOM tree |
-| **nimble** | Stream | FnXML NimbleParsec-based (legacy) |
 
 ---
 
-## Parse Speed Comparison (iterations per second)
+## Parse Speed Comparison (Medium File - 249 KB)
 
-### Small File (757 bytes)
-
-| Parser | Speed (ips) | vs FnXML | Notes |
-|--------|-------------|----------|-------|
-| **fnxml** | **216,361** | 1.00x | Fastest |
-| saxy | 142,764 | 1.52x slower | |
-| erlsom | 108,675 | 1.99x slower | |
-| xmerl | 16,841 | 12.85x slower | |
-
-### Medium File (249 KB)
-
-| Parser | Speed (ips) | vs FnXML | Notes |
-|--------|-------------|----------|-------|
-| **fnxml** | **591** | 1.00x | Fastest |
-| saxy | 397 | 1.49x slower | |
-| erlsom | 207 | 2.86x slower | |
-| xmerl | 54 | 10.9x slower | |
-
-### Large File (1.3 MB)
-
-| Parser | Speed (ips) | vs FnXML | Notes |
-|--------|-------------|----------|-------|
-| **fnxml** | **129** | 1.00x | Fastest |
-| saxy | 88 | 1.46x slower | |
-| erlsom | 26 | 4.92x slower | |
-| xmerl | 11 | 11.9x slower | |
+| Parser | Speed (ips) | vs fast_ex_blk | Memory |
+|--------|-------------|----------------|--------|
+| **fast_ex_blk** | **565** | 1.00x | 2.02 MB |
+| saxy_string | 351 | 1.61x slower | 3.89 MB |
+| ex_blk_parser | 319 | 1.77x slower | 4.03 MB |
+| saxy_stream | 284 | 1.99x slower | 4.03 MB |
+| fast_ex_blk_stream | 252 | 2.24x slower | 1.86 MB |
+| ex_blk_stream | 180 | 3.13x slower | 4.04 MB |
+| erlsom | 154 | 3.67x slower | 17.98 MB |
+| xmerl | 55 | 10.35x slower | 86.92 MB |
 
 ---
 
-## Memory Usage Comparison
+## Memory Usage Comparison (Medium File)
 
-### Small File (757 bytes)
-
-| Parser | Memory | vs FnXML |
-|--------|--------|----------|
-| **fnxml** | **10.7 KB** | 1.00x |
-| saxy | 11.1 KB | 1.04x more |
-| erlsom | 53.2 KB | 4.99x more |
-| xmerl | 270 KB | 25.1x more |
-
-### Medium File (249 KB)
-
-| Parser | Memory | vs FnXML |
-|--------|--------|----------|
-| **fnxml** | **3.69 MB** | 1.00x |
-| saxy | 3.89 MB | 1.05x more |
-| erlsom | 17.98 MB | 4.87x more |
-| xmerl | 86.92 MB | 23.5x more |
-
-### Large File (1.3 MB)
-
-| Parser | Memory | vs FnXML |
-|--------|--------|----------|
-| **fnxml** | **14.61 MB** | 1.00x |
-| saxy | 15.70 MB | 1.07x more |
-| erlsom | 92.69 MB | 6.34x more |
-| xmerl | 412.70 MB | 28.2x more |
-
----
-
-## FnXML Parser Variants Comparison (Medium File)
-
-All FnXML parser implementations compared on medium.xml:
-
-| Parser | Speed (ips) | Memory | Description |
-|--------|-------------|--------|-------------|
-| **parser_stream** | **605** | 3.69 MB | Main parser, Stream mode |
-| **parser_cb** | **596** | 2.31 MB | Main parser, Callback mode |
-| recursive | 264 | 13.67 MB | Sub-binary rest approach |
-| zig_simd | 250 | 5.44 MB | Zig SIMD scanner |
-| elixir_idx | 231 | 6.64 MB | Elixir index-based |
-| recursive_pos | 147 | 4.94 MB | Position tracking |
-| recursive_emit | 120 | 5.57 MB | Emit + process dict |
-| nimble | 90 | 39.92 MB | NimbleParsec (legacy) |
-
-**Key findings:**
-- Main parser is **6.7x faster** than the original NimbleParsec implementation
-- Callback mode uses **40% less memory** than Stream mode
-- Main parser is **1.56x faster than Saxy**
+| Parser | Memory | vs fast_ex_blk |
+|--------|--------|----------------|
+| **fast_ex_blk_stream** | **1.86 MB** | 0.92x (lowest) |
+| **fast_ex_blk** | **2.02 MB** | 1.00x |
+| saxy_string | 3.89 MB | 1.92x more |
+| ex_blk_parser | 4.03 MB | 1.99x more |
+| saxy_stream | 4.03 MB | 1.99x more |
+| ex_blk_stream | 4.04 MB | 2.00x more |
+| erlsom | 17.98 MB | 8.88x more |
+| xmerl | 86.92 MB | 42.94x more |
 
 ---
 
 ## Summary: FnXML vs Competition
 
-| Metric | vs Saxy | vs erlsom | vs xmerl |
-|--------|---------|-----------|----------|
-| **Speed (small)** | 1.52x faster | 1.99x faster | 12.9x faster |
-| **Speed (medium)** | 1.49x faster | 2.86x faster | 10.9x faster |
-| **Speed (large)** | 1.46x faster | 4.92x faster | 11.9x faster |
-| **Memory (medium)** | 5% less | 4.9x less | 23.5x less |
-| **Memory (large)** | 7% less | 6.3x less | 28.2x less |
+| Metric | vs Saxy (string) | vs Saxy (stream) | vs erlsom | vs xmerl |
+|--------|------------------|------------------|-----------|----------|
+| **Speed** | 1.61x faster | 1.99x faster | 3.67x faster | 10.35x faster |
+| **Memory** | 1.92x less | 1.99x less | 8.88x less | 42.94x less |
 
 ---
 
 ## Architecture
 
-### CPS Recursive Descent Parser (Current)
+### CPS Recursive Descent Parser
 
 ```
-XML Input → Binary Pattern Match → Emit Event → Continue
-            (single pass)         (direct)      (tail-call)
+XML Input -> Binary Pattern Match -> Emit Event -> Continue
+             (single pass)          (accumulate)   (tail-call)
 ```
 
 Key optimizations:
 - **Continuation-passing style**: Tail-call optimized, minimal stack usage
 - **Single binary reference**: Uses `binary_part/3` for zero-copy content extraction
 - **Position tracking**: Integer offsets instead of creating sub-binary "rest"
-- **Inlined name scanning**: Tag/attribute names parsed inline at call sites
-- **Dual code paths**: Optimized for both Stream and Callback modes
 - **Guard-based dispatch**: Character classes use guards for efficient branching
+- **Mini-block streaming**: Elements spanning chunk boundaries handled efficiently
 
 ### Why FnXML is Fast
 
@@ -155,31 +100,25 @@ Key optimizations:
 
 ---
 
-## When to Use Each Mode
+## When to Use Each Parser
 
 | Use Case | Recommended |
 |----------|-------------|
-| Maximum speed, full document | `FnXML.Parser.parse(xml, callback)` |
-| Streaming with transformations | `FnXML.Parser.parse(xml)` |
-| Early termination (Enum.take, etc.) | `FnXML.Parser.parse(xml)` |
-| Minimum memory | `FnXML.Parser.parse(xml, callback)` |
+| Maximum speed, full document | `FnXML.FastExBlkParser.parse(xml)` |
+| Minimum memory, large files | `FnXML.FastExBlkParser.stream(chunks)` |
+| Auto NIF/Elixir selection | `FnXML.Parser.stream(xml)` |
+| File streaming | `File.stream!(path, [], 65536) \|> FnXML.Parser.stream()` |
 
 ---
 
 ## Running Benchmarks
 
 ```bash
-# Quick benchmark (medium file, main parsers)
+# Quick benchmark (medium file only)
 mix run bench/parse_bench.exs --quick
 
 # Full benchmark (all file sizes)
 mix run bench/parse_bench.exs
-
-# All FnXML parser variants comparison
-mix run bench/all_parsers_bench.exs
-
-# Memory-focused benchmarks
-mix run bench/memory_bench.exs
 ```
 
 ## Regenerating Test Data

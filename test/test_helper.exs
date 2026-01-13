@@ -1,6 +1,6 @@
 # Configure ExUnit to skip NIF-specific tests when NIF is disabled
 exclude_tags =
-  if FnXML.NifParser.nif_enabled?() do
+  if FnXML.Parser.nif_enabled?() do
     []
   else
     [:nif_parser]
