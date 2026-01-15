@@ -529,33 +529,6 @@ defmodule FnXML.Validate do
   defp utf8_byte_size(c) when c < 0x10000, do: 3
   defp utf8_byte_size(_), do: 4
 
-  defp validate_chars_and_emit(type, content, loc, on_error) do
-    case find_invalid_char(content, 0) do
-      nil ->
-        event_type =
-          case type do
-            :text -> :characters
-            other -> other
-          end
-
-        [{event_type, content, loc}]
-
-      {char, offset} ->
-        handle_char_error(type, nil, content, loc, char, offset, on_error)
-    end
-  end
-
-  defp validate_attrs_chars_and_emit(tag, attrs, loc, on_error) do
-    # Check each attribute value for invalid characters
-    case find_invalid_attr_char(attrs) do
-      nil ->
-        [{:start_element, tag, attrs, loc}]
-
-      {attr_name, char, offset} ->
-        handle_attr_char_error(tag, attrs, loc, attr_name, char, offset, on_error)
-    end
-  end
-
   defp find_invalid_attr_char([]), do: nil
 
   defp find_invalid_attr_char([{name, value} | rest]) do

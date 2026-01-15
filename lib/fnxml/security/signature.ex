@@ -70,6 +70,7 @@ defmodule FnXML.Security.Signature do
   - W3C XML Signature 1.1: https://www.w3.org/TR/xmldsig-core1/
   """
 
+  alias FnXML.Namespaces, as: XMLNamespaces
   alias FnXML.Security.{Algorithms, C14N, Namespaces}
   alias FnXML.Security.Signature.{Generator, Verifier}
 
@@ -385,8 +386,8 @@ defmodule FnXML.Security.Signature do
         _ -> false
       end)
       |> Enum.map(fn
-        {:start_element, name, _, _, _, _} -> strip_prefix(name)
-        {:start_element, name, _, _} -> strip_prefix(name)
+        {:start_element, name, _, _, _, _} -> XMLNamespaces.local_part(name)
+        {:start_element, name, _, _} -> XMLNamespaces.local_part(name)
       end)
       |> MapSet.new()
 
@@ -395,13 +396,6 @@ defmodule FnXML.Security.Signature do
     case missing do
       [] -> :ok
       _ -> {:error, {:missing_elements, missing}}
-    end
-  end
-
-  defp strip_prefix(name) do
-    case String.split(name, ":", parts: 2) do
-      [_prefix, local] -> local
-      [local] -> local
     end
   end
 
@@ -423,10 +417,10 @@ defmodule FnXML.Security.Signature do
     Enum.reduce(events, info, fn event, acc ->
       case event do
         {:start_element, name, attrs, _, _, _} ->
-          update_info_from_element(strip_prefix(name), attrs, acc)
+          update_info_from_element(XMLNamespaces.local_part(name), attrs, acc)
 
         {:start_element, name, attrs, _} ->
-          update_info_from_element(strip_prefix(name), attrs, acc)
+          update_info_from_element(XMLNamespaces.local_part(name), attrs, acc)
 
         _ ->
           acc

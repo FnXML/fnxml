@@ -9,6 +9,7 @@ defmodule FnXML.Security.Signature.Verifier do
   3. Verify signature over canonical SignedInfo
   """
 
+  alias FnXML.Namespaces, as: XMLNamespaces
   alias FnXML.Security.{Algorithms, C14N, Namespaces}
   alias FnXML.Security.Signature.Reference
 
@@ -180,19 +181,19 @@ defmodule FnXML.Security.Signature.Verifier do
   defp process_signature_event(event, state) do
     case event do
       {:start_element, name, attrs, _, _, _} ->
-        handle_start_element(strip_prefix(name), attrs, event, state)
+        handle_start_element(XMLNamespaces.local_part(name), attrs, event, state)
 
       {:start_element, name, attrs, _} ->
-        handle_start_element(strip_prefix(name), attrs, event, state)
+        handle_start_element(XMLNamespaces.local_part(name), attrs, event, state)
 
       {:end_element, name, _, _, _} ->
-        handle_end_element(strip_prefix(name), state)
+        handle_end_element(XMLNamespaces.local_part(name), state)
 
       {:end_element, name, _} ->
-        handle_end_element(strip_prefix(name), state)
+        handle_end_element(XMLNamespaces.local_part(name), state)
 
       {:end_element, name} ->
-        handle_end_element(strip_prefix(name), state)
+        handle_end_element(XMLNamespaces.local_part(name), state)
 
       {:characters, content, _, _, _} ->
         handle_characters(content, state)
@@ -510,13 +511,6 @@ defmodule FnXML.Security.Signature.Verifier do
     |> String.replace("&", "&amp;")
     |> String.replace("<", "&lt;")
     |> String.replace("\"", "&quot;")
-  end
-
-  defp strip_prefix(name) do
-    case String.split(name, ":", parts: 2) do
-      [_prefix, local] -> local
-      [local] -> local
-    end
   end
 
   defp find_attr(attrs, name) do

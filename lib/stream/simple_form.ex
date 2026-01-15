@@ -155,23 +155,19 @@ defmodule FnXML.Stream.SimpleForm do
     end
   end
 
-  # Handle open tag - push new element onto stack
-  defp handle_event({:start_element, tag, attrs, _loc}, stack, prolog, _include_comments) do
+  # Handle open tag - push new element onto stack (6-element format)
+  defp handle_event({:start_element, tag, attrs, _line, _ls, _pos}, stack, prolog, _include_comments) do
     {[{tag, attrs, []} | stack], prolog}
   end
 
-  # Handle close tag - pop element and add to parent's content
-  defp handle_event({:end_element, _tag}, [current | rest], prolog, _include_comments) do
+  # Handle close tag - pop element and add to parent's content (5-element format)
+  defp handle_event({:end_element, _tag, _line, _ls, _pos}, [current | rest], prolog, _include_comments) do
     handle_close(current, rest, prolog)
   end
 
-  defp handle_event({:end_element, _tag, _loc}, [current | rest], prolog, _include_comments) do
-    handle_close(current, rest, prolog)
-  end
-
-  # Handle text - add to current element's content
+  # Handle text - add to current element's content (5-element format)
   defp handle_event(
-         {:characters, content, _loc},
+         {:characters, content, _line, _ls, _pos},
          [{tag, attrs, children} | rest],
          prolog,
          _include_comments
@@ -180,7 +176,7 @@ defmodule FnXML.Stream.SimpleForm do
   end
 
   # Handle text outside of elements (ignore whitespace-only)
-  defp handle_event({:characters, content, _loc}, [], prolog, _include_comments) do
+  defp handle_event({:characters, content, _line, _ls, _pos}, [], prolog, _include_comments) do
     if String.match?(content, ~r/^\s*$/) do
       {[], prolog}
     else
@@ -188,8 +184,13 @@ defmodule FnXML.Stream.SimpleForm do
     end
   end
 
-  # Handle comment
-  defp handle_event({:comment, content, _loc}, stack, prolog, true = _include_comments) do
+  # Handle space events (ignore)
+  defp handle_event({:space, _content, _line, _ls, _pos}, stack, prolog, _include_comments) do
+    {stack, prolog}
+  end
+
+  # Handle comment (5-element format)
+  defp handle_event({:comment, content, _line, _ls, _pos}, stack, prolog, true = _include_comments) do
     case stack do
       [{tag, attrs, children} | rest] ->
         {[{tag, attrs, children ++ [{:comment, content}]} | rest], prolog}
@@ -199,18 +200,27 @@ defmodule FnXML.Stream.SimpleForm do
     end
   end
 
-  defp handle_event({:comment, _content, _loc}, stack, prolog, false = _include_comments) do
+  defp handle_event({:comment, _content, _line, _ls, _pos}, stack, prolog, false = _include_comments) do
     {stack, prolog}
   end
 
-  # Handle prolog
-  defp handle_event({:prolog, _name, attrs, _loc}, stack, _prolog, _include_comments) do
+  # Handle CDATA (5-element format) - treat as text
+  defp handle_event({:cdata, content, _line, _ls, _pos}, [{tag, attrs, children} | rest], prolog, _include_comments) do
+    {[{tag, attrs, children ++ [content]} | rest], prolog}
+  end
+
+  defp handle_event({:cdata, content, _line, _ls, _pos}, [], prolog, _include_comments) do
+    {[content], prolog}
+  end
+
+  # Handle prolog (6-element format)
+  defp handle_event({:prolog, _name, attrs, _line, _ls, _pos}, stack, _prolog, _include_comments) do
     {stack, attrs}
   end
 
-  # Handle processing instructions (ignore for SimpleForm compatibility)
+  # Handle processing instructions (ignore for SimpleForm compatibility) (6-element format)
   defp handle_event(
-         {:processing_instruction, _name, _content, _loc},
+         {:processing_instruction, _name, _content, _line, _ls, _pos},
          stack,
          prolog,
          _include_comments
@@ -218,8 +228,13 @@ defmodule FnXML.Stream.SimpleForm do
     {stack, prolog}
   end
 
-  # Handle errors (ignore for SimpleForm compatibility)
-  defp handle_event({:error, _msg, _loc}, stack, prolog, _include_comments) do
+  # Handle DTD (ignore for SimpleForm compatibility) (5-element format)
+  defp handle_event({:dtd, _content, _line, _ls, _pos}, stack, prolog, _include_comments) do
+    {stack, prolog}
+  end
+
+  # Handle errors (ignore for SimpleForm compatibility) (6-element format)
+  defp handle_event({:error, _type, _msg, _line, _ls, _pos}, stack, prolog, _include_comments) do
     {stack, prolog}
   end
 

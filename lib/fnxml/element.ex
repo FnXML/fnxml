@@ -2,16 +2,19 @@ defmodule FnXML.Element do
   @moduledoc """
   This module provides functions for working with elements of an XML stream.
 
-  Event formats:
+  Event formats (flat location - line, line_start, byte_offset):
   - `{:start_document, nil}` - Document start marker
   - `{:end_document, nil}` - Document end marker
-  - `{:start_element, tag, attrs, loc}` - Opening tag with attributes
-  - `{:end_element, tag}` or `{:end_element, tag, loc}` - Closing tag
-  - `{:characters, content, loc}` - Text content
-  - `{:comment, content, loc}` - Comment
-  - `{:prolog, "xml", attrs, loc}` - XML prolog
-  - `{:processing_instruction, name, content, loc}` - Processing instruction
-  - `{:error, message, loc}` - Parse error
+  - `{:start_element, tag, attrs, line, ls, pos}` - Opening tag with attributes
+  - `{:end_element, tag, line, ls, pos}` - Closing tag
+  - `{:characters, content, line, ls, pos}` - Text content
+  - `{:space, content, line, ls, pos}` - Whitespace content
+  - `{:comment, content, line, ls, pos}` - Comment
+  - `{:cdata, content, line, ls, pos}` - CDATA section
+  - `{:dtd, content, line, ls, pos}` - DOCTYPE declaration
+  - `{:prolog, "xml", attrs, line, ls, pos}` - XML prolog
+  - `{:processing_instruction, name, content, line, ls, pos}` - Processing instruction
+  - `{:error, type, msg, line, ls, pos}` - Parse error
   """
 
   def id_list(),
@@ -22,7 +25,10 @@ defmodule FnXML.Element do
       :start_element,
       :end_element,
       :characters,
+      :space,
       :comment,
+      :cdata,
+      :dtd,
       :processing_instruction,
       :error
     ]
@@ -33,13 +39,13 @@ defmodule FnXML.Element do
 
   ## Examples
 
-      iex> FnXML.Element.tag({:start_element, "foo", [], {1, 0, 1}})
+      iex> FnXML.Element.tag({:start_element, "foo", [], 1, 0, 1})
       {"foo", ""}
 
-      iex> FnXML.Element.tag({:start_element, "matrix:foo", [], {1, 0, 1}})
+      iex> FnXML.Element.tag({:start_element, "matrix:foo", [], 1, 0, 1})
       {"foo", "matrix"}
 
-      iex> FnXML.Element.tag({:end_element, "foo"})
+      iex> FnXML.Element.tag({:end_element, "foo", 1, 0, 1})
       {"foo", ""}
   """
   def tag(id) when is_binary(id) do
@@ -49,8 +55,12 @@ defmodule FnXML.Element do
     end
   end
 
+  # 6-tuple format (from parser)
+  def tag({:start_element, tag, _attrs, _line, _ls, _pos}), do: tag(tag)
+  def tag({:end_element, tag, _line, _ls, _pos}), do: tag(tag)
+  # 4-tuple format (normalized)
   def tag({:start_element, tag, _attrs, _loc}), do: tag(tag)
-  def tag({:end_element, tag}), do: tag(tag)
+  # 3-tuple format (normalized)
   def tag({:end_element, tag, _loc}), do: tag(tag)
 
   @doc """
@@ -75,14 +85,18 @@ defmodule FnXML.Element do
 
   ## Examples
 
-      iex> FnXML.Element.tag_string({:start_element, "foo", [], {1, 0, 1}})
+      iex> FnXML.Element.tag_string({:start_element, "foo", [], 1, 0, 1})
       "foo"
 
-      iex> FnXML.Element.tag_string({:end_element, "bar"})
+      iex> FnXML.Element.tag_string({:end_element, "bar", 1, 0, 1})
       "bar"
   """
+  # 6-tuple format (from parser)
+  def tag_string({:start_element, tag, _attrs, _line, _ls, _pos}), do: tag
+  def tag_string({:end_element, tag, _line, _ls, _pos}), do: tag
+  # 4-tuple format (normalized)
   def tag_string({:start_element, tag, _attrs, _loc}), do: tag
-  def tag_string({:end_element, tag}), do: tag
+  # 3-tuple format (normalized)
   def tag_string({:end_element, tag, _loc}), do: tag
 
   @doc """
@@ -91,14 +105,14 @@ defmodule FnXML.Element do
 
   ## Examples
 
-      iex> FnXML.Element.attributes({:start_element, "foo", [{"bar", "baz"}, {"qux", "quux"}], {1, 0, 1}})
+      iex> FnXML.Element.attributes({:start_element, "foo", [{"bar", "baz"}, {"qux", "quux"}], 1, 0, 1})
       [{"bar", "baz"}, {"qux", "quux"}]
 
-      iex> FnXML.Element.attributes({:start_element, "foo", [], {1, 0, 1}})
+      iex> FnXML.Element.attributes({:start_element, "foo", [], 1, 0, 1})
       []
   """
-  def attributes({:start_element, _tag, attrs, _loc}), do: attrs
-  def attributes({:prolog, _tag, attrs, _loc}), do: attrs
+  def attributes({:start_element, _tag, attrs, _line, _ls, _pos}), do: attrs
+  def attributes({:prolog, _tag, attrs, _line, _ls, _pos}), do: attrs
 
   @doc """
   Same as attributes/1 but returns a map of the attributes instead
@@ -106,7 +120,7 @@ defmodule FnXML.Element do
 
   ## Examples
 
-      iex> FnXML.Element.attribute_map({:start_element, "foo", [{"bar", "baz"}, {"qux", "quux"}], {1, 0, 1}})
+      iex> FnXML.Element.attribute_map({:start_element, "foo", [{"bar", "baz"}, {"qux", "quux"}], 1, 0, 1})
       %{"bar" => "baz", "qux" => "quux"}
   """
   def attribute_map(element), do: attributes(element) |> Enum.into(%{})
@@ -116,15 +130,17 @@ defmodule FnXML.Element do
 
   ## Examples
 
-      iex> FnXML.Element.content({:characters, "hello world", {1, 0, 5}})
+      iex> FnXML.Element.content({:characters, "hello world", 1, 0, 5})
       "hello world"
 
-      iex> FnXML.Element.content({:comment, " a comment ", {1, 0, 1}})
+      iex> FnXML.Element.content({:comment, " a comment ", 1, 0, 1})
       " a comment "
   """
-  def content({:characters, content, _loc}), do: content
-  def content({:comment, content, _loc}), do: content
-  def content({:processing_instruction, _name, content, _loc}), do: content
+  def content({:characters, content, _line, _ls, _pos}), do: content
+  def content({:space, content, _line, _ls, _pos}), do: content
+  def content({:comment, content, _line, _ls, _pos}), do: content
+  def content({:cdata, content, _line, _ls, _pos}), do: content
+  def content({:processing_instruction, _name, content, _line, _ls, _pos}), do: content
 
   @doc """
   Given an element, return a tuple with `{line, column}` position
@@ -132,42 +148,76 @@ defmodule FnXML.Element do
 
   ## Examples
 
-      iex> FnXML.Element.position({:start_element, "foo", [], {2, 15, 19}})
+      iex> FnXML.Element.position({:start_element, "foo", [], 2, 15, 19})
       {2, 4}
 
-      iex> FnXML.Element.position({:characters, "hello", {1, 0, 5}})
+      iex> FnXML.Element.position({:characters, "hello", 1, 0, 5})
       {1, 5}
   """
   def position({:start_document, _}), do: {0, 0}
   def position({:end_document, _}), do: {0, 0}
-  def position({:start_element, _tag, _attrs, loc}), do: loc_to_position(loc)
-  def position({:end_element, _tag, loc}), do: loc_to_position(loc)
-  def position({:end_element, _tag}), do: {0, 0}
-  def position({:characters, _content, loc}), do: loc_to_position(loc)
-  def position({:comment, _content, loc}), do: loc_to_position(loc)
-  def position({:prolog, _tag, _attrs, loc}), do: loc_to_position(loc)
-  def position({:processing_instruction, _name, _content, loc}), do: loc_to_position(loc)
-  def position({:error, _msg, loc}), do: loc_to_position(loc)
-
-  defp loc_to_position(nil), do: {0, 0}
-  defp loc_to_position({line, line_start, abs_pos}), do: {line, abs_pos - line_start}
+  # 6-tuple format (from parser)
+  def position({:start_element, _tag, _attrs, line, ls, pos}), do: {line, pos - ls}
+  def position({:end_element, _tag, line, ls, pos}), do: {line, pos - ls}
+  def position({:characters, _content, line, ls, pos}), do: {line, pos - ls}
+  def position({:space, _content, line, ls, pos}), do: {line, pos - ls}
+  def position({:comment, _content, line, ls, pos}), do: {line, pos - ls}
+  def position({:cdata, _content, line, ls, pos}), do: {line, pos - ls}
+  def position({:dtd, _content, line, ls, pos}), do: {line, pos - ls}
+  def position({:prolog, _tag, _attrs, line, ls, pos}), do: {line, pos - ls}
+  def position({:processing_instruction, _name, _content, line, ls, pos}), do: {line, pos - ls}
+  def position({:error, _type, _msg, line, ls, pos}), do: {line, pos - ls}
+  # 4-tuple format (normalized)
+  def position({:start_element, _tag, _attrs, nil}), do: {0, 0}
+  def position({:start_element, _tag, _attrs, {line, ls, pos}}), do: {line, pos - ls}
+  def position({:prolog, _tag, _attrs, nil}), do: {0, 0}
+  def position({:prolog, _tag, _attrs, {line, ls, pos}}), do: {line, pos - ls}
+  def position({:processing_instruction, _name, _content, nil}), do: {0, 0}
+  def position({:processing_instruction, _name, _content, {line, ls, pos}}), do: {line, pos - ls}
+  # 3-tuple format (normalized)
+  def position({:end_element, _tag, nil}), do: {0, 0}
+  def position({:end_element, _tag, {line, ls, pos}}), do: {line, pos - ls}
+  def position({:characters, _content, nil}), do: {0, 0}
+  def position({:characters, _content, {line, ls, pos}}), do: {line, pos - ls}
+  def position({:space, _content, nil}), do: {0, 0}
+  def position({:space, _content, {line, ls, pos}}), do: {line, pos - ls}
+  def position({:comment, _content, nil}), do: {0, 0}
+  def position({:comment, _content, {line, ls, pos}}), do: {line, pos - ls}
+  def position({:cdata, _content, nil}), do: {0, 0}
+  def position({:cdata, _content, {line, ls, pos}}), do: {line, pos - ls}
+  def position({:dtd, _content, nil}), do: {0, 0}
+  def position({:dtd, _content, {line, ls, pos}}), do: {line, pos - ls}
 
   @doc """
   Given an element, return the raw location tuple `{line, line_start, byte_offset}`.
 
   ## Examples
 
-      iex> FnXML.Element.loc({:start_element, "foo", [], {2, 15, 19}})
+      iex> FnXML.Element.loc({:start_element, "foo", [], 2, 15, 19})
       {2, 15, 19}
   """
   def loc({:start_document, _}), do: nil
   def loc({:end_document, _}), do: nil
+  # 6-tuple format (from parser)
+  def loc({:start_element, _tag, _attrs, line, ls, pos}), do: {line, ls, pos}
+  def loc({:end_element, _tag, line, ls, pos}), do: {line, ls, pos}
+  def loc({:characters, _content, line, ls, pos}), do: {line, ls, pos}
+  def loc({:space, _content, line, ls, pos}), do: {line, ls, pos}
+  def loc({:comment, _content, line, ls, pos}), do: {line, ls, pos}
+  def loc({:cdata, _content, line, ls, pos}), do: {line, ls, pos}
+  def loc({:dtd, _content, line, ls, pos}), do: {line, ls, pos}
+  def loc({:prolog, _tag, _attrs, line, ls, pos}), do: {line, ls, pos}
+  def loc({:processing_instruction, _name, _content, line, ls, pos}), do: {line, ls, pos}
+  def loc({:error, _type, _msg, line, ls, pos}), do: {line, ls, pos}
+  # 4-tuple format (normalized)
   def loc({:start_element, _tag, _attrs, loc}), do: loc
-  def loc({:end_element, _tag, loc}), do: loc
-  def loc({:end_element, _tag}), do: nil
-  def loc({:characters, _content, loc}), do: loc
-  def loc({:comment, _content, loc}), do: loc
   def loc({:prolog, _tag, _attrs, loc}), do: loc
   def loc({:processing_instruction, _name, _content, loc}), do: loc
-  def loc({:error, _msg, loc}), do: loc
+  # 3-tuple format (normalized)
+  def loc({:end_element, _tag, loc}), do: loc
+  def loc({:characters, _content, loc}), do: loc
+  def loc({:space, _content, loc}), do: loc
+  def loc({:comment, _content, loc}), do: loc
+  def loc({:cdata, _content, loc}), do: loc
+  def loc({:dtd, _content, loc}), do: loc
 end

@@ -11,6 +11,7 @@ defmodule FnXML.Security.Encryption.Decryptor do
   5. Replace EncryptedData with decrypted content
   """
 
+  alias FnXML.Namespaces, as: XMLNamespaces
   alias FnXML.Security.{Algorithms, Namespaces}
 
   @doc """
@@ -78,13 +79,13 @@ defmodule FnXML.Security.Encryption.Decryptor do
         handle_start_element(name, attrs, event, state, xenc_ns)
 
       {:end_element, name, _, _, _} ->
-        handle_end_element(strip_prefix(name), event, state)
+        handle_end_element(XMLNamespaces.local_part(name), event, state)
 
       {:end_element, name, _} ->
-        handle_end_element(strip_prefix(name), event, state)
+        handle_end_element(XMLNamespaces.local_part(name), event, state)
 
       {:end_element, name} ->
-        handle_end_element(strip_prefix(name), event, state)
+        handle_end_element(XMLNamespaces.local_part(name), event, state)
 
       {:characters, content, _, _, _} ->
         handle_characters(content, event, state)
@@ -102,7 +103,7 @@ defmodule FnXML.Security.Encryption.Decryptor do
   end
 
   defp handle_start_element(name, attrs, event, state, xenc_ns) do
-    local_name = strip_prefix(name)
+    local_name = XMLNamespaces.local_part(name)
 
     cond do
       # Start of EncryptedData
@@ -336,7 +337,7 @@ defmodule FnXML.Security.Encryption.Decryptor do
       Enum.reduce(events, state, fn event, acc ->
         case event do
           {:start_element, name, attrs, _, _, _} ->
-            if strip_prefix(name) == "EncryptedData" and
+            if XMLNamespaces.local_part(name) == "EncryptedData" and
                  in_xenc_namespace?(name, attrs, xenc_ns) and not acc.in_encrypted_data do
               %{acc | in_encrypted_data: true, depth: 1}
             else
@@ -348,7 +349,7 @@ defmodule FnXML.Security.Encryption.Decryptor do
             end
 
           {:start_element, name, attrs, _} ->
-            if strip_prefix(name) == "EncryptedData" and
+            if XMLNamespaces.local_part(name) == "EncryptedData" and
                  in_xenc_namespace?(name, attrs, xenc_ns) and not acc.in_encrypted_data do
               %{acc | in_encrypted_data: true, depth: 1}
             else
@@ -455,13 +456,6 @@ defmodule FnXML.Security.Encryption.Decryptor do
           {"xmlns", ^xenc_ns} -> true
           _ -> false
         end)
-    end
-  end
-
-  defp strip_prefix(name) do
-    case String.split(name, ":", parts: 2) do
-      [_prefix, local] -> local
-      [local] -> local
     end
   end
 

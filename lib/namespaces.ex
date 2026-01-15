@@ -76,6 +76,8 @@ defmodule FnXML.Namespaces do
 
   @xml_namespace "http://www.w3.org/XML/1998/namespace"
   @xmlns_namespace "http://www.w3.org/2000/xmlns/"
+  @xsd_namespace "http://www.w3.org/2001/XMLSchema"
+  @xsi_namespace "http://www.w3.org/2001/XMLSchema-instance"
 
   # ============================================================================
   # Stream Processing
@@ -244,6 +246,70 @@ defmodule FnXML.Namespaces do
   """
   @spec xmlns_namespace() :: String.t()
   def xmlns_namespace, do: @xmlns_namespace
+
+  @doc """
+  Returns the XML Schema Definition namespace URI.
+
+  `http://www.w3.org/2001/XMLSchema`
+  """
+  @spec xsd_namespace() :: String.t()
+  def xsd_namespace, do: @xsd_namespace
+
+  @doc """
+  Returns the XML Schema Instance namespace URI.
+
+  `http://www.w3.org/2001/XMLSchema-instance`
+  """
+  @spec xsi_namespace() :: String.t()
+  def xsi_namespace, do: @xsi_namespace
+
+  @doc """
+  Get the local part of a name (strips prefix if present).
+
+  This is a convenience function for extracting just the local name
+  from a potentially prefixed QName.
+
+  ## Examples
+
+      iex> FnXML.Namespaces.local_part("foo")
+      "foo"
+
+      iex> FnXML.Namespaces.local_part("ns:element")
+      "element"
+
+      iex> FnXML.Namespaces.local_part("xs:string")
+      "string"
+  """
+  @spec local_part(String.t()) :: String.t()
+  defdelegate local_part(name), to: QName
+
+  @doc """
+  Get the prefix of a name (nil if unprefixed).
+
+  ## Examples
+
+      iex> FnXML.Namespaces.prefix("foo")
+      nil
+
+      iex> FnXML.Namespaces.prefix("ns:element")
+      "ns"
+  """
+  @spec prefix(String.t()) :: String.t() | nil
+  defdelegate prefix(name), to: QName
+
+  @doc """
+  Check if a name is prefixed.
+
+  ## Examples
+
+      iex> FnXML.Namespaces.prefixed?("foo")
+      false
+
+      iex> FnXML.Namespaces.prefixed?("ns:element")
+      true
+  """
+  @spec prefixed?(String.t()) :: boolean()
+  defdelegate prefixed?(name), to: QName
 
   # ============================================================================
   # Error Checking Helpers

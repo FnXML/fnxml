@@ -6,7 +6,7 @@ defmodule FnXML.AttrValidationTest do
       result = FnXML.Parser.parse(~s(<a b="<"/>)) |> Enum.to_list()
 
       assert Enum.any?(result, fn
-               {:error, msg, _} -> String.contains?(msg, "<")
+               {:error, _type, msg, _, _, _} -> String.contains?(to_string(msg), "<")
                _ -> false
              end)
     end
@@ -15,12 +15,12 @@ defmodule FnXML.AttrValidationTest do
       result = FnXML.Parser.parse(~s(<a b="hello"/>)) |> Enum.to_list()
 
       refute Enum.any?(result, fn
-               {:error, _, _} -> true
+               {:error, _, _, _, _, _} -> true
                _ -> false
              end)
 
       assert Enum.any?(result, fn
-               {:start_element, "a", [{"b", "hello"}], _} -> true
+               {:start_element, "a", [{"b", "hello"}], _, _, _} -> true
                _ -> false
              end)
     end
@@ -29,13 +29,13 @@ defmodule FnXML.AttrValidationTest do
       result = FnXML.Parser.parse(~s(<a b="&lt;"/>)) |> Enum.to_list()
 
       refute Enum.any?(result, fn
-               {:error, _, _} -> true
+               {:error, _, _, _, _, _} -> true
                _ -> false
              end)
 
       # Entity not expanded by parser (that's done in stream layer)
       assert Enum.any?(result, fn
-               {:start_element, "a", [{"b", "&lt;"}], _} -> true
+               {:start_element, "a", [{"b", "&lt;"}], _, _, _} -> true
                _ -> false
              end)
     end
@@ -44,7 +44,7 @@ defmodule FnXML.AttrValidationTest do
       result = FnXML.Parser.parse(~s(<a b="hello 'world'"/>)) |> Enum.to_list()
 
       refute Enum.any?(result, fn
-               {:error, _, _} -> true
+               {:error, _, _, _, _, _} -> true
                _ -> false
              end)
     end

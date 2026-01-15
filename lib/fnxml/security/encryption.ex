@@ -78,6 +78,7 @@ defmodule FnXML.Security.Encryption do
   - W3C XML Encryption 1.1: https://www.w3.org/TR/xmlenc-core1/
   """
 
+  alias FnXML.Namespaces, as: XMLNamespaces
   alias FnXML.Security.{Algorithms, Namespaces}
 
   # C14N alias currently unused in this module - uncomment when needed
@@ -249,12 +250,12 @@ defmodule FnXML.Security.Encryption do
           {true, {:start_element, name, attrs, _, _, _}} ->
             acc
             |> update_depth(1)
-            |> update_encrypted_info(strip_prefix(name), attrs)
+            |> update_encrypted_info(XMLNamespaces.local_part(name), attrs)
 
           {true, {:start_element, name, attrs, _}} ->
             acc
             |> update_depth(1)
-            |> update_encrypted_info(strip_prefix(name), attrs)
+            |> update_encrypted_info(XMLNamespaces.local_part(name), attrs)
 
           # End of EncryptedData
           {true, {:end_element, _, _, _, _}} when acc.depth == 1 ->
@@ -344,13 +345,6 @@ defmodule FnXML.Security.Encryption do
   end
 
   defp update_encrypted_info(acc, _name, _attrs), do: acc
-
-  defp strip_prefix(name) do
-    case String.split(name, ":", parts: 2) do
-      [_prefix, local] -> local
-      [local] -> local
-    end
-  end
 
   defp find_attr(attrs, name) do
     case Enum.find(attrs, fn {k, _} -> k == name end) do
