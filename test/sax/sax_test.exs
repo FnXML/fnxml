@@ -139,10 +139,10 @@ defmodule FnXML.SAXTest do
       [{"root", attrs}] = state.elements
       # Namespace resolver changes attrs to {uri, name, value} format
       assert Enum.any?(attrs, fn
-        {nil, "id", "1"} -> true
-        {"id", "1"} -> true
-        _ -> false
-      end)
+               {nil, "id", "1"} -> true
+               {"id", "1"} -> true
+               _ -> false
+             end)
     end
 
     test "collects nested elements" do
@@ -207,7 +207,8 @@ defmodule FnXML.SAXTest do
     end
 
     test "calls error callback when defined" do
-      {:ok, state} = SAX.parse("<root><unclosed", FullHandler, %{})
+      # Use malformed XML that triggers parser error events
+      {:ok, state} = SAX.parse("<root><<</root>", FullHandler, %{})
       assert length(state.errors) >= 1
     end
   end

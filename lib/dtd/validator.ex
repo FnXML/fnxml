@@ -44,8 +44,10 @@ defmodule FnXML.DTD.Validator do
     normalize = Keyword.get(opts, :normalize_attributes, true)
 
     Stream.transform(stream, nil, fn
-      {:dtd, content, loc} = event, _model ->
-        # Parse DTD and validate constraints
+      # DTD - 5-tuple from parser
+      {:dtd, content, line, ls, pos} = event, _model ->
+        loc = {line, ls, pos}
+
         case DTD.parse_doctype(content) do
           {:ok, model} ->
             errors = validate_dtd_constraints(model, loc, on_error)
@@ -55,8 +57,23 @@ defmodule FnXML.DTD.Validator do
             {[event], nil}
         end
 
+      # DTD - 3-tuple normalized
+      {:dtd, content, loc} = event, _model ->
+        case DTD.parse_doctype(content) do
+          {:ok, model} ->
+            errors = validate_dtd_constraints(model, loc, on_error)
+            {errors ++ [event], model}
+
+          {:error, _} ->
+            {[event], nil}
+        end
+
+      # Start element - 6-tuple from parser
+      {:start_element, tag, attrs, line, ls, pos}, model when model != nil and normalize ->
+        {[normalize_open_event_6(tag, attrs, line, ls, pos, model)], model}
+
+      # Start element - 4-tuple normalized
       {:start_element, tag, attrs, loc}, model when model != nil and normalize ->
-        # Normalize attributes based on DTD types
         {[normalize_open_event(tag, attrs, loc, model)], model}
 
       event, model ->
@@ -85,22 +102,30 @@ defmodule FnXML.DTD.Validator do
   """
   @spec normalize_open_event(String.t(), list(), term(), Model.t()) :: term()
   def normalize_open_event(tag, attrs, loc, model) do
+    normalized_attrs = normalize_attrs(tag, attrs, model)
+    {:start_element, tag, normalized_attrs, loc}
+  end
+
+  # Normalize for 6-tuple format from parser
+  defp normalize_open_event_6(tag, attrs, line, ls, pos, model) do
+    normalized_attrs = normalize_attrs(tag, attrs, model)
+    {:start_element, tag, normalized_attrs, line, ls, pos}
+  end
+
+  defp normalize_attrs(tag, attrs, model) do
     element_name = extract_local_name(tag)
     attr_decls = Map.get(model.attributes, element_name, [])
     attr_types = Map.new(attr_decls, fn decl -> {decl.name, decl.type} end)
 
-    normalized_attrs =
-      Enum.map(attrs, fn {name, value} ->
-        case Map.get(attr_types, name) do
-          type when type in @tokenized_types ->
-            {name, normalize_token_value(value)}
+    Enum.map(attrs, fn {name, value} ->
+      case Map.get(attr_types, name) do
+        type when type in @tokenized_types ->
+          {name, normalize_token_value(value)}
 
-          _ ->
-            {name, value}
-        end
-      end)
-
-    {:start_element, tag, normalized_attrs, loc}
+        _ ->
+          {name, value}
+      end
+    end)
   end
 
   # Validate entity names don't contain colons (namespace constraint)

@@ -290,8 +290,10 @@ defmodule FnXML.XsTypes do
   def infer_type(%URI{}), do: :anyURI
   def infer_type(:infinity), do: :double
   def infer_type(:neg_infinity), do: :double
-  def infer_type(:positive_infinity), do: :double  # XPath alias
-  def infer_type(:negative_infinity), do: :double  # XPath alias
+  # XPath alias
+  def infer_type(:positive_infinity), do: :double
+  # XPath alias
+  def infer_type(:negative_infinity), do: :double
   def infer_type(:nan), do: :double
   def infer_type({prefix, _local}) when is_binary(prefix) or is_nil(prefix), do: :QName
   def infer_type(nil), do: nil
@@ -355,8 +357,20 @@ defmodule FnXML.XsTypes do
   def whitespace_mode(:string), do: :preserve
   def whitespace_mode(:normalizedString), do: :replace
 
-  def whitespace_mode(type) when type in [:token, :language, :NMTOKEN, :NMTOKENS, :Name, :NCName,
-                                          :ID, :IDREF, :IDREFS, :ENTITY, :ENTITIES] do
+  def whitespace_mode(type)
+      when type in [
+             :token,
+             :language,
+             :NMTOKEN,
+             :NMTOKENS,
+             :Name,
+             :NCName,
+             :ID,
+             :IDREF,
+             :IDREFS,
+             :ENTITY,
+             :ENTITIES
+           ] do
     :collapse
   end
 

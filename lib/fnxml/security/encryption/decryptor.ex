@@ -143,14 +143,21 @@ defmodule FnXML.Security.Encryption.Decryptor do
           end
 
         new_enc_depth = state.enc_depth + 1
+
         new_enc_key_depth =
           if state.in_encrypted_key, do: state.enc_key_depth + 1, else: state.enc_key_depth
 
-        %{state | enc_depth: new_enc_depth, enc_key_depth: new_enc_key_depth, enc_data_events: [event | state.enc_data_events]}
+        %{
+          state
+          | enc_depth: new_enc_depth,
+            enc_key_depth: new_enc_key_depth,
+            enc_data_events: [event | state.enc_data_events]
+        }
 
       # CipherValue - stores the encrypted content
       local_name == "CipherValue" and state.in_encrypted_data ->
         new_enc_depth = state.enc_depth + 1
+
         new_enc_key_depth =
           if state.in_encrypted_key, do: state.enc_key_depth + 1, else: state.enc_key_depth
 
@@ -218,7 +225,8 @@ defmodule FnXML.Security.Encryption.Decryptor do
     end
   end
 
-  defp handle_end_element("CipherValue", event, state) when state.current_element == :cipher_value do
+  defp handle_end_element("CipherValue", event, state)
+       when state.current_element == :cipher_value do
     cipher_value = state.text_buffer |> String.trim() |> Base.decode64!()
 
     state =
@@ -245,7 +253,9 @@ defmodule FnXML.Security.Encryption.Decryptor do
 
   defp handle_end_element(_name, event, state) when state.in_encrypted_data do
     new_enc_depth = state.enc_depth - 1
-    new_enc_key_depth = if state.in_encrypted_key, do: state.enc_key_depth - 1, else: state.enc_key_depth
+
+    new_enc_key_depth =
+      if state.in_encrypted_key, do: state.enc_key_depth - 1, else: state.enc_key_depth
 
     %{
       state
@@ -307,7 +317,10 @@ defmodule FnXML.Security.Encryption.Decryptor do
           tag_size = 16
           iv = binary_part(cipher_data, 0, iv_size)
           tag = binary_part(cipher_data, byte_size(cipher_data) - tag_size, tag_size)
-          ciphertext = binary_part(cipher_data, iv_size, byte_size(cipher_data) - iv_size - tag_size)
+
+          ciphertext =
+            binary_part(cipher_data, iv_size, byte_size(cipher_data) - iv_size - tag_size)
+
           {iv, ciphertext, tag}
 
         algo when algo in [:aes_128_cbc, :aes_256_cbc] ->

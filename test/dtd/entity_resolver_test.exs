@@ -173,8 +173,15 @@ defmodule FnXML.DTD.EntityResolverTest do
         |> EntityResolver.resolve(model, on_unknown: :keep)
         |> Enum.to_list()
 
-      text_event = Enum.find(events, &match?({:characters, _, _}, &1))
-      assert {:characters, "Hello, World!", _} = text_event
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "Hello, World!"
     end
 
     test "resolves entities in attributes" do
@@ -189,8 +196,16 @@ defmodule FnXML.DTD.EntityResolverTest do
         |> EntityResolver.resolve(model, on_unknown: :keep)
         |> Enum.to_list()
 
-      open_event = Enum.find(events, &match?({:start_element, "div", _, _}, &1))
-      assert {:start_element, "div", [{"class", "test-value"}], _} = open_event
+      open_event =
+        Enum.find(events, fn
+          {:start_element, "div", _, _, _, _} -> true
+          {:start_element, "div", _, _} -> true
+          _ -> false
+        end)
+
+      assert open_event != nil
+      attrs = elem(open_event, 2)
+      assert {"class", "test-value"} in attrs
     end
 
     test "handles nested entities in stream" do
@@ -206,8 +221,15 @@ defmodule FnXML.DTD.EntityResolverTest do
         |> EntityResolver.resolve(model)
         |> Enum.to_list()
 
-      text_event = Enum.find(events, &match?({:characters, _, _}, &1))
-      assert {:characters, "[INNER]", _} = text_event
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "[INNER]"
     end
 
     test "respects on_unknown option" do
@@ -221,8 +243,15 @@ defmodule FnXML.DTD.EntityResolverTest do
         |> EntityResolver.resolve(model, on_unknown: :keep)
         |> Enum.to_list()
 
-      text_event = Enum.find(events, &match?({:characters, _, _}, &1))
-      assert {:characters, "&unknown;", _} = text_event
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "&unknown;"
     end
 
     test "uses external resolver when provided" do

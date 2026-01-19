@@ -11,21 +11,23 @@ defmodule FnXML.FastExBlkParserTest do
 
     test "parses nested elements" do
       events = FastExBlkParser.parse("<a><b/></a>")
+
       assert [
-        {:start_element, "a", [], nil},
-        {:start_element, "b", [], nil},
-        {:end_element, "b"},
-        {:end_element, "a"}
-      ] = events
+               {:start_element, "a", [], nil},
+               {:start_element, "b", [], nil},
+               {:end_element, "b"},
+               {:end_element, "a"}
+             ] = events
     end
 
     test "parses text content" do
       events = FastExBlkParser.parse("<root>hello world</root>")
+
       assert [
-        {:start_element, "root", [], nil},
-        {:characters, "hello world", nil},
-        {:end_element, "root"}
-      ] = events
+               {:start_element, "root", [], nil},
+               {:characters, "hello world", nil},
+               {:end_element, "root"}
+             ] = events
     end
 
     test "parses attributes" do
@@ -41,34 +43,37 @@ defmodule FnXML.FastExBlkParserTest do
       events = FastExBlkParser.parse("<root>  \n  <child/>  \n  </root>")
       # Should have no :space events
       refute Enum.any?(events, &match?({:space, _, _, _, _}, &1))
+
       assert [
-        {:start_element, "root", [], nil},
-        {:start_element, "child", [], nil},
-        {:end_element, "child"},
-        {:end_element, "root"}
-      ] = events
+               {:start_element, "root", [], nil},
+               {:start_element, "child", [], nil},
+               {:end_element, "child"},
+               {:end_element, "root"}
+             ] = events
     end
 
     test "preserves whitespace in text content" do
       events = FastExBlkParser.parse("<root>  hello  world  </root>")
+
       assert [
-        {:start_element, "root", [], nil},
-        {:characters, "  hello  world  ", nil},
-        {:end_element, "root"}
-      ] = events
+               {:start_element, "root", [], nil},
+               {:characters, "  hello  world  ", nil},
+               {:end_element, "root"}
+             ] = events
     end
 
     test "preserves mixed content whitespace" do
       events = FastExBlkParser.parse("<p>Hello <b>world</b>!</p>")
+
       assert [
-        {:start_element, "p", [], nil},
-        {:characters, "Hello ", nil},
-        {:start_element, "b", [], nil},
-        {:characters, "world", nil},
-        {:end_element, "b"},
-        {:characters, "!", nil},
-        {:end_element, "p"}
-      ] = events
+               {:start_element, "p", [], nil},
+               {:characters, "Hello ", nil},
+               {:start_element, "b", [], nil},
+               {:characters, "world", nil},
+               {:end_element, "b"},
+               {:characters, "!", nil},
+               {:end_element, "p"}
+             ] = events
     end
   end
 
@@ -116,12 +121,14 @@ defmodule FnXML.FastExBlkParserTest do
 
   describe "no location tracking" do
     test "all events have nil location" do
-      events = FastExBlkParser.parse(~s(<?xml version="1.0"?><root id="1">text<!-- comment --></root>))
+      events =
+        FastExBlkParser.parse(~s(<?xml version="1.0"?><root id="1">text<!-- comment --></root>))
 
       for event <- events do
         case event do
           {:start_element, _, _, loc} -> assert loc == nil
-          {:end_element, _} -> :ok  # No location field
+          # No location field
+          {:end_element, _} -> :ok
           {:characters, _, loc} -> assert loc == nil
           {:comment, _, loc} -> assert loc == nil
           {:prolog, _, _, loc} -> assert loc == nil

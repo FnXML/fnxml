@@ -64,7 +64,10 @@ defmodule FnXML.XsTypes.Derived do
   # String-derived types
   def validate(value, :normalizedString), do: validate_normalized_string(value)
   def validate(value, :token), do: validate_token(value)
-  def validate(value, :language), do: validate_pattern(value, ~r/^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$/, :language)
+
+  def validate(value, :language),
+    do: validate_pattern(value, ~r/^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$/, :language)
+
   def validate(value, :NMTOKEN), do: validate_nmtoken(value)
   def validate(value, :NMTOKENS), do: validate_nmtokens(value)
   def validate(value, :Name), do: validate_name(value)
@@ -106,10 +109,13 @@ defmodule FnXML.XsTypes.Derived do
     cond do
       String.contains?(value, ["\t", "\n", "\r"]) ->
         {:error, {:invalid_value, :token, value}}
+
       String.starts_with?(value, " ") or String.ends_with?(value, " ") ->
         {:error, {:invalid_value, :token, value}}
+
       String.contains?(value, "  ") ->
         {:error, {:invalid_value, :token, value}}
+
       true ->
         :ok
     end
@@ -154,6 +160,7 @@ defmodule FnXML.XsTypes.Derived do
 
   defp validate_integer(value) do
     trimmed = String.trim(value)
+
     case Integer.parse(trimmed) do
       {_int, ""} -> :ok
       _ -> {:error, {:invalid_value, :integer, value}}
@@ -162,6 +169,7 @@ defmodule FnXML.XsTypes.Derived do
 
   defp validate_integer_range(value, min, max) do
     trimmed = String.trim(value)
+
     case Integer.parse(trimmed) do
       {int, ""} ->
         cond do
@@ -169,6 +177,7 @@ defmodule FnXML.XsTypes.Derived do
           max != nil and int > max -> {:error, {:out_of_range, :integer, int}}
           true -> :ok
         end
+
       _ ->
         {:error, {:invalid_value, :integer, value}}
     end
@@ -177,6 +186,7 @@ defmodule FnXML.XsTypes.Derived do
   defp validate_bounded_integer(value, type) do
     trimmed = String.trim(value)
     {min, max} = Map.fetch!(@ranges, type)
+
     case Integer.parse(trimmed) do
       {int, ""} when int >= min and int <= max -> :ok
       {int, ""} -> {:error, {:out_of_range, type, int}}
@@ -196,11 +206,14 @@ defmodule FnXML.XsTypes.Derived do
     # xs:yearMonthDuration allows only year and month components: -?P(\d+Y)?(\d+M)?
     # Must have at least one component and cannot have day/time parts
     pattern = ~r/^-?P(\d+Y)?(\d+M)?$/
+
     cond do
       not Regex.match?(pattern, value) ->
         {:error, {:invalid_value, :yearMonthDuration, value}}
+
       value in ["P", "-P"] ->
         {:error, {:invalid_value, :yearMonthDuration, value}}
+
       true ->
         :ok
     end
@@ -210,11 +223,14 @@ defmodule FnXML.XsTypes.Derived do
     # xs:dayTimeDuration allows only day and time components: -?P(\d+D)?(T(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?
     # Must have at least one component and cannot have year/month parts
     pattern = ~r/^-?P(\d+D)?(T(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$/
+
     cond do
       not Regex.match?(pattern, value) ->
         {:error, {:invalid_value, :dayTimeDuration, value}}
+
       value in ["P", "-P", "PT", "-PT"] ->
         {:error, {:invalid_value, :dayTimeDuration, value}}
+
       true ->
         :ok
     end
@@ -230,8 +246,18 @@ defmodule FnXML.XsTypes.Derived do
   @spec parse(String.t(), atom()) :: {:ok, term()} | {:error, term()}
 
   # String-derived types - return as string (already normalized by caller)
-  def parse(value, type) when type in [:normalizedString, :token, :language, :NMTOKEN,
-                                       :Name, :NCName, :ID, :IDREF, :ENTITY] do
+  def parse(value, type)
+      when type in [
+             :normalizedString,
+             :token,
+             :language,
+             :NMTOKEN,
+             :Name,
+             :NCName,
+             :ID,
+             :IDREF,
+             :ENTITY
+           ] do
     {:ok, value}
   end
 
@@ -245,15 +271,28 @@ defmodule FnXML.XsTypes.Derived do
   def parse(value, :dayTimeDuration), do: parse_day_time_duration(value)
 
   # Integer types - return as integer
-  def parse(value, type) when type in [:integer, :nonPositiveInteger, :negativeInteger,
-                                       :nonNegativeInteger, :positiveInteger,
-                                       :long, :int, :short, :byte,
-                                       :unsignedLong, :unsignedInt, :unsignedShort, :unsignedByte] do
+  def parse(value, type)
+      when type in [
+             :integer,
+             :nonPositiveInteger,
+             :negativeInteger,
+             :nonNegativeInteger,
+             :positiveInteger,
+             :long,
+             :int,
+             :short,
+             :byte,
+             :unsignedLong,
+             :unsignedInt,
+             :unsignedShort,
+             :unsignedByte
+           ] do
     parse_integer(value, type)
   end
 
   defp parse_integer(value, type) do
     trimmed = String.trim(value)
+
     case Integer.parse(trimmed) do
       {int, ""} -> {:ok, int}
       _ -> {:error, {:invalid_value, type, value}}
@@ -264,13 +303,14 @@ defmodule FnXML.XsTypes.Derived do
     negative = String.starts_with?(value, "-")
     cleaned = value |> String.trim_leading("-") |> String.trim_leading("P")
 
-    duration = %{
-      years: parse_duration_component(cleaned, "Y"),
-      months: parse_duration_component(cleaned, "M")
-    }
-    |> maybe_add_negative(negative)
-    |> Enum.reject(fn {k, v} -> v == 0 or (k == :negative and v == false) end)
-    |> Map.new()
+    duration =
+      %{
+        years: parse_duration_component(cleaned, "Y"),
+        months: parse_duration_component(cleaned, "M")
+      }
+      |> maybe_add_negative(negative)
+      |> Enum.reject(fn {k, v} -> v == 0 or (k == :negative and v == false) end)
+      |> Map.new()
 
     {:ok, duration}
   end
@@ -279,20 +319,22 @@ defmodule FnXML.XsTypes.Derived do
     negative = String.starts_with?(value, "-")
     cleaned = value |> String.trim_leading("-") |> String.trim_leading("P")
 
-    {_date_part, time_part} = case String.split(cleaned, "T", parts: 2) do
-      [date, time] -> {date, time}
-      [date] -> {date, ""}
-    end
+    {_date_part, time_part} =
+      case String.split(cleaned, "T", parts: 2) do
+        [date, time] -> {date, time}
+        [date] -> {date, ""}
+      end
 
-    duration = %{
-      days: parse_duration_component(cleaned, "D"),
-      hours: parse_duration_component(time_part, "H"),
-      minutes: parse_duration_component(time_part, "M"),
-      seconds: parse_duration_component_decimal(time_part, "S")
-    }
-    |> maybe_add_negative(negative)
-    |> Enum.reject(fn {k, v} -> v == 0 or v == 0.0 or (k == :negative and v == false) end)
-    |> Map.new()
+    duration =
+      %{
+        days: parse_duration_component(cleaned, "D"),
+        hours: parse_duration_component(time_part, "H"),
+        minutes: parse_duration_component(time_part, "M"),
+        seconds: parse_duration_component_decimal(time_part, "S")
+      }
+      |> maybe_add_negative(negative)
+      |> Enum.reject(fn {k, v} -> v == 0 or v == 0.0 or (k == :negative and v == false) end)
+      |> Map.new()
 
     {:ok, duration}
   end
@@ -311,7 +353,9 @@ defmodule FnXML.XsTypes.Derived do
           {val, _} -> val
           :error -> 0.0
         end
-      _ -> 0.0
+
+      _ ->
+        0.0
     end
   end
 
@@ -328,8 +372,18 @@ defmodule FnXML.XsTypes.Derived do
   @spec encode(term(), atom()) :: {:ok, String.t()} | {:error, term()}
 
   # String-derived types
-  def encode(value, type) when type in [:normalizedString, :token, :language, :NMTOKEN,
-                                        :Name, :NCName, :ID, :IDREF, :ENTITY] and is_binary(value) do
+  def encode(value, type)
+      when type in [
+             :normalizedString,
+             :token,
+             :language,
+             :NMTOKEN,
+             :Name,
+             :NCName,
+             :ID,
+             :IDREF,
+             :ENTITY
+           ] and is_binary(value) do
     {:ok, value}
   end
 
@@ -345,11 +399,23 @@ defmodule FnXML.XsTypes.Derived do
   def encode(value, :dayTimeDuration) when is_binary(value), do: {:ok, value}
 
   # Integer types
-  def encode(value, type) when is_integer(value) and type in [:integer, :nonPositiveInteger,
-                                                              :negativeInteger, :nonNegativeInteger,
-                                                              :positiveInteger, :long, :int, :short,
-                                                              :byte, :unsignedLong, :unsignedInt,
-                                                              :unsignedShort, :unsignedByte] do
+  def encode(value, type)
+      when is_integer(value) and
+             type in [
+               :integer,
+               :nonPositiveInteger,
+               :negativeInteger,
+               :nonNegativeInteger,
+               :positiveInteger,
+               :long,
+               :int,
+               :short,
+               :byte,
+               :unsignedLong,
+               :unsignedInt,
+               :unsignedShort,
+               :unsignedByte
+             ] do
     {:ok, Integer.to_string(value)}
   end
 

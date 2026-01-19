@@ -46,7 +46,7 @@ defmodule FnXML.Namespaces.Validator do
   @spec validate_event(term(), Context.t(), keyword()) :: {list(term()), Context.t()}
   def validate_event(event, ctx, opts \\ [])
 
-  # Element open with location
+  # Element open with 4-tuple location (normalized)
   def validate_event({:start_element, tag, attrs, loc} = event, ctx, _opts) do
     errors = []
 
@@ -96,8 +96,81 @@ defmodule FnXML.Namespaces.Validator do
     end
   end
 
-  # Element close with location
+  # Element open with 6-tuple format (from parser)
+  def validate_event({:start_element, tag, attrs, line, ls, pos} = event, ctx, _opts) do
+    loc = {line, ls, pos}
+    errors = []
+
+    # Validate tag is valid QName
+    errors =
+      if not QName.valid_qname?(tag) do
+        [{:ns_error, {:invalid_qname, tag}, tag, loc} | errors]
+      else
+        errors
+      end
+
+    # Extract and validate namespace declarations
+    {decl_errors, new_ctx} = process_declarations(attrs, ctx, loc)
+    errors = decl_errors ++ errors
+
+    # Validate element prefix is declared
+    errors =
+      case QName.parse(tag) do
+        {nil, _} ->
+          errors
+
+        {prefix, _} when prefix in ["xml", "xmlns"] ->
+          if prefix == "xmlns" do
+            [{:ns_error, {:xmlns_element, tag}, tag, loc} | errors]
+          else
+            errors
+          end
+
+        {prefix, _} ->
+          case Context.resolve_prefix(new_ctx, prefix) do
+            {:ok, _} ->
+              errors
+
+            {:error, :undeclared_prefix} ->
+              [{:ns_error, {:undeclared_prefix, prefix}, tag, loc} | errors]
+          end
+      end
+
+    # Validate attributes
+    attr_errors = validate_attributes(attrs, new_ctx, loc)
+    errors = attr_errors ++ errors
+
+    if errors == [] do
+      {[event], new_ctx}
+    else
+      {Enum.reverse(errors) ++ [event], new_ctx}
+    end
+  end
+
+  # Element close with 3-tuple location (normalized)
   def validate_event({:end_element, tag, loc} = event, ctx, _opts) do
+    errors = []
+
+    # Validate tag matches QName
+    errors =
+      if not QName.valid_qname?(tag) do
+        [{:ns_error, {:invalid_qname, tag}, tag, loc} | errors]
+      else
+        errors
+      end
+
+    new_ctx = Context.pop(ctx)
+
+    if errors == [] do
+      {[event], new_ctx}
+    else
+      {Enum.reverse(errors) ++ [event], new_ctx}
+    end
+  end
+
+  # Element close with 5-tuple format (from parser)
+  def validate_event({:end_element, tag, line, ls, pos} = event, ctx, _opts) do
+    loc = {line, ls, pos}
     errors = []
 
     # Validate tag matches QName
@@ -152,7 +225,18 @@ defmodule FnXML.Namespaces.Validator do
     end
   end
 
-  # FnXML uses :proc_inst instead of :pi
+  # FnXML uses :processing_instruction - 6-tuple from parser
+  def validate_event({:processing_instruction, target, _data, line, ls, pos} = event, ctx, _opts) do
+    loc = {line, ls, pos}
+
+    if String.contains?(target, ":") do
+      {[{:ns_error, {:colon_in_pi_target, target}, target, loc}, event], ctx}
+    else
+      {[event], ctx}
+    end
+  end
+
+  # 4-tuple normalized format
   def validate_event({:processing_instruction, target, _data, loc} = event, ctx, _opts) do
     if String.contains?(target, ":") do
       {[{:ns_error, {:colon_in_pi_target, target}, target, loc}, event], ctx}
@@ -161,6 +245,7 @@ defmodule FnXML.Namespaces.Validator do
     end
   end
 
+  # 3-tuple legacy format
   def validate_event({:processing_instruction, target, _data} = event, ctx, _opts) do
     if String.contains?(target, ":") do
       {[{:ns_error, {:colon_in_pi_target, target}, target, nil}, event], ctx}
@@ -170,8 +255,20 @@ defmodule FnXML.Namespaces.Validator do
   end
 
   # XML prolog - detect XML version for NS 1.1 support
+  # 6-tuple from parser
+  def validate_event({:prolog, "xml", attrs, _line, _ls, _pos} = event, ctx, _opts) do
+    version =
+      Enum.find_value(attrs, "1.0", fn
+        {"version", v} -> v
+        _ -> nil
+      end)
+
+    new_ctx = Context.set_xml_version(ctx, version)
+    {[event], new_ctx}
+  end
+
+  # 4-tuple normalized format
   def validate_event({:prolog, "xml", attrs, _loc} = event, ctx, _opts) do
-    # Extract version from prolog attributes
     version =
       Enum.find_value(attrs, "1.0", fn
         {"version", v} -> v

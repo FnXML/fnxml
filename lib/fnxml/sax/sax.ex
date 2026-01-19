@@ -271,28 +271,59 @@ defmodule FnXML.SAX do
   end
 
   # Without namespace resolution - element names are strings
+  # 6-tuple from parser
+  defp dispatch_event({:start_element, tag, attrs, _line, _ls, _pos}, handler, state, false)
+       when is_binary(tag) do
+    {_prefix, local} = parse_qname(tag)
+    handler.start_element(nil, local, tag, attrs, state)
+  end
+
+  # 4-tuple normalized
   defp dispatch_event({:start_element, tag, attrs, _loc}, handler, state, false)
        when is_binary(tag) do
     {_prefix, local} = parse_qname(tag)
     handler.start_element(nil, local, tag, attrs, state)
   end
 
-  defp dispatch_event({:end_element, tag}, handler, state, false) when is_binary(tag) do
+  # 5-tuple from parser
+  defp dispatch_event({:end_element, tag, _line, _ls, _pos}, handler, state, false)
+       when is_binary(tag) do
     {_prefix, local} = parse_qname(tag)
     handler.end_element(nil, local, tag, state)
   end
 
+  # 3-tuple normalized
   defp dispatch_event({:end_element, tag, _loc}, handler, state, false) when is_binary(tag) do
     {_prefix, local} = parse_qname(tag)
     handler.end_element(nil, local, tag, state)
   end
 
-  # Text content
+  # 2-tuple legacy
+  defp dispatch_event({:end_element, tag}, handler, state, false) when is_binary(tag) do
+    {_prefix, local} = parse_qname(tag)
+    handler.end_element(nil, local, tag, state)
+  end
+
+  # Text content - 5-tuple from parser
+  defp dispatch_event({:characters, content, _line, _ls, _pos}, handler, state, _ns) do
+    handler.characters(content, state)
+  end
+
+  # Text content - 3-tuple normalized
   defp dispatch_event({:characters, content, _loc}, handler, state, _ns) do
     handler.characters(content, state)
   end
 
-  # Comments (optional callback)
+  # Comments (optional callback) - 5-tuple from parser
+  defp dispatch_event({:comment, content, _line, _ls, _pos}, handler, state, _ns) do
+    if function_exported?(handler, :comment, 2) do
+      handler.comment(content, state)
+    else
+      {:ok, state}
+    end
+  end
+
+  # Comments - 3-tuple normalized
   defp dispatch_event({:comment, content, _loc}, handler, state, _ns) do
     if function_exported?(handler, :comment, 2) do
       handler.comment(content, state)
@@ -301,7 +332,21 @@ defmodule FnXML.SAX do
     end
   end
 
-  # Processing instructions (optional callback)
+  # Processing instructions (optional callback) - 6-tuple from parser
+  defp dispatch_event(
+         {:processing_instruction, target, data, _line, _ls, _pos},
+         handler,
+         state,
+         _ns
+       ) do
+    if function_exported?(handler, :processing_instruction, 3) do
+      handler.processing_instruction(target, data, state)
+    else
+      {:ok, state}
+    end
+  end
+
+  # Processing instructions - 4-tuple normalized
   defp dispatch_event({:processing_instruction, target, data, _loc}, handler, state, _ns) do
     if function_exported?(handler, :processing_instruction, 3) do
       handler.processing_instruction(target, data, state)
@@ -310,7 +355,16 @@ defmodule FnXML.SAX do
     end
   end
 
-  # Errors (optional callback)
+  # Errors (optional callback) - 6-tuple from parser
+  defp dispatch_event({:error, type, msg, line, ls, pos}, handler, state, _ns) do
+    if function_exported?(handler, :error, 3) do
+      handler.error({type, msg}, {line, ls, pos}, state)
+    else
+      {:error, {{type, msg}, {line, ls, pos}}}
+    end
+  end
+
+  # Errors - 3-tuple normalized
   defp dispatch_event({:error, reason, loc}, handler, state, _ns) do
     if function_exported?(handler, :error, 3) do
       handler.error(reason, loc, state)
@@ -322,11 +376,22 @@ defmodule FnXML.SAX do
   # Skip document markers and other events
   defp dispatch_event({:start_document, _}, _handler, state, _ns), do: {:ok, state}
   defp dispatch_event({:end_document, _}, _handler, state, _ns), do: {:ok, state}
+  # 6-tuple from parser
+  defp dispatch_event({:prolog, _, _, _, _, _}, _handler, state, _ns), do: {:ok, state}
+  # 4-tuple normalized
   defp dispatch_event({:prolog, _, _, _}, _handler, state, _ns), do: {:ok, state}
+  # 5-tuple from parser
+  defp dispatch_event({:dtd, _, _, _, _}, _handler, state, _ns), do: {:ok, state}
+  # 3-tuple normalized
   defp dispatch_event({:dtd, _, _}, _handler, state, _ns), do: {:ok, state}
 
+  # CDATA - 5-tuple from parser
+  defp dispatch_event({:cdata, content, line, ls, pos}, handler, state, ns) do
+    dispatch_event({:characters, content, line, ls, pos}, handler, state, ns)
+  end
+
+  # CDATA - 3-tuple normalized
   defp dispatch_event({:cdata, content, loc}, handler, state, ns) do
-    # CDATA is treated as characters
     dispatch_event({:characters, content, loc}, handler, state, ns)
   end
 

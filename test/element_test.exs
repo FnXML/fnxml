@@ -54,9 +54,8 @@ defmodule FnXML.ElementsTest do
     end
 
     test "element with attributes" do
-      assert Element.attribute_map(
-               {:start_element, "foo", [{"bar", "baz"}, {"a", "1"}], 1, 0, 1}
-             ) == %{"bar" => "baz", "a" => "1"}
+      assert Element.attribute_map({:start_element, "foo", [{"bar", "baz"}, {"a", "1"}], 1, 0, 1}) ==
+               %{"bar" => "baz", "a" => "1"}
     end
   end
 
@@ -147,7 +146,8 @@ defmodule FnXML.ElementsTest do
 
   describe "content from processing instruction" do
     test "returns content from PI" do
-      assert Element.content({:processing_instruction, "php", "echo 'hi'", 1, 0, 1}) == "echo 'hi'"
+      assert Element.content({:processing_instruction, "php", "echo 'hi'", 1, 0, 1}) ==
+               "echo 'hi'"
     end
   end
 

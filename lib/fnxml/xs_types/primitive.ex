@@ -46,12 +46,25 @@ defmodule FnXML.XsTypes.Primitive do
   def validate(value, :dateTime), do: validate_datetime(value)
   def validate(value, :time), do: validate_time(value)
   def validate(value, :date), do: validate_date(value)
-  def validate(value, :gYearMonth), do: validate_pattern(value, ~r/^-?\d{4,}-\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gYearMonth)
-  def validate(value, :gYear), do: validate_pattern(value, ~r/^-?\d{4,}(Z|[+-]\d{2}:\d{2})?$/, :gYear)
-  def validate(value, :gMonthDay), do: validate_pattern(value, ~r/^--\d{2}-\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gMonthDay)
-  def validate(value, :gDay), do: validate_pattern(value, ~r/^---\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gDay)
-  def validate(value, :gMonth), do: validate_pattern(value, ~r/^--\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gMonth)
-  def validate(value, :hexBinary), do: validate_pattern(value, ~r/^([0-9a-fA-F]{2})*$/, :hexBinary)
+
+  def validate(value, :gYearMonth),
+    do: validate_pattern(value, ~r/^-?\d{4,}-\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gYearMonth)
+
+  def validate(value, :gYear),
+    do: validate_pattern(value, ~r/^-?\d{4,}(Z|[+-]\d{2}:\d{2})?$/, :gYear)
+
+  def validate(value, :gMonthDay),
+    do: validate_pattern(value, ~r/^--\d{2}-\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gMonthDay)
+
+  def validate(value, :gDay),
+    do: validate_pattern(value, ~r/^---\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gDay)
+
+  def validate(value, :gMonth),
+    do: validate_pattern(value, ~r/^--\d{2}(Z|[+-]\d{2}:\d{2})?$/, :gMonth)
+
+  def validate(value, :hexBinary),
+    do: validate_pattern(value, ~r/^([0-9a-fA-F]{2})*$/, :hexBinary)
+
   def validate(value, :base64Binary), do: validate_base64(value)
   def validate(value, :anyURI), do: validate_uri(value)
   def validate(value, :QName), do: validate_qname(value)
@@ -59,6 +72,7 @@ defmodule FnXML.XsTypes.Primitive do
 
   defp validate_boolean(value) do
     trimmed = String.trim(value)
+
     if trimmed in ["true", "false", "1", "0"] do
       :ok
     else
@@ -68,6 +82,7 @@ defmodule FnXML.XsTypes.Primitive do
 
   defp validate_decimal(value) do
     trimmed = String.trim(value)
+
     if Code.ensure_loaded?(Decimal) do
       # Use apply to avoid compile-time warning when Decimal is not available
       case apply(Decimal, :parse, [trimmed]) do
@@ -86,21 +101,32 @@ defmodule FnXML.XsTypes.Primitive do
 
   defp validate_float(value) do
     trimmed = String.trim(value)
+
     cond do
-      trimmed in ["INF", "-INF", "+INF", "NaN"] -> :ok
+      trimmed in ["INF", "-INF", "+INF", "NaN"] ->
+        :ok
+
       true ->
         normalized = normalize_float_string(trimmed)
+
         case Float.parse(normalized) do
-          {_float, ""} -> :ok
+          {_float, ""} ->
+            :ok
+
           :error ->
-            if valid_float_syntax?(normalized), do: :ok, else: {:error, {:invalid_value, :float, value}}
-          _ -> {:error, {:invalid_value, :float, value}}
+            if valid_float_syntax?(normalized),
+              do: :ok,
+              else: {:error, {:invalid_value, :float, value}}
+
+          _ ->
+            {:error, {:invalid_value, :float, value}}
         end
     end
   end
 
   defp validate_duration(value) do
     pattern = ~r/^-?P(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$/
+
     if Regex.match?(pattern, value) do
       if value in ["P", "-P", "PT", "-PT"] do
         {:error, {:invalid_value, :duration, value}}
@@ -129,6 +155,7 @@ defmodule FnXML.XsTypes.Primitive do
 
   defp validate_base64(value) do
     normalized = String.replace(value, ~r/\s/, "")
+
     case Base.decode64(normalized) do
       {:ok, _} -> :ok
       :error -> {:error, {:invalid_value, :base64Binary, value}}
@@ -139,7 +166,9 @@ defmodule FnXML.XsTypes.Primitive do
 
   defp validate_qname(value) do
     case String.split(value, ":", parts: 2) do
-      [local] -> validate_ncname_format(local, :QName)
+      [local] ->
+        validate_ncname_format(local, :QName)
+
       [prefix, local] ->
         with :ok <- validate_ncname_format(prefix, :QName),
              :ok <- validate_ncname_format(local, :QName) do
@@ -150,6 +179,7 @@ defmodule FnXML.XsTypes.Primitive do
 
   defp validate_ncname_format(value, type) do
     pattern = ~r/^[_\p{L}][_\p{L}0-9.\-]*$/u
+
     if Regex.match?(pattern, value) do
       :ok
     else
@@ -232,8 +262,10 @@ defmodule FnXML.XsTypes.Primitive do
   defp parse_float("+INF"), do: {:ok, :infinity}
   defp parse_float("-INF"), do: {:ok, :neg_infinity}
   defp parse_float("NaN"), do: {:ok, :nan}
+
   defp parse_float(value) do
     normalized = normalize_float_string(value)
+
     case Float.parse(normalized) do
       {float, ""} -> {:ok, float}
       _ -> {:error, {:invalid_value, :float, value}}
@@ -244,22 +276,24 @@ defmodule FnXML.XsTypes.Primitive do
     negative = String.starts_with?(value, "-")
     cleaned = value |> String.trim_leading("-") |> String.trim_leading("P")
 
-    {date_part, time_part} = case String.split(cleaned, "T", parts: 2) do
-      [date, time] -> {date, time}
-      [date] -> {date, ""}
-    end
+    {date_part, time_part} =
+      case String.split(cleaned, "T", parts: 2) do
+        [date, time] -> {date, time}
+        [date] -> {date, ""}
+      end
 
-    duration = %{
-      negative: negative,
-      years: parse_duration_component(date_part, "Y"),
-      months: parse_duration_component(date_part, "M"),
-      days: parse_duration_component(date_part, "D"),
-      hours: parse_duration_component(time_part, "H"),
-      minutes: parse_duration_component(time_part, "M"),
-      seconds: parse_duration_component_decimal(time_part, "S")
-    }
-    |> Enum.reject(fn {k, v} -> v == 0 or (k == :negative and v == false) end)
-    |> Map.new()
+    duration =
+      %{
+        negative: negative,
+        years: parse_duration_component(date_part, "Y"),
+        months: parse_duration_component(date_part, "M"),
+        days: parse_duration_component(date_part, "D"),
+        hours: parse_duration_component(time_part, "H"),
+        minutes: parse_duration_component(time_part, "M"),
+        seconds: parse_duration_component_decimal(time_part, "S")
+      }
+      |> Enum.reject(fn {k, v} -> v == 0 or (k == :negative and v == false) end)
+      |> Map.new()
 
     {:ok, duration}
   end
@@ -278,13 +312,17 @@ defmodule FnXML.XsTypes.Primitive do
           {val, _} -> val
           :error -> 0.0
         end
-      _ -> 0.0
+
+      _ ->
+        0.0
     end
   end
 
   defp parse_datetime(value) do
     case DateTime.from_iso8601(value) do
-      {:ok, dt, _offset} -> {:ok, dt}
+      {:ok, dt, _offset} ->
+        {:ok, dt}
+
       {:error, _} ->
         case NaiveDateTime.from_iso8601(value) do
           {:ok, ndt} -> {:ok, ndt}
@@ -303,6 +341,7 @@ defmodule FnXML.XsTypes.Primitive do
   defp parse_date(value) do
     # Strip timezone for Date parsing
     date_only = Regex.replace(~r/(Z|[+-]\d{2}:\d{2})$/, value, "")
+
     case Date.from_iso8601(date_only) do
       {:ok, date} -> {:ok, date}
       {:error, _} -> {:error, {:invalid_value, :date, value}}
@@ -318,6 +357,7 @@ defmodule FnXML.XsTypes.Primitive do
 
   defp parse_base64_binary(value) do
     normalized = String.replace(value, ~r/\s/, "")
+
     case Base.decode64(normalized) do
       {:ok, binary} -> {:ok, binary}
       :error -> {:error, {:invalid_value, :base64Binary, value}}
@@ -357,6 +397,7 @@ defmodule FnXML.XsTypes.Primitive do
     case Regex.run(~r/^(-?\d{4,})-(\d{2})/, value) do
       [_, year, month] ->
         {:ok, %{year: String.to_integer(year), month: String.to_integer(month)}}
+
       _ ->
         {:error, {:invalid_value, :gYearMonth, value}}
     end
@@ -366,6 +407,7 @@ defmodule FnXML.XsTypes.Primitive do
     case Regex.run(~r/^(-?\d{4,})/, value) do
       [_, year] ->
         {:ok, %{year: String.to_integer(year)}}
+
       _ ->
         {:error, {:invalid_value, :gYear, value}}
     end
@@ -375,6 +417,7 @@ defmodule FnXML.XsTypes.Primitive do
     case Regex.run(~r/^--(\d{2})-(\d{2})/, value) do
       [_, month, day] ->
         {:ok, %{month: String.to_integer(month), day: String.to_integer(day)}}
+
       _ ->
         {:error, {:invalid_value, :gMonthDay, value}}
     end
@@ -384,6 +427,7 @@ defmodule FnXML.XsTypes.Primitive do
     case Regex.run(~r/^---(\d{2})/, value) do
       [_, day] ->
         {:ok, %{day: String.to_integer(day)}}
+
       _ ->
         {:error, {:invalid_value, :gDay, value}}
     end
@@ -393,6 +437,7 @@ defmodule FnXML.XsTypes.Primitive do
     case Regex.run(~r/^--(\d{2})/, value) do
       [_, month] ->
         {:ok, %{month: String.to_integer(month)}}
+
       _ ->
         {:error, {:invalid_value, :gMonth, value}}
     end
@@ -423,15 +468,21 @@ defmodule FnXML.XsTypes.Primitive do
   def encode(%NaiveDateTime{} = ndt, :dateTime), do: {:ok, NaiveDateTime.to_iso8601(ndt)}
   def encode(%Time{} = time, :time), do: {:ok, Time.to_iso8601(time)}
   def encode(%Date{} = date, :date), do: {:ok, Date.to_iso8601(date)}
-  def encode(value, type) when type in [:gYearMonth, :gYear, :gMonthDay, :gDay, :gMonth] and is_binary(value) do
+
+  def encode(value, type)
+      when type in [:gYearMonth, :gYear, :gMonthDay, :gDay, :gMonth] and is_binary(value) do
     {:ok, value}
   end
+
   def encode(value, :hexBinary) when is_binary(value), do: {:ok, Base.encode16(value)}
   def encode(value, :base64Binary) when is_binary(value), do: {:ok, Base.encode64(value)}
   def encode(value, :anyURI) when is_binary(value), do: {:ok, value}
   def encode(%URI{} = uri, :anyURI), do: {:ok, URI.to_string(uri)}
   def encode({nil, local}, :QName) when is_binary(local), do: {:ok, local}
-  def encode({prefix, local}, :QName) when is_binary(prefix) and is_binary(local), do: {:ok, "#{prefix}:#{local}"}
+
+  def encode({prefix, local}, :QName) when is_binary(prefix) and is_binary(local),
+    do: {:ok, "#{prefix}:#{local}"}
+
   def encode(value, :NOTATION) when is_binary(value), do: {:ok, value}
   def encode(value, type), do: {:error, {:encode_error, type, value}}
 
@@ -440,19 +491,24 @@ defmodule FnXML.XsTypes.Primitive do
       Code.ensure_loaded?(Decimal) and is_struct(value, Decimal) ->
         # Use apply to avoid compile-time warning when Decimal is not available
         {:ok, apply(Decimal, :to_string, [value])}
+
       is_float(value) ->
         {:ok, Float.to_string(value)}
+
       is_integer(value) ->
         {:ok, Integer.to_string(value)}
+
       true ->
         {:error, {:encode_error, :decimal, value}}
     end
   end
 
   defp encode_float(:infinity), do: {:ok, "INF"}
-  defp encode_float(:positive_infinity), do: {:ok, "INF"}  # XPath alias
+  # XPath alias
+  defp encode_float(:positive_infinity), do: {:ok, "INF"}
   defp encode_float(:neg_infinity), do: {:ok, "-INF"}
-  defp encode_float(:negative_infinity), do: {:ok, "-INF"}  # XPath alias
+  # XPath alias
+  defp encode_float(:negative_infinity), do: {:ok, "-INF"}
   defp encode_float(:nan), do: {:ok, "NaN"}
   defp encode_float(value) when is_float(value), do: {:ok, Float.to_string(value)}
   defp encode_float(value) when is_integer(value), do: {:ok, Float.to_string(value * 1.0)}

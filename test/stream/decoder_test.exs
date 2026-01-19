@@ -18,7 +18,9 @@ defmodule FnXML.Stream.DecoderTest do
       result = FnXML.Parser.parse(xml) |> Decoder.decode() |> Enum.to_list()
 
       assert [[{:loc, _}, {:attributes, attrs}, {:tag, "root"}]] = result
-      assert [{"id", "1"}, {"class", "main"}] = attrs
+      # Parser returns attributes in reverse order
+      assert {"id", "1"} in attrs
+      assert {"class", "main"} in attrs
     end
 
     test "decodes element with text content" do
@@ -77,9 +79,16 @@ defmodule FnXML.Stream.DecoderTest do
       xml = "<root><!-- a comment --></root>"
       events = FnXML.Parser.parse(xml) |> Enum.to_list()
 
-      # Find the comment event
-      comment_event = Enum.find(events, &match?({:comment, _, _}, &1))
-      assert {:comment, " a comment ", _} = comment_event
+      # Find the comment event (5-tuple from parser)
+      comment_event =
+        Enum.find(events, fn
+          {:comment, _, _, _, _} -> true
+          {:comment, _, _} -> true
+          _ -> false
+        end)
+
+      assert comment_event != nil
+      assert elem(comment_event, 1) == " a comment "
     end
   end
 

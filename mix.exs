@@ -51,7 +51,13 @@ defmodule FnXML.MixProject do
       extras: ["README.md", "quick_start_guide.md", "usage-rules.md"],
       groups_for_modules: [
         Core: [FnXML, FnXML.Parser, FnXML.Stream],
-        "DOM API": [FnXML.DOM, FnXML.DOM.Document, FnXML.DOM.Element, FnXML.DOM.Builder, FnXML.DOM.Serializer],
+        "DOM API": [
+          FnXML.DOM,
+          FnXML.DOM.Document,
+          FnXML.DOM.Element,
+          FnXML.DOM.Builder,
+          FnXML.DOM.Serializer
+        ],
         "SAX API": [FnXML.SAX, FnXML.SAX.Handler],
         "StAX API": [FnXML.StAX, FnXML.StAX.Reader, FnXML.StAX.Writer],
         Security: [
@@ -61,7 +67,13 @@ defmodule FnXML.MixProject do
           FnXML.Security.Algorithms,
           FnXML.Security.Namespaces
         ],
-        Namespaces: [FnXML.Namespaces, FnXML.Namespaces.Context, FnXML.Namespaces.QName, FnXML.Namespaces.Resolver, FnXML.Namespaces.Validator],
+        Namespaces: [
+          FnXML.Namespaces,
+          FnXML.Namespaces.Context,
+          FnXML.Namespaces.QName,
+          FnXML.Namespaces.Resolver,
+          FnXML.Namespaces.Validator
+        ],
         DTD: [FnXML.DTD, FnXML.DTD.Model, FnXML.DTD.Parser],
         Utilities: [FnXML.Element, FnXML.Stream.SimpleForm]
       ]

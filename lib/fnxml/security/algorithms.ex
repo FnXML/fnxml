@@ -69,7 +69,8 @@ defmodule FnXML.Security.Algorithms do
       {:ok, :sha256}
 
   """
-  @spec digest_algorithm_from_uri(String.t()) :: {:ok, digest_algorithm()} | {:error, :unknown_algorithm}
+  @spec digest_algorithm_from_uri(String.t()) ::
+          {:ok, digest_algorithm()} | {:error, :unknown_algorithm}
   def digest_algorithm_from_uri(uri) do
     case uri do
       "http://www.w3.org/2001/04/xmlenc#sha256" -> {:ok, :sha256}
@@ -94,8 +95,7 @@ defmodule FnXML.Security.Algorithms do
   # ==========================================================================
 
   @type signature_algorithm ::
-          :rsa_sha256 | :rsa_sha384 | :rsa_sha512 |
-          :ecdsa_sha256 | :ecdsa_sha384 | :ecdsa_sha512
+          :rsa_sha256 | :rsa_sha384 | :rsa_sha512 | :ecdsa_sha256 | :ecdsa_sha384 | :ecdsa_sha512
 
   @doc """
   Sign data using the specified algorithm and private key.
@@ -147,7 +147,8 @@ defmodule FnXML.Security.Algorithms do
   @doc """
   Get the signature algorithm atom from a URI.
   """
-  @spec signature_algorithm_from_uri(String.t()) :: {:ok, signature_algorithm()} | {:error, :unknown_algorithm}
+  @spec signature_algorithm_from_uri(String.t()) ::
+          {:ok, signature_algorithm()} | {:error, :unknown_algorithm}
   def signature_algorithm_from_uri(uri) do
     case uri do
       "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" -> {:ok, :rsa_sha256}
@@ -230,7 +231,11 @@ defmodule FnXML.Security.Algorithms do
       {:ok, plaintext} = FnXML.Security.Algorithms.decrypt({iv, ciphertext, tag}, :aes_256_gcm, key)
 
   """
-  @spec decrypt({binary(), binary(), binary()} | {binary(), binary()}, encryption_algorithm(), binary()) ::
+  @spec decrypt(
+          {binary(), binary(), binary()} | {binary(), binary()},
+          encryption_algorithm(),
+          binary()
+        ) ::
           {:ok, binary()} | {:error, term()}
   def decrypt({iv, ciphertext, tag}, :aes_128_gcm, key) when byte_size(key) == 16 do
     decrypt_gcm(iv, ciphertext, tag, key, :aes_128_gcm)
@@ -255,7 +260,8 @@ defmodule FnXML.Security.Algorithms do
   @doc """
   Get the encryption algorithm atom from a URI.
   """
-  @spec encryption_algorithm_from_uri(String.t()) :: {:ok, encryption_algorithm()} | {:error, :unknown_algorithm}
+  @spec encryption_algorithm_from_uri(String.t()) ::
+          {:ok, encryption_algorithm()} | {:error, :unknown_algorithm}
   def encryption_algorithm_from_uri(uri) do
     case uri do
       "http://www.w3.org/2009/xmlenc11#aes128-gcm" -> {:ok, :aes_128_gcm}
@@ -277,17 +283,22 @@ defmodule FnXML.Security.Algorithms do
 
   # GCM encryption/decryption helpers
   defp encrypt_gcm(plaintext, key, algorithm) do
-    iv = :crypto.strong_rand_bytes(12)  # 96-bit IV for GCM
+    # 96-bit IV for GCM
+    iv = :crypto.strong_rand_bytes(12)
 
     try do
-      {ciphertext, tag} = :crypto.crypto_one_time_aead(
-        algorithm,
-        key,
-        iv,
-        plaintext,
-        <<>>,  # AAD (Additional Authenticated Data)
-        true   # encrypt
-      )
+      {ciphertext, tag} =
+        :crypto.crypto_one_time_aead(
+          algorithm,
+          key,
+          iv,
+          plaintext,
+          # AAD (Additional Authenticated Data)
+          <<>>,
+          # encrypt
+          true
+        )
+
       {:ok, {iv, ciphertext, tag}}
     rescue
       e -> {:error, {:encryption_failed, e}}
@@ -297,14 +308,16 @@ defmodule FnXML.Security.Algorithms do
   defp decrypt_gcm(iv, ciphertext, tag, key, algorithm) do
     try do
       case :crypto.crypto_one_time_aead(
-        algorithm,
-        key,
-        iv,
-        ciphertext,
-        <<>>,  # AAD
-        tag,
-        false  # decrypt
-      ) do
+             algorithm,
+             key,
+             iv,
+             ciphertext,
+             # AAD
+             <<>>,
+             tag,
+             # decrypt
+             false
+           ) do
         plaintext when is_binary(plaintext) -> {:ok, plaintext}
         :error -> {:error, :decryption_failed}
       end
@@ -315,7 +328,8 @@ defmodule FnXML.Security.Algorithms do
 
   # CBC encryption/decryption helpers
   defp encrypt_cbc(plaintext, key, algorithm) do
-    iv = :crypto.strong_rand_bytes(16)  # 128-bit IV for CBC
+    # 128-bit IV for CBC
+    iv = :crypto.strong_rand_bytes(16)
     padded = pkcs7_pad(plaintext, 16)
 
     try do
@@ -363,14 +377,18 @@ defmodule FnXML.Security.Algorithms do
       {:ok, encrypted_key} = FnXML.Security.Algorithms.encrypt_key(symmetric_key, :rsa_oaep, public_key)
 
   """
-  @spec encrypt_key(binary(), key_transport_algorithm(), term()) :: {:ok, binary()} | {:error, term()}
-  def encrypt_key(key_data, algorithm, public_key) when algorithm in [:rsa_oaep, :rsa_oaep_mgf1p] do
+  @spec encrypt_key(binary(), key_transport_algorithm(), term()) ::
+          {:ok, binary()} | {:error, term()}
+  def encrypt_key(key_data, algorithm, public_key)
+      when algorithm in [:rsa_oaep, :rsa_oaep_mgf1p] do
     try do
-      encrypted = :public_key.encrypt_public(
-        key_data,
-        public_key,
-        [{:rsa_padding, :rsa_pkcs1_oaep_padding}]
-      )
+      encrypted =
+        :public_key.encrypt_public(
+          key_data,
+          public_key,
+          [{:rsa_padding, :rsa_pkcs1_oaep_padding}]
+        )
+
       {:ok, encrypted}
     rescue
       e -> {:error, {:key_encryption_failed, e}}
@@ -385,14 +403,18 @@ defmodule FnXML.Security.Algorithms do
       {:ok, symmetric_key} = FnXML.Security.Algorithms.decrypt_key(encrypted_key, :rsa_oaep, private_key)
 
   """
-  @spec decrypt_key(binary(), key_transport_algorithm(), term()) :: {:ok, binary()} | {:error, term()}
-  def decrypt_key(encrypted_key, algorithm, private_key) when algorithm in [:rsa_oaep, :rsa_oaep_mgf1p] do
+  @spec decrypt_key(binary(), key_transport_algorithm(), term()) ::
+          {:ok, binary()} | {:error, term()}
+  def decrypt_key(encrypted_key, algorithm, private_key)
+      when algorithm in [:rsa_oaep, :rsa_oaep_mgf1p] do
     try do
-      decrypted = :public_key.decrypt_private(
-        encrypted_key,
-        private_key,
-        [{:rsa_padding, :rsa_pkcs1_oaep_padding}]
-      )
+      decrypted =
+        :public_key.decrypt_private(
+          encrypted_key,
+          private_key,
+          [{:rsa_padding, :rsa_pkcs1_oaep_padding}]
+        )
+
       {:ok, decrypted}
     rescue
       e -> {:error, {:key_decryption_failed, e}}
@@ -402,7 +424,8 @@ defmodule FnXML.Security.Algorithms do
   @doc """
   Get the key transport algorithm atom from a URI.
   """
-  @spec key_transport_algorithm_from_uri(String.t()) :: {:ok, key_transport_algorithm()} | {:error, :unknown_algorithm}
+  @spec key_transport_algorithm_from_uri(String.t()) ::
+          {:ok, key_transport_algorithm()} | {:error, :unknown_algorithm}
   def key_transport_algorithm_from_uri(uri) do
     case uri do
       "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p" -> {:ok, :rsa_oaep_mgf1p}
@@ -446,11 +469,13 @@ defmodule FnXML.Security.Algorithms do
   """
   @spec generate_iv(encryption_algorithm()) :: binary()
   def generate_iv(algorithm) when algorithm in [:aes_128_gcm, :aes_256_gcm] do
-    :crypto.strong_rand_bytes(12)  # 96-bit IV for GCM
+    # 96-bit IV for GCM
+    :crypto.strong_rand_bytes(12)
   end
 
   def generate_iv(algorithm) when algorithm in [:aes_128_cbc, :aes_256_cbc] do
-    :crypto.strong_rand_bytes(16)  # 128-bit IV for CBC
+    # 128-bit IV for CBC
+    :crypto.strong_rand_bytes(16)
   end
 
   # ==========================================================================
@@ -524,6 +549,7 @@ defmodule FnXML.Security.Algorithms do
   # Already a public key
   defp extract_public_key({:RSAPublicKey, _, _} = key), do: key
   defp extract_public_key({{:ECPoint, _}, _} = key), do: key
+
   defp extract_public_key({:SubjectPublicKeyInfo, _, _} = key) do
     :public_key.pem_entry_decode(key)
   end

@@ -336,7 +336,11 @@ defmodule FnXML.Security.Signature.Verifier do
     state = %{state | current_element: name, text_buffer: ""}
 
     if state.in_signed_info do
-      %{state | signed_info_depth: state.signed_info_depth + 1, signed_info_events: [event | state.signed_info_events]}
+      %{
+        state
+        | signed_info_depth: state.signed_info_depth + 1,
+          signed_info_events: [event | state.signed_info_events]
+      }
     else
       state
     end
@@ -415,7 +419,11 @@ defmodule FnXML.Security.Signature.Verifier do
 
   defp handle_characters(content, state) do
     if state.in_signed_info do
-      %{state | text_buffer: state.text_buffer <> content, signed_info_events: [{:characters, content, nil} | state.signed_info_events]}
+      %{
+        state
+        | text_buffer: state.text_buffer <> content,
+          signed_info_events: [{:characters, content, nil} | state.signed_info_events]
+      }
     else
       %{state | text_buffer: state.text_buffer <> content}
     end

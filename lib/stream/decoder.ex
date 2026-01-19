@@ -106,7 +106,12 @@ defmodule FnXML.Stream.Decoder do
 
       # 6-tuple processing_instruction (from parser)
       {:processing_instruction, name, content, line, ls, pos}, path, acc ->
-        module.handle_proc_inst({:processing_instruction, name, content, {line, ls, pos}}, path, acc, opts)
+        module.handle_proc_inst(
+          {:processing_instruction, name, content, {line, ls, pos}},
+          path,
+          acc,
+          opts
+        )
 
       # 4-tuple processing_instruction (normalized)
       {:processing_instruction, _, _, _} = elem, path, acc ->

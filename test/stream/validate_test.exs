@@ -11,10 +11,13 @@ defmodule FnXML.ValidateTest do
         |> Enum.to_list()
 
       assert length(tokens) == 6
-      assert Enum.any?(tokens, &match?({:start_element, _, _, _}, &1))
+      # Parser outputs 6-tuple: {:start_element, tag, attrs, line, ls, pos}
+      assert Enum.any?(tokens, &match?({:start_element, _, _, _, _, _}, &1))
+
       assert Enum.any?(tokens, fn
                {:end_element, _} -> true
                {:end_element, _, _} -> true
+               {:end_element, _, _, _, _} -> true
                _ -> false
              end)
     end
@@ -90,18 +93,27 @@ defmodule FnXML.ValidateTest do
 
     test "on_error: :skip passes invalid elements through" do
       # Unexpected close tag
-      result1 = [{:start_document, nil}, {:end_element, "a"}, {:end_document, nil}]
-                |> Validate.well_formed(on_error: :skip) |> Enum.to_list()
+      result1 =
+        [{:start_document, nil}, {:end_element, "a"}, {:end_document, nil}]
+        |> Validate.well_formed(on_error: :skip)
+        |> Enum.to_list()
+
       assert Enum.any?(result1, &match?({:end_element, "a"}, &1))
 
       # Mismatched close tag
-      result2 = [
-        {:start_document, nil},
-        {:start_element, "a", [], {1, 0, 0}},
-        {:end_element, "b"},
-        {:end_document, nil}
-      ] |> Validate.well_formed(on_error: :skip) |> Enum.to_list()
-      assert Enum.any?(result2, &match?({:start_element, "a", _, _}, &1))
+      result2 =
+        [
+          {:start_document, nil},
+          {:start_element, "a", [], {1, 0, 0}},
+          {:end_element, "b"},
+          {:end_document, nil}
+        ]
+        |> Validate.well_formed(on_error: :skip)
+        |> Enum.to_list()
+
+      assert Enum.any?(result2, &match?({:start_element, "a", _, _}, &1)) or
+               Enum.any?(result2, &match?({:start_element, "a", _, _, _, _}, &1))
+
       assert Enum.any?(result2, &match?({:end_element, "b"}, &1))
     end
 
@@ -111,9 +123,10 @@ defmodule FnXML.ValidateTest do
         |> Validate.well_formed()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:characters, _, _}, &1))
-      assert Enum.any?(tokens, &match?({:comment, _, _}, &1))
-      assert Enum.any?(tokens, &match?({:prolog, _, _, _}, &1))
+      # Parser outputs 5-tuple for characters/comments, 6-tuple for prolog
+      assert Enum.any?(tokens, &match?({:characters, _, _, _, _}, &1))
+      assert Enum.any?(tokens, &match?({:comment, _, _, _, _}, &1))
+      assert Enum.any?(tokens, &match?({:prolog, _, _, _, _, _}, &1))
     end
   end
 
@@ -124,7 +137,7 @@ defmodule FnXML.ValidateTest do
         |> Validate.attributes()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:start_element, _, _, _}, &1))
+      assert Enum.any?(tokens, &match?({:start_element, _, _, _, _, _}, &1))
     end
 
     test "duplicate attributes raise error" do
@@ -153,10 +166,12 @@ defmodule FnXML.ValidateTest do
         |> Validate.attributes()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:characters, _, _}, &1))
+      assert Enum.any?(tokens, &match?({:characters, _, _, _, _}, &1))
+
       assert Enum.any?(tokens, fn
                {:end_element, _} -> true
                {:end_element, _, _} -> true
+               {:end_element, _, _, _, _} -> true
                _ -> false
              end)
     end
@@ -185,13 +200,15 @@ defmodule FnXML.ValidateTest do
         FnXML.Parser.parse(~s(<root xml:lang="en"/>))
         |> Validate.namespaces()
         |> Enum.to_list()
-      assert Enum.any?(tokens1, &match?({:start_element, _, _, _}, &1))
+
+      assert Enum.any?(tokens1, &match?({:start_element, _, _, _, _, _}, &1))
 
       tokens2 =
         FnXML.Parser.parse(~s(<root xmlns:foo="http://example.com"/>))
         |> Validate.namespaces()
         |> Enum.to_list()
-      assert Enum.any?(tokens2, &match?({:start_element, _, _, _}, &1))
+
+      assert Enum.any?(tokens2, &match?({:start_element, _, _, _, _, _}, &1))
     end
 
     test "default namespace works" do
@@ -237,7 +254,8 @@ defmodule FnXML.ValidateTest do
         FnXML.Parser.parse(~s(<root xmlns:ns="http://x" ns:attr="value"/>))
         |> Validate.namespaces()
         |> Enum.to_list()
-      assert Enum.any?(tokens, &match?({:start_element, _, _, _}, &1))
+
+      assert Enum.any?(tokens, &match?({:start_element, _, _, _, _, _}, &1))
     end
 
     test "handles end_element with empty stack" do
@@ -313,8 +331,8 @@ defmodule FnXML.ValidateTest do
         |> Validate.namespaces()
         |> Enum.to_list()
 
-      assert Enum.any?(tokens, &match?({:prolog, _, _, _}, &1))
-      assert Enum.count(tokens, &match?({:start_element, _, _, _}, &1)) >= 2
+      assert Enum.any?(tokens, &match?({:prolog, _, _, _, _, _}, &1))
+      assert Enum.count(tokens, &match?({:start_element, _, _, _, _, _}, &1)) >= 2
     end
   end
 end

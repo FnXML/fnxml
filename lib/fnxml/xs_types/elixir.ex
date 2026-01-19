@@ -131,7 +131,10 @@ defmodule FnXML.XsTypes.Elixir do
   @spec type_description(atom()) :: String.t()
   def type_description(:string), do: "Unicode string"
   def type_description(:normalizedString), do: "String without CR/LF/Tab"
-  def type_description(:token), do: "Normalized string without leading/trailing/consecutive spaces"
+
+  def type_description(:token),
+    do: "Normalized string without leading/trailing/consecutive spaces"
+
   def type_description(:language), do: "RFC 3066 language tag (e.g., 'en-US')"
   def type_description(:Name), do: "XML Name"
   def type_description(:NCName), do: "XML NCName (Name without colons)"
@@ -218,10 +221,22 @@ defmodule FnXML.XsTypes.Elixir do
 
   def default_value(:boolean), do: false
 
-  def default_value(type) when type in [:integer, :nonPositiveInteger, :negativeInteger,
-                                        :nonNegativeInteger, :positiveInteger,
-                                        :long, :int, :short, :byte,
-                                        :unsignedLong, :unsignedInt, :unsignedShort, :unsignedByte] do
+  def default_value(type)
+      when type in [
+             :integer,
+             :nonPositiveInteger,
+             :negativeInteger,
+             :nonNegativeInteger,
+             :positiveInteger,
+             :long,
+             :int,
+             :short,
+             :byte,
+             :unsignedLong,
+             :unsignedInt,
+             :unsignedShort,
+             :unsignedByte
+           ] do
     0
   end
 
@@ -277,8 +292,10 @@ defmodule FnXML.XsTypes.Elixir do
   def type_module(:dateTime), do: DateTime
   def type_module(:date), do: Date
   def type_module(:time), do: Time
+
   def type_module(:decimal) do
     if Code.ensure_loaded?(Decimal), do: Decimal, else: nil
   end
+
   def type_module(_), do: nil
 end

@@ -63,10 +63,11 @@ defmodule FnXML.XsTypes.Facets do
 
   def validate(value, type, facets) do
     # Separate enumeration facets (OR logic) from other facets (AND logic)
-    {enum_facets, other_facets} = Enum.split_with(facets, fn
-      {:enumeration, _} -> true
-      _ -> false
-    end)
+    {enum_facets, other_facets} =
+      Enum.split_with(facets, fn
+        {:enumeration, _} -> true
+        _ -> false
+      end)
 
     # First validate enumeration (if any)
     enum_result = validate_enumerations(value, enum_facets)
@@ -80,7 +81,9 @@ defmodule FnXML.XsTypes.Facets do
             error -> {:halt, error}
           end
         end)
-      error -> error
+
+      error ->
+        error
     end
   end
 
@@ -88,6 +91,7 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_enumerations(value, enum_facets) do
     enum_values = Enum.flat_map(enum_facets, fn {:enumeration, vals} -> vals end)
+
     if value in enum_values do
       :ok
     else
@@ -101,6 +105,7 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_facet(value, type, {:length, expected}) do
     actual = get_length(value, type)
+
     if actual == expected do
       :ok
     else
@@ -110,6 +115,7 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_facet(value, type, {:minLength, min}) do
     actual = get_length(value, type)
+
     if actual >= min do
       :ok
     else
@@ -119,6 +125,7 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_facet(value, type, {:maxLength, max}) do
     actual = get_length(value, type)
+
     if actual <= max do
       :ok
     else
@@ -128,6 +135,7 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_facet(value, _type, {:pattern, pattern}) do
     pcre_pattern = xsd_pattern_to_pcre(pattern)
+
     case Regex.compile("^#{pcre_pattern}$") do
       {:ok, regex} ->
         if Regex.match?(regex, value) do
@@ -135,6 +143,7 @@ defmodule FnXML.XsTypes.Facets do
         else
           {:error, {:facet_violation, :pattern, [expected: pattern, got: value]}}
         end
+
       {:error, _} ->
         # If pattern conversion fails, skip validation
         :ok
@@ -171,6 +180,7 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_facet(value, _type, {:totalDigits, max_digits}) do
     digit_count = count_total_digits(value)
+
     if digit_count <= max_digits do
       :ok
     else
@@ -180,6 +190,7 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_facet(value, _type, {:fractionDigits, max_fraction}) do
     fraction_count = count_fraction_digits(value)
+
     if fraction_count <= max_fraction do
       :ok
     else
@@ -189,21 +200,27 @@ defmodule FnXML.XsTypes.Facets do
 
   defp validate_facet(value, _type, {:whiteSpace, mode}) do
     case mode do
-      :preserve -> :ok
+      :preserve ->
+        :ok
+
       :replace ->
         if String.contains?(value, ["\t", "\n", "\r"]) do
           {:error, {:facet_violation, :whiteSpace, [expected: :replace, got: value]}}
         else
           :ok
         end
+
       :collapse ->
         cond do
           String.contains?(value, ["\t", "\n", "\r"]) ->
             {:error, {:facet_violation, :whiteSpace, [expected: :collapse, got: value]}}
+
           String.starts_with?(value, " ") or String.ends_with?(value, " ") ->
             {:error, {:facet_violation, :whiteSpace, [expected: :collapse, got: value]}}
+
           String.contains?(value, "  ") ->
             {:error, {:facet_violation, :whiteSpace, [expected: :collapse, got: value]}}
+
           true ->
             :ok
         end
@@ -220,10 +237,13 @@ defmodule FnXML.XsTypes.Facets do
     cond do
       type == :hexBinary ->
         div(String.length(value), 2)
+
       type == :base64Binary ->
         get_base64_byte_length(value)
+
       Hierarchy.list_type?(type) ->
         value |> String.split(~r/\s+/, trim: true) |> length()
+
       true ->
         String.length(value)
     end
@@ -232,11 +252,14 @@ defmodule FnXML.XsTypes.Facets do
   defp get_base64_byte_length(value) do
     clean = String.replace(value, ~r/\s/, "")
     len = String.length(clean)
-    padding = cond do
-      String.ends_with?(clean, "==") -> 2
-      String.ends_with?(clean, "=") -> 1
-      true -> 0
-    end
+
+    padding =
+      cond do
+        String.ends_with?(clean, "==") -> 2
+        String.ends_with?(clean, "=") -> 1
+        true -> 0
+      end
+
     div(len * 3, 4) - padding
   end
 
@@ -266,10 +289,13 @@ defmodule FnXML.XsTypes.Facets do
     cond do
       String.starts_with?(a, "P") or String.starts_with?(a, "-P") ->
         compare_duration(a, b)
+
       String.starts_with?(a, "--") ->
         compare_strings(a, b)
+
       is_datetime_format?(a) ->
         compare_datetime(a, b)
+
       true ->
         compare_numeric(a, b)
     end
@@ -298,13 +324,16 @@ defmodule FnXML.XsTypes.Facets do
           a_num > b_num -> :gt
           true -> :eq
         end
-      _ -> :eq
+
+      _ ->
+        :eq
     end
   end
 
   defp compare_duration(a, b) do
     a_seconds = duration_to_seconds(a)
     b_seconds = duration_to_seconds(b)
+
     cond do
       a_seconds < b_seconds -> :lt
       a_seconds > b_seconds -> :gt
@@ -318,10 +347,11 @@ defmodule FnXML.XsTypes.Facets do
     negative = String.starts_with?(duration, "-")
     duration = duration |> String.trim_leading("-") |> String.trim_leading("P")
 
-    {date_part, time_part} = case String.split(duration, "T", parts: 2) do
-      [date, time] -> {date, time}
-      [date] -> {date, ""}
-    end
+    {date_part, time_part} =
+      case String.split(duration, "T", parts: 2) do
+        [date, time] -> {date, time}
+        [date] -> {date, ""}
+      end
 
     years = parse_duration_component(date_part, "Y")
     months = parse_duration_component(date_part, "M")
@@ -330,12 +360,13 @@ defmodule FnXML.XsTypes.Facets do
     minutes = parse_duration_component(time_part, "M")
     seconds = parse_duration_component_decimal(time_part, "S")
 
-    total = years * 365.25 * 24 * 60 * 60 +
-            months * 30.4375 * 24 * 60 * 60 +
-            days * 24 * 60 * 60 +
-            hours * 60 * 60 +
-            minutes * 60 +
-            seconds
+    total =
+      years * 365.25 * 24 * 60 * 60 +
+        months * 30.4375 * 24 * 60 * 60 +
+        days * 24 * 60 * 60 +
+        hours * 60 * 60 +
+        minutes * 60 +
+        seconds
 
     if negative, do: -total, else: total
   end
@@ -354,7 +385,9 @@ defmodule FnXML.XsTypes.Facets do
           {val, _} -> val
           :error -> 0.0
         end
-      _ -> 0.0
+
+      _ ->
+        0.0
     end
   end
 
@@ -374,10 +407,10 @@ defmodule FnXML.XsTypes.Facets do
 
   defp is_datetime_format?(s) do
     String.contains?(s, "T") or
-    Regex.match?(~r/^-?\d{4,}-\d{2}-\d{2}/, s) or
-    Regex.match?(~r/^\d{2}:\d{2}:\d{2}/, s) or
-    Regex.match?(~r/^-?\d{4}-\d{2}(Z|[+-]\d{2}:\d{2})?$/, s) or
-    Regex.match?(~r/^-?\d{4}(Z|[+-]\d{2}:\d{2})$/, s)
+      Regex.match?(~r/^-?\d{4,}-\d{2}-\d{2}/, s) or
+      Regex.match?(~r/^\d{2}:\d{2}:\d{2}/, s) or
+      Regex.match?(~r/^-?\d{4}-\d{2}(Z|[+-]\d{2}:\d{2})?$/, s) or
+      Regex.match?(~r/^-?\d{4}(Z|[+-]\d{2}:\d{2})$/, s)
   end
 
   defp normalize_datetime(dt) do

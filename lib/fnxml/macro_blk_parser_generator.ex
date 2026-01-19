@@ -1,0 +1,4577 @@
+defmodule FnXML.MacroBlkParserGenerator do
+  @moduledoc """
+  Macro-based XML block parser generator for Edition 4 and Edition 5.
+
+  Generates edition-specific parsers from shared code, with character
+  validation guards inlined at compile time for maximum performance.
+
+  ## Usage
+
+      # Generates parser with Edition 5 character validation
+      use FnXML.MacroBlkParserGenerator, edition: 5
+
+      # Generates parser with Edition 4 character validation
+      use FnXML.MacroBlkParserGenerator, edition: 4
+
+  ## Architecture
+
+  The parser code is shared between editions. Only the character validation
+  guards (`is_name_start/1` and `is_name_char/1`) differ:
+
+  - Edition 5: 16 simple Unicode ranges (permissive)
+  - Edition 4: ~200 enumerated ranges from Appendix B (strict)
+
+  Both use guards for zero runtime dispatch overhead.
+  """
+
+  @doc """
+  Generates an edition-specific block parser module.
+
+  ## Options
+  - `:edition` - Required. Either `4` or `5`.
+  """
+  defmacro __using__(opts) do
+    edition = Keyword.fetch!(opts, :edition)
+
+    quote do
+      @moduledoc """
+      XML 1.0 Edition #{unquote(edition)} Block Parser.
+
+      Auto-generated with edition-specific character validation inlined
+      for maximum performance. No runtime edition dispatch.
+      """
+
+      # Inline frequently called helper functions
+      @compile {:inline, utf8_size: 1, complete: 4, incomplete: 5}
+
+      # Store edition for introspection
+      @edition unquote(edition)
+      def edition, do: @edition
+
+      # ==================================================================
+      # Character Guards (edition-specific, inlined at compile time)
+      # ==================================================================
+
+      unquote(generate_char_guards(edition))
+
+      # ==================================================================
+      # Shared Parser Implementation
+      # ==================================================================
+
+      unquote(shared_parser_code())
+    end
+  end
+
+  # ==================================================================
+  # Edition 5 Guards (simple ranges)
+  # ==================================================================
+
+  defp generate_char_guards(5) do
+    quote do
+      # XML character guard per XML spec production [2]
+      # Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+      defguardp is_xml_char(c)
+                when c == 0x9 or c == 0xA or c == 0xD or
+                       c in 0x20..0xD7FF or c in 0xE000..0xFFFD or
+                       c in 0x10000..0x10FFFF
+
+      # Edition 5 NameStartChar
+      # NameStartChar ::= ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6] | [#xD8-#xF6] |
+      #                   [#xF8-#x2FF] | [#x370-#x37D] | [#x37F-#x1FFF] |
+      #                   [#x200C-#x200D] | [#x2070-#x218F] | [#x2C00-#x2FEF] |
+      #                   [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] |
+      #                   [#x10000-#xEFFFF]
+      defguardp is_name_start(c)
+                when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?: or
+                       c in 0x00C0..0x00D6 or c in 0x00D8..0x00F6 or
+                       c in 0x00F8..0x02FF or c in 0x0370..0x037D or
+                       c in 0x037F..0x1FFF or c in 0x200C..0x200D or
+                       c in 0x2070..0x218F or c in 0x2C00..0x2FEF or
+                       c in 0x3001..0xD7FF or c in 0xF900..0xFDCF or
+                       c in 0xFDF0..0xFFFD or c in 0x10000..0xEFFFF
+
+      # Edition 5 NameChar
+      # NameChar ::= NameStartChar | "-" | "." | [0-9] | #xB7 |
+      #              [#x0300-#x036F] | [#x203F-#x2040]
+      defguardp is_name_char(c)
+                when is_name_start(c) or c == ?- or c == ?. or c in ?0..?9 or
+                       c == 0x00B7 or c in 0x0300..0x036F or c in 0x203F..0x2040
+    end
+  end
+
+  # ==================================================================
+  # Edition 4 Guards (enumerated ranges from Appendix B)
+  # ==================================================================
+
+  defp generate_char_guards(4) do
+    quote do
+      # XML character guard (same for both editions)
+      defguardp is_xml_char(c)
+                when c == 0x9 or c == 0xA or c == 0xD or
+                       c in 0x20..0xD7FF or c in 0xE000..0xFFFD or
+                       c in 0x10000..0x10FFFF
+
+      # Edition 4 NameStartChar = Letter | '_' | ':'
+      # Letter = BaseChar | Ideographic
+      # BaseChar and Ideographic from Appendix B
+      defguardp is_name_start(c)
+                # ASCII letters
+                # BaseChar 1-byte
+                # BaseChar 2-byte (from Appendix B)
+                # Ideographic
+                when c == ?_ or c == ?: or
+                       c in ?A..?Z or c in ?a..?z or
+                       c in 0xC0..0xD6 or c in 0xD8..0xF6 or c in 0xF8..0xFF or
+                       c in 0x0100..0x0131 or c in 0x0134..0x013E or c in 0x0141..0x0148 or
+                       c in 0x014A..0x017E or
+                       c in 0x0180..0x01C3 or c in 0x01CD..0x01F0 or c in 0x01F4..0x01F5 or
+                       c in 0x01FA..0x0217 or
+                       c in 0x0250..0x02A8 or c in 0x02BB..0x02C1 or c == 0x0386 or
+                       c in 0x0388..0x038A or
+                       c == 0x038C or c in 0x038E..0x03A1 or c in 0x03A3..0x03CE or
+                       c in 0x03D0..0x03D6 or
+                       c == 0x03DA or c == 0x03DC or c == 0x03DE or c == 0x03E0 or
+                       c in 0x03E2..0x03F3 or c in 0x0401..0x040C or c in 0x040E..0x044F or
+                       c in 0x0451..0x045C or
+                       c in 0x045E..0x0481 or c in 0x0490..0x04C4 or c in 0x04C7..0x04C8 or
+                       c in 0x04CB..0x04CC or
+                       c in 0x04D0..0x04EB or c in 0x04EE..0x04F5 or c in 0x04F8..0x04F9 or
+                       c in 0x0531..0x0556 or
+                       c == 0x0559 or c in 0x0561..0x0586 or c in 0x05D0..0x05EA or
+                       c in 0x05F0..0x05F2 or
+                       c in 0x0621..0x063A or c in 0x0641..0x064A or c in 0x0671..0x06B7 or
+                       c in 0x06BA..0x06BE or
+                       c in 0x06C0..0x06CE or c in 0x06D0..0x06D3 or c == 0x06D5 or
+                       c in 0x06E5..0x06E6 or
+                       c in 0x0905..0x0939 or c == 0x093D or c in 0x0958..0x0961 or
+                       c in 0x0985..0x098C or
+                       c in 0x098F..0x0990 or c in 0x0993..0x09A8 or c in 0x09AA..0x09B0 or
+                       c == 0x09B2 or
+                       c in 0x09B6..0x09B9 or c in 0x09DC..0x09DD or c in 0x09DF..0x09E1 or
+                       c in 0x09F0..0x09F1 or
+                       c in 0x0A05..0x0A0A or c in 0x0A0F..0x0A10 or c in 0x0A13..0x0A28 or
+                       c in 0x0A2A..0x0A30 or
+                       c in 0x0A32..0x0A33 or c in 0x0A35..0x0A36 or c in 0x0A38..0x0A39 or
+                       c in 0x0A59..0x0A5C or
+                       c == 0x0A5E or c in 0x0A72..0x0A74 or c in 0x0A85..0x0A8B or c == 0x0A8D or
+                       c in 0x0A8F..0x0A91 or c in 0x0A93..0x0AA8 or c in 0x0AAA..0x0AB0 or
+                       c in 0x0AB2..0x0AB3 or
+                       c in 0x0AB5..0x0AB9 or c == 0x0ABD or c == 0x0AE0 or c in 0x0B05..0x0B0C or
+                       c in 0x0B0F..0x0B10 or c in 0x0B13..0x0B28 or c in 0x0B2A..0x0B30 or
+                       c in 0x0B32..0x0B33 or
+                       c in 0x0B36..0x0B39 or c == 0x0B3D or c in 0x0B5C..0x0B5D or
+                       c in 0x0B5F..0x0B61 or
+                       c in 0x0B85..0x0B8A or c in 0x0B8E..0x0B90 or c in 0x0B92..0x0B95 or
+                       c in 0x0B99..0x0B9A or
+                       c == 0x0B9C or c in 0x0B9E..0x0B9F or c in 0x0BA3..0x0BA4 or
+                       c in 0x0BA8..0x0BAA or
+                       c in 0x0BAE..0x0BB5 or c in 0x0BB7..0x0BB9 or c in 0x0C05..0x0C0C or
+                       c in 0x0C0E..0x0C10 or
+                       c in 0x0C12..0x0C28 or c in 0x0C2A..0x0C33 or c in 0x0C35..0x0C39 or
+                       c in 0x0C60..0x0C61 or
+                       c in 0x0C85..0x0C8C or c in 0x0C8E..0x0C90 or c in 0x0C92..0x0CA8 or
+                       c in 0x0CAA..0x0CB3 or
+                       c in 0x0CB5..0x0CB9 or c == 0x0CDE or c in 0x0CE0..0x0CE1 or
+                       c in 0x0D05..0x0D0C or
+                       c in 0x0D0E..0x0D10 or c in 0x0D12..0x0D28 or c in 0x0D2A..0x0D39 or
+                       c in 0x0D60..0x0D61 or
+                       c in 0x0E01..0x0E2E or c == 0x0E30 or c in 0x0E32..0x0E33 or
+                       c in 0x0E40..0x0E45 or
+                       c in 0x0E81..0x0E82 or c == 0x0E84 or c in 0x0E87..0x0E88 or c == 0x0E8A or
+                       c == 0x0E8D or c in 0x0E94..0x0E97 or c in 0x0E99..0x0E9F or
+                       c in 0x0EA1..0x0EA3 or
+                       c == 0x0EA5 or c == 0x0EA7 or c in 0x0EAA..0x0EAB or c in 0x0EAD..0x0EAE or
+                       c == 0x0EB0 or c in 0x0EB2..0x0EB3 or c == 0x0EBD or c in 0x0EC0..0x0EC4 or
+                       c in 0x0F40..0x0F47 or c in 0x0F49..0x0F69 or c in 0x10A0..0x10C5 or
+                       c in 0x10D0..0x10F6 or
+                       c == 0x1100 or c in 0x1102..0x1103 or c in 0x1105..0x1107 or c == 0x1109 or
+                       c in 0x110B..0x110C or c in 0x110E..0x1112 or c == 0x113C or c == 0x113E or
+                       c == 0x1140 or c == 0x114C or c == 0x114E or c == 0x1150 or
+                       c in 0x1154..0x1155 or c == 0x1159 or c in 0x115F..0x1161 or c == 0x1163 or
+                       c == 0x1165 or c == 0x1167 or c == 0x1169 or c in 0x116D..0x116E or
+                       c in 0x1172..0x1173 or c == 0x1175 or c == 0x119E or c == 0x11A8 or
+                       c == 0x11AB or c in 0x11AE..0x11AF or c in 0x11B7..0x11B8 or c == 0x11BA or
+                       c in 0x11BC..0x11C2 or c == 0x11EB or c == 0x11F0 or c == 0x11F9 or
+                       c in 0x1E00..0x1E9B or c in 0x1EA0..0x1EF9 or c in 0x1F00..0x1F15 or
+                       c in 0x1F18..0x1F1D or
+                       c in 0x1F20..0x1F45 or c in 0x1F48..0x1F4D or c in 0x1F50..0x1F57 or
+                       c == 0x1F59 or
+                       c == 0x1F5B or c == 0x1F5D or c in 0x1F5F..0x1F7D or c in 0x1F80..0x1FB4 or
+                       c in 0x1FB6..0x1FBC or c == 0x1FBE or c in 0x1FC2..0x1FC4 or
+                       c in 0x1FC6..0x1FCC or
+                       c in 0x1FD0..0x1FD3 or c in 0x1FD6..0x1FDB or c in 0x1FE0..0x1FEC or
+                       c in 0x1FF2..0x1FF4 or
+                       c in 0x1FF6..0x1FFC or c == 0x2126 or c in 0x212A..0x212B or c == 0x212E or
+                       c in 0x2180..0x2182 or c in 0x3041..0x3094 or c in 0x30A1..0x30FA or
+                       c in 0x3105..0x312C or
+                       c in 0xAC00..0xD7A3 or
+                       c in 0x4E00..0x9FA5 or c == 0x3007 or c in 0x3021..0x3029
+
+      # Edition 4 NameChar = Letter | Digit | '.' | '-' | '_' | ':' | CombiningChar | Extender
+      defguardp is_name_char(c)
+                # Additional NameChar characters
+                # Digit 2-byte
+                # CombiningChar
+                # Extender 2-byte
+                when is_name_start(c) or
+                       c == ?- or c == ?. or c in ?0..?9 or c == 0xB7 or
+                       c in 0x0660..0x0669 or c in 0x06F0..0x06F9 or c in 0x0966..0x096F or
+                       c in 0x09E6..0x09EF or
+                       c in 0x0A66..0x0A6F or c in 0x0AE6..0x0AEF or c in 0x0B66..0x0B6F or
+                       c in 0x0BE7..0x0BEF or
+                       c in 0x0C66..0x0C6F or c in 0x0CE6..0x0CEF or c in 0x0D66..0x0D6F or
+                       c in 0x0E50..0x0E59 or
+                       c in 0x0ED0..0x0ED9 or c in 0x0F20..0x0F29 or
+                       c in 0x0300..0x0345 or c in 0x0360..0x0361 or c in 0x0483..0x0486 or
+                       c in 0x0591..0x05A1 or
+                       c in 0x05A3..0x05B9 or c in 0x05BB..0x05BD or c == 0x05BF or
+                       c in 0x05C1..0x05C2 or
+                       c == 0x05C4 or c in 0x064B..0x0652 or c == 0x0670 or c in 0x06D6..0x06DC or
+                       c in 0x06DD..0x06DF or c in 0x06E0..0x06E4 or c in 0x06E7..0x06E8 or
+                       c in 0x06EA..0x06ED or
+                       c in 0x0901..0x0903 or c == 0x093C or c in 0x093E..0x094C or c == 0x094D or
+                       c in 0x0951..0x0954 or c in 0x0962..0x0963 or c in 0x0981..0x0983 or
+                       c == 0x09BC or
+                       c == 0x09BE or c == 0x09BF or c in 0x09C0..0x09C4 or c in 0x09C7..0x09C8 or
+                       c in 0x09CB..0x09CD or c == 0x09D7 or c in 0x09E2..0x09E3 or c == 0x0A02 or
+                       c == 0x0A3C or c == 0x0A3E or c == 0x0A3F or c in 0x0A40..0x0A42 or
+                       c in 0x0A47..0x0A48 or c in 0x0A4B..0x0A4D or c in 0x0A70..0x0A71 or
+                       c in 0x0A81..0x0A83 or
+                       c == 0x0ABC or c in 0x0ABE..0x0AC5 or c in 0x0AC7..0x0AC9 or
+                       c in 0x0ACB..0x0ACD or
+                       c in 0x0B01..0x0B03 or c == 0x0B3C or c in 0x0B3E..0x0B43 or
+                       c in 0x0B47..0x0B48 or
+                       c in 0x0B4B..0x0B4D or c in 0x0B56..0x0B57 or c in 0x0B82..0x0B83 or
+                       c in 0x0BBE..0x0BC2 or
+                       c in 0x0BC6..0x0BC8 or c in 0x0BCA..0x0BCD or c == 0x0BD7 or
+                       c in 0x0C01..0x0C03 or
+                       c in 0x0C3E..0x0C44 or c in 0x0C46..0x0C48 or c in 0x0C4A..0x0C4D or
+                       c in 0x0C55..0x0C56 or
+                       c in 0x0C82..0x0C83 or c in 0x0CBE..0x0CC4 or c in 0x0CC6..0x0CC8 or
+                       c in 0x0CCA..0x0CCD or
+                       c in 0x0CD5..0x0CD6 or c in 0x0D02..0x0D03 or c in 0x0D3E..0x0D43 or
+                       c in 0x0D46..0x0D48 or
+                       c in 0x0D4A..0x0D4D or c == 0x0D57 or c == 0x0E31 or c in 0x0E34..0x0E3A or
+                       c in 0x0E47..0x0E4E or c == 0x0EB1 or c in 0x0EB4..0x0EB9 or
+                       c in 0x0EBB..0x0EBC or
+                       c in 0x0EC8..0x0ECD or c in 0x0F18..0x0F19 or c == 0x0F35 or c == 0x0F37 or
+                       c == 0x0F39 or c == 0x0F3E or c == 0x0F3F or c in 0x0F71..0x0F84 or
+                       c in 0x0F86..0x0F8B or c in 0x0F90..0x0F95 or c == 0x0F97 or
+                       c in 0x0F99..0x0FAD or
+                       c in 0x0FB1..0x0FB7 or c == 0x0FB9 or c in 0x20D0..0x20DC or c == 0x20E1 or
+                       c in 0x302A..0x302F or c == 0x3099 or c == 0x309A or
+                       c == 0x02D0 or c == 0x02D1 or c == 0x0387 or c == 0x0640 or
+                       c == 0x0E46 or c == 0x0EC6 or c == 0x3005 or c in 0x3031..0x3035 or
+                       c in 0x309D..0x309E or c in 0x30FC..0x30FE
+    end
+  end
+
+  # ==================================================================
+  # Shared Parser Code (injected into both editions)
+  # ==================================================================
+
+  defp shared_parser_code do
+    quote do
+      # UTF-8 codepoint byte size
+      defp utf8_size(c) when c < 0x80, do: 1
+      defp utf8_size(c) when c < 0x800, do: 2
+      defp utf8_size(c) when c < 0x10000, do: 3
+      defp utf8_size(_), do: 4
+
+      # Return format helper - complete (no leftover)
+      defp complete(events, line, ls, abs_pos) do
+        {:lists.reverse(events), nil, {line, ls, abs_pos}}
+      end
+
+      # Return format helper - incomplete (has leftover starting at elem_start)
+      defp incomplete(events, elem_start, line, ls, abs_pos) do
+        {:lists.reverse(events), elem_start, {line, ls, abs_pos}}
+      end
+
+      # ============================================================================
+      # Public API
+      # ============================================================================
+
+      @doc """
+      Parse complete XML (one-shot mode).
+      Returns list of all events.
+      """
+      def parse(input) when is_binary(input) do
+        stream([input]) |> Enum.to_list()
+      end
+
+      @doc """
+      Stream XML from any enumerable source.
+      Returns lazy stream of events (batched per block).
+      """
+      def stream(enumerable) do
+        Stream.resource(
+          fn -> init_stream(enumerable) end,
+          &next_batch/1,
+          fn _ -> :ok end
+        )
+      end
+
+      @doc """
+      Parse a single block of XML.
+      """
+      def parse_block(block, _prev_block, _prev_pos, line, ls, abs_pos) do
+        if abs_pos == 0 do
+          case block do
+            <<0xFE, 0xFF, _::binary>> ->
+              {[{:error, :utf16, nil, line, ls, abs_pos}], nil, {line, ls, abs_pos}}
+
+            <<0xFF, 0xFE, _::binary>> ->
+              {[{:error, :utf16, nil, line, ls, abs_pos}], nil, {line, ls, abs_pos}}
+
+            _ ->
+              parse_content(block, block, 0, abs_pos, line, ls, [])
+          end
+        else
+          parse_content(block, block, 0, abs_pos, line, ls, [])
+        end
+      end
+
+      # ============================================================================
+      # Stream Helpers
+      # ============================================================================
+
+      defp init_stream(enumerable) do
+        {enumerable, nil, 1, 0, 0, false}
+      end
+
+      defp next_batch({_source, _leftover, _line, _ls, _abs_pos, true} = state) do
+        {:halt, state}
+      end
+
+      defp next_batch({source, leftover, line, ls, abs_pos, false}) do
+        case get_chunk(source) do
+          {:ok, chunk, rest} ->
+            if leftover do
+              handle_leftover(rest, leftover, chunk, line, ls, abs_pos)
+            else
+              handle_chunk(rest, chunk, line, ls, abs_pos)
+            end
+
+          :eof ->
+            {:halt, {source, leftover, line, ls, abs_pos, true}}
+        end
+      end
+
+      defp get_chunk([chunk | rest]) when is_binary(chunk), do: {:ok, chunk, rest}
+      defp get_chunk([]), do: :eof
+
+      defp get_chunk(stream) do
+        case Enum.take(stream, 1) do
+          [chunk] -> {:ok, chunk, Stream.drop(stream, 1)}
+          [] -> :eof
+        end
+      end
+
+      defp handle_chunk(rest, chunk, line, ls, abs_pos) do
+        {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+          parse_block(chunk, nil, 0, line, ls, abs_pos)
+
+        if leftover_pos do
+          leftover = binary_part(chunk, leftover_pos, byte_size(chunk) - leftover_pos)
+          {events, {rest, leftover, new_line, new_ls, new_abs_pos, false}}
+        else
+          {events, {rest, nil, new_line, new_ls, new_abs_pos, false}}
+        end
+      end
+
+      defp handle_leftover(rest, leftover, chunk, line, ls, abs_pos) do
+        case :binary.match(chunk, ">") do
+          {pos, 1} ->
+            mini = leftover <> binary_part(chunk, 0, pos + 1)
+
+            {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+              parse_block(mini, nil, 0, line, ls, abs_pos)
+
+            if leftover_pos do
+              new_leftover = binary_part(mini, leftover_pos, byte_size(mini) - leftover_pos)
+
+              handle_leftover_continue(
+                rest,
+                new_leftover,
+                chunk,
+                pos + 1,
+                new_line,
+                new_ls,
+                new_abs_pos,
+                events
+              )
+            else
+              parse_rest_of_chunk(rest, chunk, pos + 1, new_line, new_ls, new_abs_pos, events)
+            end
+
+          :nomatch ->
+            {[], {rest, leftover <> chunk, line, ls, abs_pos, false}}
+        end
+      end
+
+      defp handle_leftover_continue(
+             rest,
+             leftover,
+             chunk,
+             search_start,
+             line,
+             ls,
+             abs_pos,
+             acc_events
+           ) do
+        remaining = byte_size(chunk) - search_start
+
+        case :binary.match(chunk, ">", [{:scope, {search_start, remaining}}]) do
+          {pos, 1} ->
+            mini = leftover <> binary_part(chunk, search_start, pos - search_start + 1)
+
+            {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+              parse_block(mini, nil, 0, line, ls, abs_pos)
+
+            all_events = acc_events ++ events
+
+            if leftover_pos do
+              new_leftover = binary_part(mini, leftover_pos, byte_size(mini) - leftover_pos)
+
+              handle_leftover_continue(
+                rest,
+                new_leftover,
+                chunk,
+                pos + 1,
+                new_line,
+                new_ls,
+                new_abs_pos,
+                all_events
+              )
+            else
+              parse_rest_of_chunk(rest, chunk, pos + 1, new_line, new_ls, new_abs_pos, all_events)
+            end
+
+          :nomatch ->
+            new_leftover = leftover <> binary_part(chunk, search_start, remaining)
+            {acc_events, {rest, new_leftover, line, ls, abs_pos, false}}
+        end
+      end
+
+      defp parse_rest_of_chunk(rest, chunk, start_pos, line, ls, abs_pos, acc_events) do
+        chunk_remaining = byte_size(chunk) - start_pos
+
+        if chunk_remaining > 0 do
+          rest_chunk = binary_part(chunk, start_pos, chunk_remaining)
+
+          {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+            parse_block(rest_chunk, nil, 0, line, ls, abs_pos)
+
+          all_events = acc_events ++ events
+
+          if leftover_pos do
+            leftover = binary_part(rest_chunk, leftover_pos, byte_size(rest_chunk) - leftover_pos)
+            {all_events, {rest, leftover, new_line, new_ls, new_abs_pos, false}}
+          else
+            {all_events, {rest, nil, new_line, new_ls, new_abs_pos, false}}
+          end
+        else
+          {acc_events, {rest, nil, line, ls, abs_pos, false}}
+        end
+      end
+
+      # ============================================================================
+      # Content parsing - entry point
+      # ============================================================================
+
+      defp parse_content(<<>>, _xml, __buf_pos, abs_pos, line, ls, events) do
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_content(<<"<?xml ", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
+        parse_prolog(
+          rest,
+          xml,
+          buf_pos + 6,
+          abs_pos + 6,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_content(<<"<?xml\t", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
+        parse_prolog(
+          rest,
+          xml,
+          buf_pos + 6,
+          abs_pos + 6,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_content(<<"<?xml\n", rest::binary>>, xml, buf_pos, abs_pos, line, _ls, events) do
+        parse_prolog(
+          rest,
+          xml,
+          buf_pos + 6,
+          abs_pos + 6,
+          line + 1,
+          abs_pos + 6,
+          {line, abs_pos + 6 - 6, abs_pos + 1},
+          buf_pos,
+          events
+        )
+      end
+
+      # At document start: <?xml followed by non-whitespace is malformed XMLDecl
+      # The XML spec requires whitespace after "<?xml" (S in VersionInfo)
+      defp parse_content(<<"<?xml", c, _::binary>>, _xml, _buf_pos, 0 = abs_pos, line, ls, events)
+           when c not in [?\s, ?\t, ?\n, ?\r, ?\?] do
+        events = [
+          {:error, :malformed_xml_decl, "Missing whitespace after '<?xml' in XML declaration",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos + 5)
+      end
+
+      defp parse_content(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, events) do
+        parse_element(rest, xml, buf_pos, abs_pos, line, ls, events)
+      end
+
+      defp parse_content(rest, xml, buf_pos, abs_pos, line, ls, events) do
+        parse_text(
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          {line, ls, abs_pos},
+          buf_pos,
+          true,
+          events
+        )
+      end
+
+      # ============================================================================
+      # Text parsing
+      # ============================================================================
+
+      defp parse_text(<<>>, xml, buf_pos, abs_pos, line, ls, loc, start, all_ws, events) do
+        events =
+          if buf_pos > start do
+            text = binary_part(xml, start, buf_pos - start)
+            {l, lls, lp} = loc
+
+            if all_ws do
+              [{:space, text, l, lls, lp} | events]
+            else
+              [{:characters, text, l, lls, lp} | events]
+            end
+          else
+            events
+          end
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_text(
+             <<"<", _::binary>> = rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             all_ws,
+             events
+           ) do
+        events =
+          if buf_pos > start do
+            text = binary_part(xml, start, buf_pos - start)
+            {l, lls, lp} = loc
+
+            if all_ws do
+              [{:space, text, l, lls, lp} | events]
+            else
+              [{:characters, text, l, lls, lp} | events]
+            end
+          else
+            events
+          end
+
+        parse_element(rest, xml, buf_pos, abs_pos, line, ls, events)
+      end
+
+      defp parse_text(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             start,
+             all_ws,
+             events
+           ) do
+        parse_text(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          start,
+          all_ws,
+          events
+        )
+      end
+
+      defp parse_text(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             all_ws,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, all_ws, events)
+      end
+
+      defp parse_text(
+             <<"]]>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             all_ws,
+             events
+           ) do
+        events =
+          if buf_pos > start do
+            text = binary_part(xml, start, buf_pos - start)
+            {l, lls, lp} = loc
+
+            if all_ws do
+              [{:space, text, l, lls, lp} | events]
+            else
+              [{:characters, text, l, lls, lp} | events]
+            end
+          else
+            events
+          end
+
+        events = [
+          {:error, :text_cdata_end, "']]>' not allowed in text content", line, ls, abs_pos}
+          | events
+        ]
+
+        parse_text(
+          rest,
+          xml,
+          buf_pos + 3,
+          abs_pos + 3,
+          line,
+          ls,
+          {line, ls, abs_pos + 3},
+          buf_pos + 3,
+          true,
+          events
+        )
+      end
+
+      # ASCII fast path for valid XML chars (excludes <, ], control chars; newline/tab handled above)
+      defp parse_text(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             _all_ws,
+             events
+           )
+           when c in 0x20..0x3B or c == 0x3D or c in 0x3F..0x5C or c in 0x5E..0x7F or c == 0x0D do
+        parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, false, events)
+      end
+
+      # Non-ASCII UTF-8: validate with is_xml_char guard
+      defp parse_text(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             _all_ws,
+             events
+           )
+           when is_xml_char(c) do
+        size = utf8_size(c)
+        parse_text(rest, xml, buf_pos + size, abs_pos + size, line, ls, loc, start, false, events)
+      end
+
+      # Invalid XML character - emit error and stop
+      defp parse_text(
+             <<c::utf8, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _all_ws,
+             events
+           ) do
+        events = [
+          {:error, :invalid_char,
+           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in text content",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
+      defp parse_text(
+             <<byte, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _all_ws,
+             events
+           )
+           when byte >= 0x80 do
+        events = [
+          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in text content", line, ls,
+           abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # Element dispatch
+      # ============================================================================
+
+      defp parse_element(<<"<!--", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
+        parse_comment(
+          rest,
+          xml,
+          buf_pos + 4,
+          abs_pos + 4,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 4,
+          false,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(<<"<![CDATA[", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
+        parse_cdata(
+          rest,
+          xml,
+          buf_pos + 9,
+          abs_pos + 9,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 9,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(<<"<!DOCTYPE", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 9,
+          abs_pos + 9,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 2,
+          1,
+          nil,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(
+             <<"</", rest2::binary>> = <<"</", c::utf8, _::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             events
+           )
+           when is_name_start(c) do
+        parse_close_tag_name(
+          rest2,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 2,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(<<"</", _::binary>>, _xml, _buf_pos, abs_pos, line, ls, events) do
+        events = [
+          {:error, :invalid_close_tag, "Close tag must start with a valid name character", line,
+           ls, abs_pos + 2}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos + 2)
+      end
+
+      defp parse_element(
+             <<"<?", rest2::binary>> = <<"<?", c::utf8, _::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             events
+           )
+           when is_name_start(c) do
+        parse_pi_name(
+          rest2,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 2,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(<<"<?", _::binary>>, _xml, _buf_pos, abs_pos, line, ls, events) do
+        events = [
+          {:error, :invalid_pi_target, "PI target must start with a valid name character", line,
+           ls, abs_pos + 2}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos + 2)
+      end
+
+      defp parse_element(
+             <<"<", rest2::binary>> = <<"<", c::utf8, _::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             events
+           )
+           when is_name_start(c) do
+        parse_open_tag_name(
+          rest2,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 1,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(<<"<">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<!">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<!-">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<![">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<![C">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<![CD">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<![CDA">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<![CDAT">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(<<"<![CDATA">>, _xml, buf_pos, abs_pos, line, ls, events) do
+        incomplete(events, buf_pos, line, ls, abs_pos)
+      end
+
+      defp parse_element(_, _xml, _buf_pos, abs_pos, line, ls, events) do
+        events = [{:error, :invalid_element, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # Open tag name
+      # ============================================================================
+
+      defp parse_open_tag_name(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_open_tag_name(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
+                  c == ?: do
+        parse_open_tag_name(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_open_tag_name(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when is_name_char(c) do
+        size = utf8_size(c)
+
+        parse_open_tag_name(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_open_tag_name(
+             rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           ) do
+        name = binary_part(xml, start, buf_pos - start)
+
+        finish_open_tag(
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          name,
+          [],
+          [],
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      # ============================================================================
+      # Finish open tag (parse attributes)
+      # ============================================================================
+
+      defp finish_open_tag(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp finish_open_tag(
+             <<"/>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             _seen,
+             loc,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+
+        events = [
+          {:end_element, name, l, lls, lp} | [{:start_element, name, attrs, l, lls, lp} | events]
+        ]
+
+        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+      end
+
+      defp finish_open_tag(
+             <<">", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             _seen,
+             loc,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+        events = [{:start_element, name, attrs, l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+      end
+
+      defp finish_open_tag(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        finish_open_tag_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp finish_open_tag(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             elem_start,
+             events
+           ) do
+        finish_open_tag_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          name,
+          attrs,
+          seen,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp finish_open_tag(
+             <<c::utf8, _::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _elem_start,
+             events
+           )
+           when is_name_start(c) do
+        events = [{:error, :missing_whitespace_before_attr, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp finish_open_tag(
+             <<"/">>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp finish_open_tag(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_gt_or_attr, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp finish_open_tag_ws(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp finish_open_tag_ws(
+             <<"/>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             _seen,
+             loc,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+
+        events = [
+          {:end_element, name, l, lls, lp} | [{:start_element, name, attrs, l, lls, lp} | events]
+        ]
+
+        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+      end
+
+      defp finish_open_tag_ws(
+             <<">", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             _seen,
+             loc,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+        events = [{:start_element, name, attrs, l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+      end
+
+      defp finish_open_tag_ws(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        finish_open_tag_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp finish_open_tag_ws(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             elem_start,
+             events
+           ) do
+        finish_open_tag_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          name,
+          attrs,
+          seen,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp finish_open_tag_ws(
+             <<c::utf8, _::binary>> = rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             elem_start,
+             events
+           )
+           when is_name_start(c) do
+        parse_attr_name(
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          buf_pos,
+          elem_start,
+          events
+        )
+      end
+
+      defp finish_open_tag_ws(
+             <<"/">>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp finish_open_tag_ws(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_gt_or_attr, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # Attribute parsing
+      # ============================================================================
+
+      defp parse_attr_name(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_attr_name(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
+                  c == ?: do
+        parse_attr_name(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_name(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when is_name_char(c) do
+        size = utf8_size(c)
+
+        parse_attr_name(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_name(
+             rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             start,
+             elem_start,
+             events
+           ) do
+        attr_name = binary_part(xml, start, buf_pos - start)
+
+        parse_attr_eq(
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_eq(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _attr_name,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_attr_eq(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_attr_eq(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_eq(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             elem_start,
+             events
+           ) do
+        parse_attr_eq(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_eq(
+             <<"=", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             elem_start,
+             events
+           ) do
+        parse_attr_quote(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_eq(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _attr_name,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_eq, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_attr_quote(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _attr_name,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_attr_quote(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_attr_quote(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_quote(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             elem_start,
+             events
+           ) do
+        parse_attr_quote(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_quote(
+             <<q, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             elem_start,
+             events
+           )
+           when q in [?", ?'] do
+        parse_attr_value(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          q,
+          buf_pos + 1,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_quote(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _attr_name,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_quote, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_attr_value(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _attr_name,
+             _quote,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_attr_value(
+             <<q, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             q,
+             start,
+             elem_start,
+             events
+           ) do
+        value = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+
+        {new_attrs, new_seen, events} =
+          if attr_name in seen do
+            events = [{:error, :attr_unique, nil, l, lls, lp} | events]
+            {[{attr_name, value} | attrs], seen, events}
+          else
+            {[{attr_name, value} | attrs], [attr_name | seen], events}
+          end
+
+        finish_open_tag(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          new_attrs,
+          new_seen,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_value(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             quote,
+             start,
+             elem_start,
+             events
+           ) do
+        parse_attr_value(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          quote,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_attr_value(
+             <<"<", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             quote,
+             start,
+             elem_start,
+             events
+           ) do
+        events = [
+          {:error, :attr_lt, "'<' not allowed in attribute value", line, ls, abs_pos} | events
+        ]
+
+        parse_attr_value(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          quote,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # ASCII fast path for valid XML chars (excludes <, ", ', &, control chars; newline handled above)
+      defp parse_attr_value(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             quote,
+             start,
+             elem_start,
+             events
+           )
+           when c in 0x20..0x21 or c in 0x23..0x25 or c in 0x28..0x3B or c == 0x3D or
+                  c in 0x3F..0x7F or c == 0x09 or c == 0x0D do
+        parse_attr_value(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          quote,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Non-ASCII UTF-8: validate with is_xml_char guard
+      defp parse_attr_value(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             attrs,
+             seen,
+             loc,
+             attr_name,
+             quote,
+             start,
+             elem_start,
+             events
+           )
+           when is_xml_char(c) do
+        size = utf8_size(c)
+
+        parse_attr_value(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          name,
+          attrs,
+          seen,
+          loc,
+          attr_name,
+          quote,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Invalid XML character - emit error and stop
+      defp parse_attr_value(
+             <<c::utf8, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _attr_name,
+             _quote,
+             _start,
+             _elem_start,
+             events
+           ) do
+        events = [
+          {:error, :invalid_char,
+           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in attribute value",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
+      defp parse_attr_value(
+             <<byte, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _attrs,
+             _seen,
+             _loc,
+             _attr_name,
+             _quote,
+             _start,
+             _elem_start,
+             events
+           )
+           when byte >= 0x80 do
+        events = [
+          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in attribute value", line, ls,
+           abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # Close tag
+      # ============================================================================
+
+      defp parse_close_tag_name(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_close_tag_name(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
+                  c == ?: do
+        parse_close_tag_name(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_close_tag_name(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when is_name_char(c) do
+        size = utf8_size(c)
+
+        parse_close_tag_name(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_close_tag_name(
+             rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           ) do
+        name = binary_part(xml, start, buf_pos - start)
+        parse_close_tag_end(rest, xml, buf_pos, abs_pos, line, ls, name, loc, elem_start, events)
+      end
+
+      defp parse_close_tag_end(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _loc,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_close_tag_end(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             loc,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_close_tag_end(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          name,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_close_tag_end(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             name,
+             loc,
+             elem_start,
+             events
+           ) do
+        parse_close_tag_end(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          name,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_close_tag_end(
+             <<">", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             name,
+             loc,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+        events = [{:end_element, name, l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+      end
+
+      defp parse_close_tag_end(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _name,
+             _loc,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_gt, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # Comment
+      # ============================================================================
+
+      defp parse_comment(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _has_double_dash,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_comment(
+             <<"-->", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             has_double_dash,
+             _elem_start,
+             events
+           ) do
+        comment = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+        events = [{:comment, comment, l, lls, lp} | events]
+
+        events =
+          if has_double_dash do
+            [{:error, :comment, nil, l, lls, lp} | events]
+          else
+            events
+          end
+
+        parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls, events)
+      end
+
+      defp parse_comment(
+             <<"--->", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             _has_double_dash,
+             _elem_start,
+             events
+           ) do
+        comment = binary_part(xml, start, buf_pos - start + 1)
+        {l, lls, lp} = loc
+        events = [{:comment, comment, l, lls, lp} | events]
+        events = [{:error, :comment, nil, l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 4, abs_pos + 4, line, ls, events)
+      end
+
+      defp parse_comment(
+             <<"--", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             _has_double_dash,
+             elem_start,
+             events
+           ) do
+        parse_comment(
+          rest,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          loc,
+          start,
+          true,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_comment(
+             <<"-">>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _has_double_dash,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_comment(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             start,
+             has_double_dash,
+             elem_start,
+             events
+           ) do
+        parse_comment(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          start,
+          has_double_dash,
+          elem_start,
+          events
+        )
+      end
+
+      # ASCII fast path for valid XML chars (excludes -, control chars; newline handled above)
+      defp parse_comment(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             has_double_dash,
+             elem_start,
+             events
+           )
+           when c in 0x20..0x2C or c in 0x2E..0x7F or c == 0x09 or c == 0x0D do
+        parse_comment(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          has_double_dash,
+          elem_start,
+          events
+        )
+      end
+
+      # Handle single dash followed by non-dash (valid in comment)
+      defp parse_comment(
+             <<"-", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             has_double_dash,
+             elem_start,
+             events
+           ) do
+        parse_comment(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          has_double_dash,
+          elem_start,
+          events
+        )
+      end
+
+      # Non-ASCII UTF-8: validate with is_xml_char guard
+      defp parse_comment(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             has_double_dash,
+             elem_start,
+             events
+           )
+           when is_xml_char(c) do
+        size = utf8_size(c)
+
+        parse_comment(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          start,
+          has_double_dash,
+          elem_start,
+          events
+        )
+      end
+
+      # Invalid XML character - emit error and stop
+      defp parse_comment(
+             <<c::utf8, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _has_double_dash,
+             _elem_start,
+             events
+           ) do
+        events = [
+          {:error, :invalid_char,
+           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in comment",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
+      defp parse_comment(
+             <<byte, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _has_double_dash,
+             _elem_start,
+             events
+           )
+           when byte >= 0x80 do
+        events = [
+          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in comment", line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # CDATA
+      # ============================================================================
+
+      defp parse_cdata(<<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, _start, elem_start, events) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_cdata(
+             <<"]]>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             _elem_start,
+             events
+           ) do
+        cdata = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+        events = [{:cdata, cdata, l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls, events)
+      end
+
+      defp parse_cdata(
+             <<"]]">>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_cdata(
+             <<"]">>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_cdata(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             start,
+             elem_start,
+             events
+           ) do
+        parse_cdata(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # ASCII fast path for valid XML chars (excludes ], control chars; newline handled above)
+      defp parse_cdata(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when c in 0x20..0x5C or c in 0x5E..0x7F or c == 0x09 or c == 0x0D do
+        parse_cdata(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, elem_start, events)
+      end
+
+      # Handle single ] (valid in CDATA until ]]>)
+      defp parse_cdata(
+             <<"]", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           ) do
+        parse_cdata(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, elem_start, events)
+      end
+
+      # Non-ASCII UTF-8: validate with is_xml_char guard
+      defp parse_cdata(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when is_xml_char(c) do
+        size = utf8_size(c)
+
+        parse_cdata(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Invalid XML character - emit error and stop
+      defp parse_cdata(
+             <<c::utf8, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _elem_start,
+             events
+           ) do
+        events = [
+          {:error, :invalid_char,
+           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in CDATA",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
+      defp parse_cdata(
+             <<byte, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _elem_start,
+             events
+           )
+           when byte >= 0x80 do
+        events = [
+          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in CDATA", line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # DOCTYPE
+      # ============================================================================
+
+      defp parse_doctype(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _dtd_depth,
+             _quote,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_doctype(
+             <<">", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             1,
+             nil,
+             _elem_start,
+             events
+           ) do
+        content = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+        events = [{:dtd, content, l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+      end
+
+      defp parse_doctype(
+             <<">", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             nil,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth - 1,
+          nil,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<">", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             quote,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          quote,
+          elem_start,
+          events
+        )
+      end
+
+      # Comment inside DOCTYPE - enter comment mode to ignore quote characters
+      # Only match when NOT inside a quoted string (quote == nil)
+      defp parse_doctype(
+             <<"<!--", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             nil,
+             elem_start,
+             events
+           ) do
+        parse_doctype_comment(
+          rest,
+          xml,
+          buf_pos + 4,
+          abs_pos + 4,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<"<", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             nil,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth + 1,
+          nil,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<"<", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             quote,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          quote,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<"\"", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             nil,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          ?",
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<"\"", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             ?",
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          nil,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<"'", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             nil,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          ?',
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<"'", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             ?',
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          nil,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             start,
+             dtd_depth,
+             quote,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          start,
+          dtd_depth,
+          quote,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             quote,
+             elem_start,
+             events
+           )
+           when c in 0x20..0x21 or c in 0x23..0x26 or c in 0x28..0x3B or c == 0x3D or
+                  c in 0x3F..0x7F or c == 0x9 or c == 0xD do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          quote,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             quote,
+             elem_start,
+             events
+           )
+           when is_xml_char(c) do
+        size = utf8_size(c)
+
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          quote,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_doctype(
+             <<c::utf8, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _dtd_depth,
+             _quote,
+             _elem_start,
+             events
+           ) do
+        events = [
+          {:error, :invalid_char,
+           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in DOCTYPE",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # DOCTYPE Comment - skips comment content inside DOCTYPE
+      # ============================================================================
+
+      # Incomplete - waiting for more data
+      defp parse_doctype_comment(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             _dtd_depth,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      # End of comment - return to normal DOCTYPE parsing
+      defp parse_doctype_comment(
+             <<"-->", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             elem_start,
+             events
+           ) do
+        parse_doctype(
+          rest,
+          xml,
+          buf_pos + 3,
+          abs_pos + 3,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          nil,
+          elem_start,
+          events
+        )
+      end
+
+      # Newline in comment - track line numbers
+      defp parse_doctype_comment(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             start,
+             dtd_depth,
+             elem_start,
+             events
+           ) do
+        parse_doctype_comment(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          start,
+          dtd_depth,
+          elem_start,
+          events
+        )
+      end
+
+      # Skip any other character in comment
+      defp parse_doctype_comment(
+             <<_c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             elem_start,
+             events
+           ) do
+        parse_doctype_comment(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          elem_start,
+          events
+        )
+      end
+
+      # Multi-byte UTF-8 characters in comment
+      defp parse_doctype_comment(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             dtd_depth,
+             elem_start,
+             events
+           ) do
+        size = utf8_size(c)
+
+        parse_doctype_comment(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          start,
+          dtd_depth,
+          elem_start,
+          events
+        )
+      end
+
+      # ============================================================================
+      # Processing instruction
+      # ============================================================================
+
+      defp parse_pi_name(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_pi_name(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
+                  c == ?: do
+        parse_pi_name(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_pi_name(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             start,
+             elem_start,
+             events
+           )
+           when is_name_char(c) do
+        size = utf8_size(c)
+
+        parse_pi_name(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_pi_name(rest, xml, buf_pos, abs_pos, line, ls, loc, start, elem_start, events) do
+        target = binary_part(xml, start, buf_pos - start)
+
+        # Check for reserved "xml" target (case-insensitive)
+        # Per XML spec: "The target names 'XML', 'xml', and so on are reserved"
+        if String.downcase(target) == "xml" do
+          events = [
+            {:error, :reserved_pi_target, "PI target 'xml' is reserved", line, ls,
+             abs_pos - byte_size(target)}
+            | events
+          ]
+
+          complete(events, line, ls, abs_pos)
+        else
+          parse_pi_content(
+            rest,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            loc,
+            target,
+            buf_pos,
+            elem_start,
+            events
+          )
+        end
+      end
+
+      defp parse_pi_content(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _target,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_pi_content(
+             <<"?>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             target,
+             start,
+             _elem_start,
+             events
+           ) do
+        content = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+        events = [{:processing_instruction, target, content, l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+      end
+
+      defp parse_pi_content(
+             <<"?">>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _target,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_pi_content(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             target,
+             start,
+             elem_start,
+             events
+           ) do
+        parse_pi_content(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          target,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # ASCII fast path for valid XML chars (excludes ?, control chars; newline handled above)
+      defp parse_pi_content(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             target,
+             start,
+             elem_start,
+             events
+           )
+           when c in 0x20..0x3E or c in 0x40..0x7F or c == 0x09 or c == 0x0D do
+        parse_pi_content(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          target,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Handle single ? (valid in PI content until ?>)
+      defp parse_pi_content(
+             <<"?", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             target,
+             start,
+             elem_start,
+             events
+           ) do
+        parse_pi_content(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          target,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Non-ASCII UTF-8: validate with is_xml_char guard
+      defp parse_pi_content(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             target,
+             start,
+             elem_start,
+             events
+           )
+           when is_xml_char(c) do
+        size = utf8_size(c)
+
+        parse_pi_content(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          target,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Invalid XML character - emit error and stop
+      defp parse_pi_content(
+             <<c::utf8, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _target,
+             _start,
+             _elem_start,
+             events
+           ) do
+        events = [
+          {:error, :invalid_char,
+           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in processing instruction",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
+      defp parse_pi_content(
+             <<byte, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _target,
+             _start,
+             _elem_start,
+             events
+           )
+           when byte >= 0x80 do
+        events = [
+          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in processing instruction", line,
+           ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # ============================================================================
+      # Prolog
+      # ============================================================================
+
+      defp parse_prolog(<<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, elem_start, events) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog(
+             <<"?>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+        events = [{:prolog, "xml", [], l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+      end
+
+      defp parse_prolog(<<"?">>, _xml, _buf_pos, abs_pos, line, ls, _loc, elem_start, events) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_prolog(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, elem_start, events)
+      end
+
+      defp parse_prolog(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             elem_start,
+             events
+           ) do
+        parse_prolog(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog(
+             <<c::utf8, _::binary>> = rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             elem_start,
+             events
+           )
+           when is_name_start(c) do
+        parse_prolog_attr_name(
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          loc,
+          [],
+          buf_pos,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog(_, _xml, _buf_pos, abs_pos, line, ls, _loc, _elem_start, events) do
+        events = [{:error, :expected_pi_end_or_attr, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_attr_name(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_attr_name(
+             <<"?>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             _start,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+        events = [{:prolog, "xml", Enum.reverse(prolog_attrs), l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+      end
+
+      defp parse_prolog_attr_name(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             start,
+             elem_start,
+             events
+           )
+           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
+                  c == ?: do
+        parse_prolog_attr_name(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_name(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             start,
+             elem_start,
+             events
+           )
+           when is_name_char(c) do
+        size = utf8_size(c)
+
+        parse_prolog_attr_name(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_name(
+             rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             start,
+             elem_start,
+             events
+           ) do
+        attr_name = binary_part(xml, start, buf_pos - start)
+
+        parse_prolog_attr_eq(
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_eq(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _attr_name,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_attr_eq(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_prolog_attr_eq(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_eq(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             elem_start,
+             events
+           ) do
+        parse_prolog_attr_eq(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          prolog_attrs,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_eq(
+             <<"=", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             elem_start,
+             events
+           ) do
+        parse_prolog_attr_quote(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_eq(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _attr_name,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_eq, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_attr_quote(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _attr_name,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_attr_quote(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_prolog_attr_quote(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_quote(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             elem_start,
+             events
+           ) do
+        parse_prolog_attr_quote(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          prolog_attrs,
+          attr_name,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_quote(
+             <<q, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             elem_start,
+             events
+           )
+           when q in [?", ?'] do
+        parse_prolog_attr_value(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          attr_name,
+          q,
+          buf_pos + 1,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_quote(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _attr_name,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_quote, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_attr_value(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _attr_name,
+             _quote,
+             _start,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_attr_value(
+             <<q, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             q,
+             start,
+             elem_start,
+             events
+           ) do
+        value = binary_part(xml, start, buf_pos - start)
+        new_prolog_attrs = [{attr_name, value} | prolog_attrs]
+
+        parse_prolog_after_attr(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          new_prolog_attrs,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_attr_value(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             quote,
+             start,
+             elem_start,
+             events
+           ) do
+        parse_prolog_attr_value(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          prolog_attrs,
+          attr_name,
+          quote,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # ASCII fast path for valid XML chars (excludes ", ', control chars; newline handled above)
+      defp parse_prolog_attr_value(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             quote,
+             start,
+             elem_start,
+             events
+           )
+           when c in 0x20..0x21 or c in 0x23..0x26 or c in 0x28..0x7F or c == 0x09 or c == 0x0D do
+        parse_prolog_attr_value(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          attr_name,
+          quote,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Non-ASCII UTF-8: validate with is_xml_char guard
+      defp parse_prolog_attr_value(
+             <<c::utf8, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             attr_name,
+             quote,
+             start,
+             elem_start,
+             events
+           )
+           when is_xml_char(c) do
+        size = utf8_size(c)
+
+        parse_prolog_attr_value(
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          attr_name,
+          quote,
+          start,
+          elem_start,
+          events
+        )
+      end
+
+      # Invalid XML character - emit error and stop
+      defp parse_prolog_attr_value(
+             <<c::utf8, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _attr_name,
+             _quote,
+             _start,
+             _elem_start,
+             events
+           ) do
+        events = [
+          {:error, :invalid_char,
+           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in prolog attribute value",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
+      defp parse_prolog_attr_value(
+             <<byte, _rest::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _attr_name,
+             _quote,
+             _start,
+             _elem_start,
+             events
+           )
+           when byte >= 0x80 do
+        events = [
+          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in prolog attribute value", line,
+           ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_after_attr(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_after_attr(
+             <<"?>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+        events = [{:prolog, "xml", Enum.reverse(prolog_attrs), l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+      end
+
+      defp parse_prolog_after_attr(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_prolog_after_attr_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_after_attr(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             prolog_attrs,
+             elem_start,
+             events
+           ) do
+        parse_prolog_after_attr_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          prolog_attrs,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_after_attr(
+             <<c::utf8, _::binary>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _elem_start,
+             events
+           )
+           when is_name_start(c) do
+        events = [{:error, :missing_whitespace_before_attr, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_after_attr(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_pi_end_or_attr, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_after_attr_ws(
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             elem_start,
+             events
+           ) do
+        incomplete(events, elem_start, line, ls, abs_pos)
+      end
+
+      defp parse_prolog_after_attr_ws(
+             <<"?>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             _elem_start,
+             events
+           ) do
+        {l, lls, lp} = loc
+        events = [{:prolog, "xml", Enum.reverse(prolog_attrs), l, lls, lp} | events]
+        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+      end
+
+      defp parse_prolog_after_attr_ws(
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             elem_start,
+             events
+           )
+           when c in [?\s, ?\t] do
+        parse_prolog_after_attr_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_after_attr_ws(
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             _ls,
+             loc,
+             prolog_attrs,
+             elem_start,
+             events
+           ) do
+        parse_prolog_after_attr_ws(
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line + 1,
+          abs_pos + 1,
+          loc,
+          prolog_attrs,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_after_attr_ws(
+             <<c::utf8, _::binary>> = rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             loc,
+             prolog_attrs,
+             elem_start,
+             events
+           )
+           when is_name_start(c) do
+        parse_prolog_attr_name(
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          loc,
+          prolog_attrs,
+          buf_pos,
+          elem_start,
+          events
+        )
+      end
+
+      defp parse_prolog_after_attr_ws(
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _loc,
+             _prolog_attrs,
+             _elem_start,
+             events
+           ) do
+        events = [{:error, :expected_pi_end_or_attr, nil, line, ls, abs_pos} | events]
+        complete(events, line, ls, abs_pos)
+      end
+    end
+  end
+end

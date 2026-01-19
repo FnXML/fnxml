@@ -87,11 +87,14 @@ defmodule FnXML.DTD.ValidatorTest do
 
       open_event =
         Enum.find(events, fn
+          {:start_element, "foo", _, _, _, _} -> true
           {:start_element, "foo", _, _} -> true
           _ -> false
         end)
 
-      assert {:start_element, "foo", attrs, _} = open_event
+      assert open_event != nil
+      # Extract attrs from either 6-tuple or 4-tuple
+      attrs = elem(open_event, 2)
       assert {"id", "hello world"} in attrs
     end
 
@@ -112,11 +115,13 @@ defmodule FnXML.DTD.ValidatorTest do
 
       open_event =
         Enum.find(events, fn
+          {:start_element, "foo", _, _, _, _} -> true
           {:start_element, "foo", _, _} -> true
           _ -> false
         end)
 
-      assert {:start_element, "foo", attrs, _} = open_event
+      assert open_event != nil
+      attrs = elem(open_event, 2)
       assert {"myid", "myvalue"} in attrs
     end
 
@@ -137,11 +142,13 @@ defmodule FnXML.DTD.ValidatorTest do
 
       open_event =
         Enum.find(events, fn
+          {:start_element, "foo", _, _, _, _} -> true
           {:start_element, "foo", _, _} -> true
           _ -> false
         end)
 
-      assert {:start_element, "foo", attrs, _} = open_event
+      assert open_event != nil
+      attrs = elem(open_event, 2)
       assert {"name", "  hello  world  "} in attrs
     end
 
@@ -162,11 +169,13 @@ defmodule FnXML.DTD.ValidatorTest do
 
       open_event =
         Enum.find(events, fn
+          {:start_element, "foo", _, _, _, _} -> true
           {:start_element, "foo", _, _} -> true
           _ -> false
         end)
 
-      assert {:start_element, "foo", attrs, _} = open_event
+      assert open_event != nil
+      attrs = elem(open_event, 2)
       assert {"id", "  hello  "} in attrs
     end
   end
@@ -224,12 +233,48 @@ defmodule FnXML.DTD.ValidatorTest do
         |> Enum.to_list()
 
       assert Enum.any?(events, &match?({:start_document, _}, &1))
-      assert Enum.any?(events, &match?({:prolog, "xml", _, _}, &1))
-      assert Enum.any?(events, &match?({:dtd, _, _}, &1))
-      assert Enum.any?(events, &match?({:comment, _, _}, &1))
-      assert Enum.any?(events, &match?({:start_element, "foo", _, _}, &1))
-      assert Enum.any?(events, &match?({:characters, "text", _}, &1))
-      assert Enum.any?(events, &match?({:end_element, "foo", _}, &1))
+      # prolog: 6-tuple from parser
+      assert Enum.any?(events, fn
+               {:prolog, "xml", _, _, _, _} -> true
+               {:prolog, "xml", _, _} -> true
+               _ -> false
+             end)
+
+      # dtd: 5-tuple from parser
+      assert Enum.any?(events, fn
+               {:dtd, _, _, _, _} -> true
+               {:dtd, _, _} -> true
+               _ -> false
+             end)
+
+      # comment: 5-tuple from parser
+      assert Enum.any?(events, fn
+               {:comment, _, _, _, _} -> true
+               {:comment, _, _} -> true
+               _ -> false
+             end)
+
+      # start_element: 6-tuple from parser
+      assert Enum.any?(events, fn
+               {:start_element, "foo", _, _, _, _} -> true
+               {:start_element, "foo", _, _} -> true
+               _ -> false
+             end)
+
+      # characters: 5-tuple from parser
+      assert Enum.any?(events, fn
+               {:characters, "text", _, _, _} -> true
+               {:characters, "text", _} -> true
+               _ -> false
+             end)
+
+      # end_element: 5-tuple from parser
+      assert Enum.any?(events, fn
+               {:end_element, "foo", _, _, _} -> true
+               {:end_element, "foo", _} -> true
+               _ -> false
+             end)
+
       assert Enum.any?(events, &match?({:end_document, _}, &1))
     end
 
@@ -241,8 +286,17 @@ defmodule FnXML.DTD.ValidatorTest do
         |> Validator.validate()
         |> Enum.to_list()
 
-      assert Enum.any?(events, &match?({:start_element, "foo", _, _}, &1))
-      assert Enum.any?(events, &match?({:start_element, "bar", _, _}, &1))
+      assert Enum.any?(events, fn
+               {:start_element, "foo", _, _, _, _} -> true
+               {:start_element, "foo", _, _} -> true
+               _ -> false
+             end)
+
+      assert Enum.any?(events, fn
+               {:start_element, "bar", _, _, _, _} -> true
+               {:start_element, "bar", _, _} -> true
+               _ -> false
+             end)
     end
   end
 end

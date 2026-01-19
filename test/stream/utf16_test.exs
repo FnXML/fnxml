@@ -210,7 +210,8 @@ defmodule FnXML.Utf16Test do
         |> FnXML.Parser.parse()
         |> Enum.to_list()
 
-      assert Enum.any?(events, &match?({:characters, "hello", _}, &1))
+      # Parser outputs 5-tuple: {:characters, content, line, ls, pos}
+      assert Enum.any?(events, &match?({:characters, "hello", _, _, _}, &1))
     end
 
     test "parses UTF-16 with special characters" do
@@ -223,103 +224,30 @@ defmodule FnXML.Utf16Test do
         |> FnXML.Parser.parse()
         |> Enum.to_list()
 
-      text_event = Enum.find(events, &match?({:characters, _, _}, &1))
-      assert {:characters, "€100", _} = text_event
+      # Parser outputs 5-tuple: {:characters, content, line, ls, pos}
+      text_event = Enum.find(events, &match?({:characters, _, _, _, _}, &1))
+      assert {:characters, "€100", _, _, _} = text_event
     end
   end
 
-  describe "integration with FnXML.ParserStream (stream)" do
-    test "parses UTF-16 LE stream" do
-      xml_utf8 = ~s(<?xml version="1.0"?><root>hello</root>)
-      {:ok, utf16_le} = utf8_to_utf16(xml_utf8, :little)
-      utf16_with_bom = <<0xFF, 0xFE>> <> utf16_le
-
-      events =
-        [utf16_with_bom]
-        |> Stream.map(& &1)
-        |> Utf16.to_utf8()
-        |> FnXML.ParserStream.parse()
-        |> Enum.to_list()
-
-      assert Enum.any?(events, &match?({:start_element, "root", _, _}, &1))
-      assert Enum.any?(events, &match?({:characters, "hello", _}, &1))
-      assert Enum.any?(events, &match?({:end_element, "root", _}, &1))
-    end
-
-    test "parses UTF-16 BE stream" do
-      xml_utf8 = "<root>world</root>"
-      {:ok, utf16_be} = utf8_to_utf16(xml_utf8, :big)
-      utf16_with_bom = <<0xFE, 0xFF>> <> utf16_be
-
-      events =
-        [utf16_with_bom]
-        |> Stream.map(& &1)
-        |> Utf16.to_utf8()
-        |> FnXML.ParserStream.parse()
-        |> Enum.to_list()
-
-      assert Enum.any?(events, &match?({:start_element, "root", _, _}, &1))
-      assert Enum.any?(events, &match?({:characters, "world", _}, &1))
-    end
-
-    test "handles UTF-16 with special characters" do
-      xml_utf8 = "<price>€100</price>"
-      {:ok, utf16_le} = utf8_to_utf16(xml_utf8, :little)
-      utf16_with_bom = <<0xFF, 0xFE>> <> utf16_le
-
-      events =
-        [utf16_with_bom]
-        |> Stream.map(& &1)
-        |> Utf16.to_utf8()
-        |> FnXML.ParserStream.parse()
-        |> Enum.to_list()
-
-      text_event = Enum.find(events, &match?({:characters, _, _}, &1))
-      assert {:characters, "€100", _} = text_event
-    end
-  end
+  # Note: FnXML.ParserStream has been consolidated into FnXML.Parser
+  # Stream parsing now uses FnXML.Parser.parse/1 directly
 
   describe "parser error on UTF-16 (without conversion)" do
-    test "FnXML.Parser raises on UTF-16 LE" do
+    test "FnXML.Parser emits error for UTF-16 LE" do
       {:ok, utf16_le} = utf8_to_utf16("<root/>", :little)
       utf16_with_bom = <<0xFF, 0xFE>> <> utf16_le
 
-      assert_raise ArgumentError, ~r/UTF-16 Little Endian/, fn ->
-        FnXML.Parser.parse(utf16_with_bom) |> Enum.to_list()
-      end
+      events = FnXML.Parser.parse(utf16_with_bom) |> Enum.to_list()
+      assert Enum.any?(events, &match?({:error, :utf16, _, _, _, _}, &1))
     end
 
-    test "FnXML.Parser raises on UTF-16 BE" do
+    test "FnXML.Parser emits error for UTF-16 BE" do
       {:ok, utf16_be} = utf8_to_utf16("<root/>", :big)
       utf16_with_bom = <<0xFE, 0xFF>> <> utf16_be
 
-      assert_raise ArgumentError, ~r/UTF-16 Big Endian/, fn ->
-        FnXML.Parser.parse(utf16_with_bom) |> Enum.to_list()
-      end
-    end
-
-    test "FnXML.ParserStream raises on UTF-16 LE" do
-      {:ok, utf16_le} = utf8_to_utf16("<root/>", :little)
-      utf16_with_bom = <<0xFF, 0xFE>> <> utf16_le
-
-      assert_raise ArgumentError, ~r/UTF-16 Little Endian/, fn ->
-        [utf16_with_bom]
-        |> Stream.map(& &1)
-        |> FnXML.ParserStream.parse()
-        |> Enum.to_list()
-      end
-    end
-
-    test "FnXML.ParserStream raises on UTF-16 BE" do
-      {:ok, utf16_be} = utf8_to_utf16("<root/>", :big)
-      utf16_with_bom = <<0xFE, 0xFF>> <> utf16_be
-
-      assert_raise ArgumentError, ~r/UTF-16 Big Endian/, fn ->
-        [utf16_with_bom]
-        |> Stream.map(& &1)
-        |> FnXML.ParserStream.parse()
-        |> Enum.to_list()
-      end
+      events = FnXML.Parser.parse(utf16_with_bom) |> Enum.to_list()
+      assert Enum.any?(events, &match?({:error, :utf16, _, _, _, _}, &1))
     end
   end
 

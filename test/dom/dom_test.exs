@@ -304,8 +304,10 @@ defmodule FnXML.DOMTest do
 
   describe "Builder include_prolog option" do
     test "excludes prolog when include_prolog is false" do
-      doc = FnXML.Parser.parse("<?xml version=\"1.0\"?><root/>")
-            |> FnXML.DOM.Builder.from_stream(include_prolog: false)
+      doc =
+        FnXML.Parser.parse("<?xml version=\"1.0\"?><root/>")
+        |> FnXML.DOM.Builder.from_stream(include_prolog: false)
+
       assert doc.prolog == nil
     end
   end

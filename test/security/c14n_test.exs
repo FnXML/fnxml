@@ -219,7 +219,9 @@ defmodule FnXML.Security.C14NTest do
 
   describe "algorithm_atom/1" do
     test "parses known URIs" do
-      assert C14N.algorithm_atom("http://www.w3.org/TR/2001/REC-xml-c14n-20010315") == {:ok, :c14n}
+      assert C14N.algorithm_atom("http://www.w3.org/TR/2001/REC-xml-c14n-20010315") ==
+               {:ok, :c14n}
+
       assert C14N.algorithm_atom("http://www.w3.org/2001/10/xml-exc-c14n#") == {:ok, :exc_c14n}
     end
 

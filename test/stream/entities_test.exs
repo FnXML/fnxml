@@ -5,22 +5,26 @@ defmodule FnXML.EntitiesTest do
   alias FnXML.Error
 
   # Helper to extract text content from parsed XML
-  # New token format: {:characters, content, loc}
+  # Token format: {:characters, content, line, ls, pos} (5-tuple from parser)
   defp extract_text(stream) do
     stream
     |> Enum.to_list()
     |> Enum.find_value(fn
+      {:characters, content, _line, _ls, _pos} -> content
       {:characters, content, _loc} -> content
       _ -> nil
     end)
   end
 
   # Helper to extract first attribute value
-  # New token format: {:start_element, tag, attrs, loc}
+  # Token format: {:start_element, tag, attrs, line, ls, pos} (6-tuple from parser)
   defp extract_attr(stream, attr_name) do
     stream
     |> Enum.to_list()
     |> Enum.find_value(fn
+      {:start_element, _tag, attrs, _line, _ls, _pos} ->
+        Enum.find_value(attrs, fn {name, val} -> if name == attr_name, do: val end)
+
       {:start_element, _tag, attrs, _loc} ->
         Enum.find_value(attrs, fn {name, val} -> if name == attr_name, do: val end)
 
@@ -211,8 +215,14 @@ defmodule FnXML.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      open = Enum.find(tokens, &match?({:start_element, _, _, _}, &1))
-      {:start_element, _tag, attrs, _loc} = open
+      open =
+        Enum.find(tokens, fn
+          {:start_element, _, _, _, _, _} -> true
+          {:start_element, _, _, _} -> true
+          _ -> false
+        end)
+
+      {_, _tag, attrs, _, _, _} = open
 
       assert Enum.find_value(attrs, fn {n, v} -> if n == "x", do: v end) == "a&b"
       assert Enum.find_value(attrs, fn {n, v} -> if n == "y", do: v end) == "c<d"
@@ -321,12 +331,12 @@ defmodule FnXML.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      # New format: {:start_element, tag, attrs, loc}
-      assert Enum.count(tokens, &match?({:start_element, _, _, _}, &1)) == 2
-      # Close tags can be {:end_element, tag} or {:end_element, tag, loc}
+      # 6-tuple format: {:start_element, tag, attrs, line, ls, pos}
+      assert Enum.count(tokens, &match?({:start_element, _, _, _, _, _}, &1)) == 2
+      # Close tags can be {:end_element, tag} or {:end_element, tag, line, ls, pos}
       assert Enum.count(tokens, fn
                {:end_element, _} -> true
-               {:end_element, _, _} -> true
+               {:end_element, _, _, _, _} -> true
                _ -> false
              end) == 2
     end
@@ -337,10 +347,10 @@ defmodule FnXML.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      # New format: {:comment, content, loc}
-      comment = Enum.find(tokens, &match?({:comment, _, _}, &1))
+      # 5-tuple format: {:comment, content, line, ls, pos}
+      comment = Enum.find(tokens, &match?({:comment, _, _, _, _}, &1))
       assert comment != nil
-      {:comment, content, _loc} = comment
+      {:comment, content, _, _, _} = comment
       # Comment content should NOT have entities resolved
       assert content =~ "&amp;"
     end
@@ -351,8 +361,8 @@ defmodule FnXML.EntitiesTest do
         |> Entities.resolve()
         |> Enum.to_list()
 
-      # New format: {:prolog, "xml", attrs, loc}
-      assert Enum.any?(tokens, &match?({:prolog, _, _, _}, &1))
+      # 6-tuple format: {:prolog, "xml", attrs, line, ls, pos}
+      assert Enum.any?(tokens, &match?({:prolog, _, _, _, _, _}, &1))
     end
   end
 

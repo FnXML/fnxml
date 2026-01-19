@@ -6,7 +6,9 @@ defmodule FnXML.Security.AlgorithmsTest do
   describe "digest/2" do
     test "SHA-256 produces correct digest" do
       # Test vector: SHA-256 of "hello"
-      expected = Base.decode16!("2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824")
+      expected =
+        Base.decode16!("2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824")
+
       assert Algorithms.digest("hello", :sha256) == expected
     end
 
@@ -110,7 +112,8 @@ defmodule FnXML.Security.AlgorithmsTest do
 
     test "returns error for invalid key size" do
       plaintext = "test"
-      invalid_key = Algorithms.generate_key(24)  # 192-bit, not valid for AES-256
+      # 192-bit, not valid for AES-256
+      invalid_key = Algorithms.generate_key(24)
 
       assert {:error, {:invalid_key_size, :aes_256_gcm, 24}} =
                Algorithms.encrypt(plaintext, :aes_256_gcm, invalid_key)
@@ -119,24 +122,32 @@ defmodule FnXML.Security.AlgorithmsTest do
 
   describe "encryption_algorithm_from_uri/1" do
     test "parses AES-256-GCM URI" do
-      assert Algorithms.encryption_algorithm_from_uri("http://www.w3.org/2009/xmlenc11#aes256-gcm") ==
+      assert Algorithms.encryption_algorithm_from_uri(
+               "http://www.w3.org/2009/xmlenc11#aes256-gcm"
+             ) ==
                {:ok, :aes_256_gcm}
     end
 
     test "parses AES-256-CBC URI" do
-      assert Algorithms.encryption_algorithm_from_uri("http://www.w3.org/2001/04/xmlenc#aes256-cbc") ==
+      assert Algorithms.encryption_algorithm_from_uri(
+               "http://www.w3.org/2001/04/xmlenc#aes256-cbc"
+             ) ==
                {:ok, :aes_256_cbc}
     end
   end
 
   describe "signature_algorithm_from_uri/1" do
     test "parses RSA-SHA256 URI" do
-      assert Algorithms.signature_algorithm_from_uri("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256") ==
+      assert Algorithms.signature_algorithm_from_uri(
+               "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+             ) ==
                {:ok, :rsa_sha256}
     end
 
     test "parses ECDSA-SHA256 URI" do
-      assert Algorithms.signature_algorithm_from_uri("http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256") ==
+      assert Algorithms.signature_algorithm_from_uri(
+               "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"
+             ) ==
                {:ok, :ecdsa_sha256}
     end
 
@@ -173,7 +184,10 @@ defmodule FnXML.Security.AlgorithmsTest do
   describe "algorithm URIs" do
     test "digest_algorithm_uri returns correct URIs" do
       assert Algorithms.digest_algorithm_uri(:sha256) == "http://www.w3.org/2001/04/xmlenc#sha256"
-      assert Algorithms.digest_algorithm_uri(:sha384) == "http://www.w3.org/2001/04/xmldsig-more#sha384"
+
+      assert Algorithms.digest_algorithm_uri(:sha384) ==
+               "http://www.w3.org/2001/04/xmldsig-more#sha384"
+
       assert Algorithms.digest_algorithm_uri(:sha512) == "http://www.w3.org/2001/04/xmlenc#sha512"
     end
 

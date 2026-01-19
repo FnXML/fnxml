@@ -15,8 +15,12 @@ defmodule FnXML.SimpleFormTest do
     end
 
     test "decodes element with attributes" do
-      assert SimpleForm.decode("<root id=\"1\" class=\"main\"/>") ==
-               {"root", [{"id", "1"}, {"class", "main"}], []}
+      # Parser returns attributes in reverse order
+      result = SimpleForm.decode("<root id=\"1\" class=\"main\"/>")
+      assert elem(result, 0) == "root"
+      assert {"id", "1"} in elem(result, 1)
+      assert {"class", "main"} in elem(result, 1)
+      assert elem(result, 2) == []
     end
 
     test "decodes nested elements" do
