@@ -49,6 +49,10 @@ defmodule FnXML.DTD.Parser do
   @doc """
   Parse a complete DTD string into a Model.
 
+  ## Options
+
+  - `:edition` - XML 1.0 edition for name validation (4 or 5, default: 5)
+
   ## Examples
 
       iex> dtd = \"\"\"
@@ -62,34 +66,128 @@ defmodule FnXML.DTD.Parser do
       {:seq, ["to", "from", "body"]}
 
   """
-  @spec parse(String.t()) :: {:ok, Model.t()} | {:error, String.t()}
-  def parse(dtd_string) when is_binary(dtd_string) do
-    dtd_string
-    |> extract_declarations()
-    |> Enum.reduce_while({:ok, Model.new()}, fn decl, {:ok, model} ->
-      case parse_declaration(decl) do
-        {:ok, {:element, name, content_model}} ->
-          {:cont, {:ok, Model.add_element(model, name, content_model)}}
+  @spec parse(String.t(), keyword()) :: {:ok, Model.t()} | {:error, String.t()}
+  def parse(dtd_string, opts \\ [])
 
-        {:ok, {:entity, name, definition}} ->
-          {:cont, {:ok, Model.add_entity(model, name, definition)}}
+  def parse(dtd_string, opts) when is_binary(dtd_string) do
+    edition = Keyword.get(opts, :edition, 5)
+    external = Keyword.get(opts, :external, false)
 
-        {:ok, {:param_entity, name, value}} ->
-          {:cont, {:ok, Model.add_param_entity(model, name, value)}}
+    # First, expand parameter entity references in the DTD
+    # This handles cases like:
+    #   <!ENTITY % xx '&#37;zz;'>
+    #   <!ENTITY % zz '<!ENTITY tricky "error-prone">'>
+    #   %xx;
+    # which expands to define the "tricky" entity
+    # Note: In internal subset (external: false), PE references can only appear
+    # between declarations, not within them.
+    case FnXML.ParameterEntities.process(dtd_string, external: external) do
+      {:ok, expanded} ->
+        parse_expanded(expanded, edition, external)
 
-        {:ok, {:attlist, element_name, attr_defs}} ->
-          {:cont, {:ok, Model.add_attributes(model, element_name, attr_defs)}}
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
-        {:ok, {:notation, name, system_id, public_id}} ->
-          {:cont, {:ok, Model.add_notation(model, name, system_id, public_id)}}
+  defp parse_expanded(dtd_string, edition, external) do
+    result =
+      dtd_string
+      |> extract_declarations(external: external)
+      |> Enum.reduce_while({:ok, Model.new()}, fn
+        # Handle error from extract_declarations (e.g., conditional sections)
+        {:error, msg}, _acc ->
+          {:halt, {:error, msg}}
 
-        {:ok, :skip} ->
-          {:cont, {:ok, model}}
+        decl, {:ok, model} ->
+          # Check for PE references inside declarations in internal subset
+          # Per XML spec: "In the internal DTD subset, parameter-entity references
+          # MUST NOT occur within markup declarations"
+          if not external and contains_pe_reference_in_decl?(decl) do
+            {:halt, {:error, "PE reference within markup declaration in internal subset"}}
+          else
+            # Check if this is a redeclaration of an existing entity
+            # Per XML spec, only the first declaration is used (redeclarations are ignored)
+            case check_redeclaration(decl, model) do
+              :skip_redeclaration ->
+                {:cont, {:ok, model}}
 
-        {:error, _} = err ->
-          {:halt, err}
-      end
-    end)
+              :continue ->
+                case parse_declaration(decl, edition: edition, external: external) do
+                  {:ok, {:element, name, content_model}} ->
+                    {:cont, {:ok, Model.add_element(model, name, content_model)}}
+
+                  {:ok, {:entity, name, definition}} ->
+                    {:cont, {:ok, Model.add_entity(model, name, definition)}}
+
+                  {:ok, {:param_entity, name, value}} ->
+                    {:cont, {:ok, Model.add_param_entity(model, name, value)}}
+
+                  {:ok, {:attlist, element_name, attr_defs}} ->
+                    {:cont, {:ok, Model.add_attributes(model, element_name, attr_defs)}}
+
+                  {:ok, {:notation, name, system_id, public_id}} ->
+                    {:cont, {:ok, Model.add_notation(model, name, system_id, public_id)}}
+
+                  {:ok, :skip} ->
+                    {:cont, {:ok, model}}
+
+                  {:error, _} = err ->
+                    {:halt, err}
+                end
+            end
+          end
+      end)
+
+    # Note: Notation reference validation is a Validity Constraint (VC), not a
+    # Well-Formedness Constraint (WFC), so we don't validate it here. A non-validating
+    # parser should accept documents with undefined notation references.
+    result
+  end
+
+  # Check if a declaration is a redeclaration of an existing entity
+  # Per XML spec, only the first entity/parameter entity declaration is binding
+  defp check_redeclaration(decl, model) do
+    trimmed = String.trim(decl)
+
+    cond do
+      # General entity redeclaration: <!ENTITY name ...>
+      match = Regex.run(~r/^<!ENTITY\s+([^%\s]\S*)\s/, trimmed) ->
+        [_, name] = match
+
+        if Map.has_key?(model.entities, name) do
+          :skip_redeclaration
+        else
+          :continue
+        end
+
+      # Parameter entity redeclaration: <!ENTITY % name ...>
+      match = Regex.run(~r/^<!ENTITY\s+%\s+(\S+)\s/, trimmed) ->
+        [_, name] = match
+
+        if Map.has_key?(model.param_entities, name) do
+          :skip_redeclaration
+        else
+          :continue
+        end
+
+      true ->
+        :continue
+    end
+  end
+
+  # Check if a declaration contains a PE reference (%name;) in the internal subset
+  # PE references may only appear BETWEEN declarations in the internal subset,
+  # not within markup declarations.
+  # Note: <!ENTITY % name ...> is NOT a PE reference, it's a PE declaration syntax
+  defp contains_pe_reference_in_decl?(decl) do
+    # First, remove the PE declaration syntax pattern to avoid false positives
+    # <!ENTITY % name "value"> - the "% name" is syntax, not a reference
+    cleaned = Regex.replace(~r/<!ENTITY\s+%\s+\S+/, decl, "<!ENTITY __PE_DECL__")
+
+    # Now check for any remaining %name; patterns (PE references)
+    # A PE reference is %Name; where Name is a valid XML name
+    Regex.match?(~r/%[A-Za-z_][A-Za-z0-9._-]*;/, cleaned)
   end
 
   @doc """
@@ -101,9 +199,15 @@ defmodule FnXML.DTD.Parser do
   - `{:param_entity, name, value}`
   - `{:attlist, element_name, [attr_def]}`
   - `{:notation, name, system_id, public_id}`
+
+  ## Options
+
+  - `:edition` - XML 1.0 edition for name validation (4 or 5, default: 5)
   """
-  @spec parse_declaration(String.t()) :: {:ok, term()} | {:error, String.t()}
-  def parse_declaration(decl) when is_binary(decl) do
+  @spec parse_declaration(String.t(), keyword()) :: {:ok, term()} | {:error, String.t()}
+  def parse_declaration(decl, opts \\ [])
+
+  def parse_declaration(decl, opts) when is_binary(decl) do
     trimmed = String.trim(decl)
 
     cond do
@@ -111,7 +215,7 @@ defmodule FnXML.DTD.Parser do
         parse_element(trimmed)
 
       String.starts_with?(trimmed, "<!ENTITY") ->
-        parse_entity(trimmed)
+        parse_entity(trimmed, opts)
 
       String.starts_with?(trimmed, "<!ATTLIST") ->
         parse_attlist(trimmed)
@@ -121,6 +225,10 @@ defmodule FnXML.DTD.Parser do
 
       trimmed == "" or String.starts_with?(trimmed, "<!--") ->
         {:ok, :skip}
+
+      # XML declaration not allowed in DTD internal subset
+      String.starts_with?(trimmed, "<?xml") ->
+        {:error, "XML declaration not allowed in internal subset"}
 
       true ->
         {:error, "Unknown declaration: #{String.slice(trimmed, 0, 50)}..."}
@@ -154,9 +262,22 @@ defmodule FnXML.DTD.Parser do
     # Remove <!ELEMENT and trailing >
     case Regex.run(~r/^<!ELEMENT\s+(\S+)\s+(.+)>$/s, String.trim(decl)) do
       [_, name, content_spec] ->
-        case parse_content_model(String.trim(content_spec)) do
-          {:ok, model} -> {:ok, {:element, name, model}}
-          {:error, _} = err -> err
+        # Check for SGML-isms not allowed in XML
+        cond do
+          # SGML multiple element type: <!ELEMENT (a|b) ...>
+          String.starts_with?(name, "(") ->
+            {:error, "SGML shorthand for multiple element types not allowed in XML: #{name}"}
+
+          # SGML exception spec: <!ELEMENT name (...) -exception> or +exception
+          # Pattern matches ) followed by - or + and a name (with optional parens)
+          Regex.match?(~r/\)\s*[-+]\s*\(?\s*\w/, content_spec) ->
+            {:error, "SGML inclusion/exclusion exception not allowed in XML"}
+
+          true ->
+            case parse_content_model(String.trim(content_spec)) do
+              {:ok, model} -> {:ok, {:element, name, model}}
+              {:error, _} = err -> err
+            end
         end
 
       nil ->
@@ -195,24 +316,121 @@ defmodule FnXML.DTD.Parser do
   def parse_content_model(spec) do
     spec = String.trim(spec)
 
-    cond do
-      spec == "(#PCDATA)" ->
-        {:ok, :pcdata}
+    # First, validate the content model syntax
+    with :ok <- validate_content_model_syntax(spec) do
+      cond do
+        spec == "(#PCDATA)" ->
+          {:ok, :pcdata}
 
-      String.starts_with?(spec, "(#PCDATA") and String.ends_with?(spec, ")*") ->
-        # Mixed content: (#PCDATA | a | b)*
-        parse_mixed_content(spec)
+        spec == "(#PCDATA)*" ->
+          # Valid per XML spec 3.2.2 - mixed content with zero elements
+          {:ok, :pcdata}
 
-      String.starts_with?(spec, "(") ->
-        parse_group(spec)
+        String.starts_with?(spec, "(#PCDATA") and String.ends_with?(spec, ")*") ->
+          # Mixed content: (#PCDATA | a | b)*
+          parse_mixed_content(spec)
 
-      true ->
-        {:error, "Invalid content model: #{spec}"}
+        String.starts_with?(spec, "(") ->
+          parse_group(spec)
+
+        true ->
+          {:error, "Invalid content model: #{spec}"}
+      end
     end
   end
 
+  # Validate content model syntax before parsing
+  defp validate_content_model_syntax(spec) do
+    cond do
+      # SGML keywords not allowed in XML
+      spec == "CDATA" or spec == "RCDATA" ->
+        {:error, "Invalid content model '#{spec}' - use (#PCDATA) instead"}
+
+      # SGML minimization markers not allowed
+      String.contains?(spec, "- -") or Regex.match?(~r/^-\s+-/, spec) ->
+        {:error, "SGML minimization markers not allowed in XML"}
+
+      # SGML inclusion/exclusion not allowed: +(foo) or -(foo)
+      Regex.match?(~r/\)\s*[+-]\s*\(/, spec) ->
+        {:error, "SGML inclusion/exclusion not allowed in XML"}
+
+      # Empty content model
+      spec == "()" or Regex.match?(~r/^\(\s*\)/, spec) ->
+        {:error, "Empty content model not allowed"}
+
+      # #PCDATA with invalid modifiers
+      spec == "(#PCDATA)+" ->
+        {:error, "Invalid modifier '+' on #PCDATA - use (#PCDATA) or (#PCDATA|...)*"}
+
+      spec == "(#PCDATA)?" ->
+        {:error, "Invalid modifier '?' on #PCDATA - use (#PCDATA) or (#PCDATA|...)*"}
+
+      # Note: (#PCDATA)* IS valid per XML spec 3.2.2 - it's mixed content with zero elements
+
+      # #PCDATA nested in extra parens
+      Regex.match?(~r/\(\s*\(\s*#PCDATA/, spec) ->
+        {:error, "#PCDATA cannot be nested in parentheses"}
+
+      # #PCDATA not first in mixed content
+      Regex.match?(~r/\([^#]*\|\s*#PCDATA/, spec) ->
+        {:error, "#PCDATA must be first in mixed content declaration"}
+
+      # Space between element/group and modifier
+      Regex.match?(~r/[\w)]\s+[?*+]/, spec) ->
+        {:error, "No space allowed before occurrence modifier"}
+
+      # Multiple modifiers on same element (e.g., doc*? or foo+*)
+      Regex.match?(~r/[?*+][?*+]/, spec) ->
+        {:error, "Multiple occurrence modifiers not allowed"}
+
+      # & used as connector (SGML feature, not allowed in XML)
+      Regex.match?(~r/\w\s*&\s*\w/, spec) ->
+        {:error, "Invalid connector '&' - use '|' for choice or ',' for sequence"}
+
+      # Unbalanced parentheses
+      not balanced_parens?(spec) ->
+        {:error, "Unbalanced parentheses in content model"}
+
+      # Mixed content with modifiers on elements: (#PCDATA | foo*)*
+      String.starts_with?(spec, "(#PCDATA") and
+          Regex.match?(~r/\|\s*\w+[?*+]/, spec) ->
+        {:error, "Occurrence modifiers not allowed on elements in mixed content"}
+
+      # Mixed content with nested groups: (#PCDATA | (foo))*
+      # Alternatives must be simple names, not grouped content
+      String.starts_with?(spec, "(#PCDATA") and
+          Regex.match?(~r/\|\s*\(/, spec) ->
+        {:error, "Nested groups not allowed in mixed content - use simple element names"}
+
+      # Mixed content with alternatives MUST end with )*
+      # (#PCDATA | a) is invalid, must be (#PCDATA | a)*
+      # Handle optional spaces: ( #PCDATA | a )
+      Regex.match?(~r/^\(\s*#PCDATA/, spec) and
+        String.contains?(spec, "|") and
+          not Regex.match?(~r/\)\s*\*\s*$/, spec) ->
+        {:error, "Mixed content with alternatives must end with ')*'"}
+
+      true ->
+        :ok
+    end
+  end
+
+  # Check if parentheses are balanced
+  defp balanced_parens?(str), do: count_parens(str, 0)
+
+  defp count_parens("", 0), do: true
+  defp count_parens("", _), do: false
+  defp count_parens(<<"(", rest::binary>>, n), do: count_parens(rest, n + 1)
+  defp count_parens(<<")", _::binary>>, 0), do: false
+  defp count_parens(<<")", rest::binary>>, n), do: count_parens(rest, n - 1)
+  defp count_parens(<<_, rest::binary>>, n), do: count_parens(rest, n)
+
   @doc """
   Parse an ENTITY declaration.
+
+  ## Options
+
+  - `:edition` - XML 1.0 edition for name validation (4 or 5, default: 5)
 
   ## Examples
 
@@ -226,40 +444,99 @@ defmodule FnXML.DTD.Parser do
       {:ok, {:param_entity, "colors", "red | green | blue"}}
 
   """
-  @spec parse_entity(String.t()) :: {:ok, term()} | {:error, String.t()}
-  def parse_entity(decl) do
+  @spec parse_entity(String.t(), keyword()) :: {:ok, term()} | {:error, String.t()}
+  def parse_entity(decl, opts \\ [])
+
+  def parse_entity(decl, opts) do
     trimmed = String.trim(decl)
+    edition = Keyword.get(opts, :edition, 5)
+    external = Keyword.get(opts, :external, false)
 
     cond do
-      # Parameter entity: <!ENTITY % name "value">
-      match = Regex.run(~r/^<!ENTITY\s+%\s+(\S+)\s+["'](.*)["']>$/s, trimmed) ->
+      # External SYSTEM parameter entity: <!ENTITY % name SYSTEM "uri">
+      match = Regex.run(~r/^<!ENTITY\s+%\s+(\S+)\s+SYSTEM\s+["']([^"']*)["']\s*>$/s, trimmed) ->
+        [_, name, system_id] = match
+
+        with :ok <- validate_name(name, "parameter entity", edition) do
+          {:ok, {:param_entity, name, {:external, system_id, nil}}}
+        end
+
+      # External PUBLIC parameter entity: <!ENTITY % name PUBLIC "pubid" "uri">
+      match =
+          Regex.run(
+            ~r/^<!ENTITY\s+%\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']\s+["']([^"']*)["']\s*>$/s,
+            trimmed
+          ) ->
+        [_, name, public_id, system_id] = match
+
+        with :ok <- validate_name(name, "parameter entity", edition),
+             :ok <- validate_public_id(public_id) do
+          {:ok, {:param_entity, name, {:external, system_id, public_id}}}
+        end
+
+      # Internal parameter entity: <!ENTITY % name "value">
+      match = Regex.run(~r/^<!ENTITY\s+%\s+(\S+)\s+["'](.*)["']\s*>$/s, trimmed) ->
         [_, name, value] = match
-        {:ok, {:param_entity, name, value}}
+
+        with :ok <- validate_name(name, "parameter entity", edition),
+             :ok <- validate_param_entity_value(value) do
+          {:ok, {:param_entity, name, value}}
+        end
 
       # Internal entity: <!ENTITY name "value">
-      match = Regex.run(~r/^<!ENTITY\s+(\S+)\s+["'](.*)["']>$/s, trimmed) ->
+      match = Regex.run(~r/^<!ENTITY\s+(\S+)\s+["'](.*)["']\s*>$/s, trimmed) ->
         [_, name, value] = match
-        {:ok, {:entity, name, {:internal, value}}}
+
+        with :ok <- validate_name(name, "entity", edition),
+             :ok <- validate_entity_value(value, external: external) do
+          {:ok, {:entity, name, {:internal, value}}}
+        end
 
       # External SYSTEM entity: <!ENTITY name SYSTEM "uri">
-      match = Regex.run(~r/^<!ENTITY\s+(\S+)\s+SYSTEM\s+["']([^"']+)["']>$/s, trimmed) ->
+      match = Regex.run(~r/^<!ENTITY\s+(\S+)\s+SYSTEM\s+["']([^"']*)["']\s*>$/s, trimmed) ->
         [_, name, system_id] = match
-        {:ok, {:entity, name, {:external, system_id, nil}}}
+
+        with :ok <- validate_name(name, "entity", edition) do
+          {:ok, {:entity, name, {:external, system_id, nil}}}
+        end
 
       # External PUBLIC entity: <!ENTITY name PUBLIC "pubid" "uri">
       match =
           Regex.run(
-            ~r/^<!ENTITY\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']\s+["']([^"']+)["']>$/s,
+            ~r/^<!ENTITY\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']\s+["']([^"']*)["']\s*>$/s,
             trimmed
           ) ->
         [_, name, public_id, system_id] = match
-        {:ok, {:entity, name, {:external, system_id, public_id}}}
 
-      # External entity with NDATA: <!ENTITY name SYSTEM "uri" NDATA notation>
+        with :ok <- validate_name(name, "entity", edition),
+             :ok <- validate_public_id(public_id) do
+          {:ok, {:entity, name, {:external, system_id, public_id}}}
+        end
+
+      # External SYSTEM entity with NDATA: <!ENTITY name SYSTEM "uri" NDATA notation>
       match =
-          Regex.run(~r/^<!ENTITY\s+(\S+)\s+SYSTEM\s+["']([^"']+)["']\s+NDATA\s+(\S+)>$/s, trimmed) ->
+          Regex.run(
+            ~r/^<!ENTITY\s+(\S+)\s+SYSTEM\s+["']([^"']*)["']\s+NDATA\s+(\S+)\s*>$/s,
+            trimmed
+          ) ->
         [_, name, system_id, notation] = match
-        {:ok, {:entity, name, {:external_unparsed, system_id, nil, notation}}}
+
+        with :ok <- validate_name(name, "entity", edition) do
+          {:ok, {:entity, name, {:external_unparsed, system_id, nil, notation}}}
+        end
+
+      # External PUBLIC entity with NDATA: <!ENTITY name PUBLIC "pubid" "uri" NDATA notation>
+      match =
+          Regex.run(
+            ~r/^<!ENTITY\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']\s+["']([^"']*)["']\s+NDATA\s+(\S+)\s*>$/s,
+            trimmed
+          ) ->
+        [_, name, public_id, system_id, notation] = match
+
+        with :ok <- validate_name(name, "entity", edition),
+             :ok <- validate_public_id(public_id) do
+          {:ok, {:entity, name, {:external_unparsed, system_id, public_id, notation}}}
+        end
 
       true ->
         {:error, "Invalid ENTITY declaration: #{decl}"}
@@ -282,15 +559,45 @@ defmodule FnXML.DTD.Parser do
           {:ok, {:attlist, String.t(), [Model.attr_def()]}} | {:error, String.t()}
   def parse_attlist(decl) do
     # Remove <!ATTLIST and trailing >
-    case Regex.run(~r/^<!ATTLIST\s+(\S+)\s+(.+)>$/s, String.trim(decl)) do
-      [_, element_name, attr_specs] ->
-        case parse_attr_defs(String.trim(attr_specs)) do
-          {:ok, attrs} -> {:ok, {:attlist, element_name, attrs}}
-          {:error, _} = err -> err
+    trimmed = String.trim(decl)
+
+    cond do
+      # Empty ATTLIST: <!ATTLIST element>
+      match = Regex.run(~r/^<!ATTLIST\s+(\S+)\s*>$/s, trimmed) ->
+        [_, element_name] = match
+
+        with :ok <- validate_attlist_element_name(element_name) do
+          {:ok, {:attlist, element_name, []}}
         end
 
-      nil ->
+      # ATTLIST with attributes
+      match = Regex.run(~r/^<!ATTLIST\s+(\S+)\s+(.+)>$/s, trimmed) ->
+        [_, element_name, attr_specs] = match
+
+        with :ok <- validate_attlist_element_name(element_name),
+             {:ok, attrs} <- parse_attr_defs(String.trim(attr_specs)) do
+          {:ok, {:attlist, element_name, attrs}}
+        end
+
+      true ->
         {:error, "Invalid ATTLIST declaration: #{decl}"}
+    end
+  end
+
+  # Validate ATTLIST element name for SGML-isms not allowed in XML
+  defp validate_attlist_element_name(element_name) do
+    cond do
+      # SGML multiple element ATTLIST: <!ATTLIST (a|b) ...>
+      String.starts_with?(element_name, "(") ->
+        {:error,
+         "SGML shorthand for multiple element ATTLIST not allowed in XML: #{element_name}"}
+
+      # SGML global ATTLIST: <!ATTLIST #ALL ...>
+      element_name == "#ALL" ->
+        {:error, "SGML global ATTLIST (#ALL) not allowed in XML"}
+
+      true ->
+        :ok
     end
   end
 
@@ -305,23 +612,29 @@ defmodule FnXML.DTD.Parser do
 
     cond do
       # SYSTEM notation
-      match = Regex.run(~r/^<!NOTATION\s+(\S+)\s+SYSTEM\s+["']([^"']+)["']>$/s, trimmed) ->
+      match = Regex.run(~r/^<!NOTATION\s+(\S+)\s+SYSTEM\s+["']([^"']*)["']\s*>$/s, trimmed) ->
         [_, name, system_id] = match
         {:ok, {:notation, name, system_id, nil}}
 
       # PUBLIC notation with SYSTEM
       match =
           Regex.run(
-            ~r/^<!NOTATION\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']\s+["']([^"']+)["']>$/s,
+            ~r/^<!NOTATION\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']\s+["']([^"']*)["']\s*>$/s,
             trimmed
           ) ->
         [_, name, public_id, system_id] = match
-        {:ok, {:notation, name, system_id, public_id}}
+
+        with :ok <- validate_public_id(public_id) do
+          {:ok, {:notation, name, system_id, public_id}}
+        end
 
       # PUBLIC notation without SYSTEM
-      match = Regex.run(~r/^<!NOTATION\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']>$/s, trimmed) ->
+      match = Regex.run(~r/^<!NOTATION\s+(\S+)\s+PUBLIC\s+["']([^"']+)["']\s*>$/s, trimmed) ->
         [_, name, public_id] = match
-        {:ok, {:notation, name, nil, public_id}}
+
+        with :ok <- validate_public_id(public_id) do
+          {:ok, {:notation, name, nil, public_id}}
+        end
 
       true ->
         {:error, "Invalid NOTATION declaration: #{decl}"}
@@ -333,11 +646,224 @@ defmodule FnXML.DTD.Parser do
   # ============================================================================
 
   # Extract individual declarations from a DTD string
-  defp extract_declarations(dtd_string) do
-    # Match declarations like <!ELEMENT ...>, <!ENTITY ...>, etc.
-    Regex.scan(~r/<![A-Z]+[^>]*>/, dtd_string)
-    |> List.flatten()
+  # Handles quoted strings containing > characters
+  defp extract_declarations(dtd_string, opts) do
+    external = Keyword.get(opts, :external, false)
+    extract_declarations_impl(dtd_string, [], external)
   end
+
+  defp extract_declarations_impl("", acc, _external), do: Enum.reverse(acc)
+
+  defp extract_declarations_impl(<<"<![", _rest::binary>>, acc, _external) do
+    # Conditional section (INCLUDE/IGNORE) - not allowed in internal subset
+    # For external DTDs, these should already be processed by ExternalResolver
+    [{:error, "Conditional sections (INCLUDE/IGNORE) not allowed in internal DTD subset"} | acc]
+    |> Enum.reverse()
+  end
+
+  defp extract_declarations_impl(<<"<?xml", _rest::binary>>, acc, false) do
+    # XML declaration not allowed in internal subset (can only appear at document start)
+    [{:error, "XML declaration not allowed in internal DTD subset"} | acc]
+    |> Enum.reverse()
+  end
+
+  defp extract_declarations_impl(<<"<?xml", rest::binary>>, acc, true) do
+    # Text declaration is allowed in external DTD, but must validate content
+    # TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'
+    # Text declarations MUST appear at the beginning of the external entity
+    # Text declarations MUST have encoding declaration
+    # Text declarations MUST NOT include standalone declaration (only documents can have it)
+    case extract_text_decl_content(rest) do
+      {:ok, content, remaining} ->
+        content_lower = String.downcase(content)
+
+        cond do
+          # Text declaration must be at the beginning (acc should be empty)
+          acc != [] ->
+            [{:error, "Text declaration must appear at the beginning of external entity"} | acc]
+            |> Enum.reverse()
+
+          String.contains?(content_lower, "standalone") ->
+            [{:error, "Text declaration in external entity must not include 'standalone'"} | acc]
+            |> Enum.reverse()
+
+          not String.contains?(content_lower, "encoding") ->
+            [{:error, "Text declaration in external entity must include 'encoding'"} | acc]
+            |> Enum.reverse()
+
+          true ->
+            extract_declarations_impl(remaining, acc, true)
+        end
+
+      :error ->
+        [{:error, "Unterminated text declaration in external DTD"} | acc]
+        |> Enum.reverse()
+    end
+  end
+
+  defp extract_declarations_impl(<<"<?", rest::binary>>, acc, external) do
+    # Validate PI target in DTD internal subset
+    case validate_pi_in_dtd(rest) do
+      {:ok, remaining} ->
+        # PI is valid, continue processing
+        extract_declarations_impl(remaining, acc, external)
+
+      {:error, reason} ->
+        # Invalid PI target
+        [{:error, reason} | acc] |> Enum.reverse()
+    end
+  end
+
+  defp extract_declarations_impl(<<"<!--", rest::binary>>, acc, external) do
+    # Comment - skip until --> without processing quotes
+    # Comments can contain any characters including ' and " without issues
+    case skip_to_comment_end(rest) do
+      {:ok, remaining} ->
+        extract_declarations_impl(remaining, acc, external)
+
+      :not_found ->
+        # Unterminated comment - return what we have
+        Enum.reverse(acc)
+    end
+  end
+
+  defp extract_declarations_impl(<<"<!", rest::binary>>, acc, external) do
+    # Found start of a declaration, extract it respecting quotes
+    case extract_single_declaration(rest, "<!") do
+      {:ok, decl, remaining} ->
+        extract_declarations_impl(remaining, [decl | acc], external)
+
+      :not_found ->
+        # Skip this <! and continue
+        extract_declarations_impl(rest, acc, external)
+    end
+  end
+
+  # Element-like tag without ! (e.g., <NOTATION instead of <!NOTATION)
+  defp extract_declarations_impl(<<"<", c, _rest::binary>>, acc, _external)
+       when c in ?a..?z or c in ?A..?Z do
+    [{:error, "Invalid declaration in DTD - missing '!' after '<'"} | acc]
+    |> Enum.reverse()
+  end
+
+  # PE reference: must be %Name; with no whitespace
+  defp extract_declarations_impl(<<"%", rest::binary>>, acc, external) do
+    case validate_pe_reference_syntax(rest) do
+      {:ok, remaining} ->
+        # Valid PE reference syntax (we don't expand, just skip)
+        extract_declarations_impl(remaining, acc, external)
+
+      {:error, reason} ->
+        [{:error, reason} | acc] |> Enum.reverse()
+    end
+  end
+
+  # General entity reference in DTD - not allowed
+  # General entity references can only appear in element content and attribute values
+  defp extract_declarations_impl(<<"&", rest::binary>>, acc, _external) do
+    # Check if this looks like an entity reference (& followed by name char)
+    case rest do
+      <<c, _::binary>> when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?# ->
+        [{:error, "General entity reference not allowed in DTD declarations"} | acc]
+        |> Enum.reverse()
+
+      _ ->
+        # Just a bare &, which will be caught by other validation
+        [{:error, "Invalid '&' in DTD declarations"} | acc]
+        |> Enum.reverse()
+    end
+  end
+
+  defp extract_declarations_impl(<<_, rest::binary>>, acc, external) do
+    extract_declarations_impl(rest, acc, external)
+  end
+
+  # Validate PE reference syntax: %Name;
+  # Name must start immediately after %, semicolon must follow name immediately
+  defp validate_pe_reference_syntax(<<c, _rest::binary>>) when c in [?\s, ?\t, ?\r, ?\n] do
+    {:error, "Invalid PE reference: space not allowed after '%'"}
+  end
+
+  defp validate_pe_reference_syntax(<<c, rest::binary>>)
+       when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?: do
+    # Valid name start char, collect the rest of the name
+    collect_pe_name(rest, <<c>>)
+  end
+
+  defp validate_pe_reference_syntax(_) do
+    {:error, "Invalid PE reference: expected name after '%'"}
+  end
+
+  defp collect_pe_name(<<";", rest::binary>>, _name) do
+    {:ok, rest}
+  end
+
+  defp collect_pe_name(<<c, _rest::binary>>, name) when c in [?\s, ?\t, ?\r, ?\n] do
+    {:error, "Invalid PE reference '%#{name}': whitespace not allowed before ';'"}
+  end
+
+  defp collect_pe_name(<<c, rest::binary>>, name)
+       when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?: or c == ?- or
+              c == ?. do
+    collect_pe_name(rest, <<name::binary, c>>)
+  end
+
+  defp collect_pe_name(<<>>, name) do
+    {:error, "Unterminated PE reference '%#{name}'"}
+  end
+
+  defp collect_pe_name(_, name) do
+    {:error, "Invalid character in PE reference '%#{name}'"}
+  end
+
+  # Extract a single declaration, respecting quoted strings
+  defp extract_single_declaration(<<">", rest::binary>>, acc) do
+    {:ok, acc <> ">", rest}
+  end
+
+  defp extract_single_declaration(<<"\"", rest::binary>>, acc) do
+    # Start of double-quoted string, find end quote
+    case skip_quoted_string(rest, "\"", "\"") do
+      {:ok, quoted, remaining} ->
+        extract_single_declaration(remaining, acc <> quoted)
+
+      :not_found ->
+        :not_found
+    end
+  end
+
+  defp extract_single_declaration(<<"'", rest::binary>>, acc) do
+    # Start of single-quoted string, find end quote
+    case skip_quoted_string(rest, "'", "'") do
+      {:ok, quoted, remaining} ->
+        extract_single_declaration(remaining, acc <> quoted)
+
+      :not_found ->
+        :not_found
+    end
+  end
+
+  defp extract_single_declaration(<<c, rest::binary>>, acc) do
+    extract_single_declaration(rest, acc <> <<c>>)
+  end
+
+  defp extract_single_declaration("", _acc), do: :not_found
+
+  # Skip over a quoted string until closing quote
+  defp skip_quoted_string(<<quote, rest::binary>>, <<quote>>, acc) do
+    {:ok, acc <> <<quote>>, rest}
+  end
+
+  defp skip_quoted_string(<<c, rest::binary>>, quote, acc) do
+    skip_quoted_string(rest, quote, acc <> <<c>>)
+  end
+
+  defp skip_quoted_string("", _quote, _acc), do: :not_found
+
+  # Skip to end of comment (-->)
+  defp skip_to_comment_end(<<"-->", rest::binary>>), do: {:ok, rest}
+  defp skip_to_comment_end(<<_, rest::binary>>), do: skip_to_comment_end(rest)
+  defp skip_to_comment_end(<<>>), do: :not_found
 
   # Parse mixed content: (#PCDATA | a | b | c)*
   defp parse_mixed_content(spec) do
@@ -365,30 +891,68 @@ defmodule FnXML.DTD.Parser do
   # Parse a parenthesized group: (a, b, c) or (a | b | c) with optional occurrence
   defp parse_group(spec) do
     # Check for occurrence indicator at end
-    {inner, occurrence} = extract_occurrence(spec)
+    case extract_occurrence(spec) do
+      {:error, _} = err ->
+        err
 
-    # Remove outer parens
-    inner = inner |> String.trim_leading("(") |> String.trim_trailing(")")
+      {inner, occurrence} ->
+        parse_group_content(inner, occurrence)
+    end
+  end
+
+  defp parse_group_content(inner, occurrence) do
+    # Remove exactly one pair of outer parens (not all leading/trailing parens)
+    inner = remove_outer_parens(inner)
+
+    # Find top-level separators (not nested in parens)
+    has_top_comma = has_top_level_separator?(inner, ?,)
+    has_top_bar = has_top_level_separator?(inner, ?|)
 
     # Determine if sequence or choice
     result =
       cond do
-        String.contains?(inner, ",") and not String.contains?(inner, "|") ->
-          items = parse_group_items(inner, ",")
-          {:ok, {:seq, items}}
+        has_top_comma and not has_top_bar ->
+          case parse_group_items(inner, ",") do
+            {:error, {:invalid_name, name}} ->
+              {:error, "Invalid element name in content model: '#{name}' - missing separator?"}
 
-        String.contains?(inner, "|") and not String.contains?(inner, ",") ->
-          items = parse_group_items(inner, "|")
-          {:ok, {:choice, items}}
+            {:error, reason} ->
+              {:error, "Invalid content model: #{inspect(reason)}"}
 
-        not String.contains?(inner, ",") and not String.contains?(inner, "|") ->
+            items ->
+              {:ok, {:seq, items}}
+          end
+
+        has_top_bar and not has_top_comma ->
+          case parse_group_items(inner, "|") do
+            {:error, {:invalid_name, name}} ->
+              {:error, "Invalid element name in content model: '#{name}' - missing separator?"}
+
+            {:error, reason} ->
+              {:error, "Invalid content model: #{inspect(reason)}"}
+
+            items ->
+              {:ok, {:choice, items}}
+          end
+
+        not has_top_comma and not has_top_bar ->
           # Single item
           item = String.trim(inner)
-          {:ok, item}
+
+          case parse_item(item) do
+            {:error, {:invalid_name, name}} ->
+              {:error, "Invalid element name in content model: '#{name}'"}
+
+            {:error, reason} ->
+              {:error, "Invalid content model: #{inspect(reason)}"}
+
+            parsed_item ->
+              {:ok, parsed_item}
+          end
 
         true ->
-          # Mixed operators - need more sophisticated parsing
-          parse_complex_group(inner)
+          # Mixed operators at top level - error per XML spec
+          {:error, "Cannot mix ',' and '|' at the same level in content model"}
       end
 
     case result do
@@ -400,7 +964,38 @@ defmodule FnXML.DTD.Parser do
     end
   end
 
+  # Remove exactly one pair of outer parentheses
+  defp remove_outer_parens(<<"(", rest::binary>>) do
+    # Remove leading ( and trailing )
+    if String.ends_with?(rest, ")") do
+      String.slice(rest, 0..-2//1)
+    else
+      rest
+    end
+  end
+
+  defp remove_outer_parens(str), do: str
+
+  # Check if a separator exists at the top level (depth 0)
+  defp has_top_level_separator?(string, sep_char) do
+    check_top_level_separator(string, sep_char, 0)
+  end
+
+  defp check_top_level_separator(<<>>, _sep, _depth), do: false
+
+  defp check_top_level_separator(<<?(, rest::binary>>, sep, depth),
+    do: check_top_level_separator(rest, sep, depth + 1)
+
+  defp check_top_level_separator(<<?), rest::binary>>, sep, depth),
+    do: check_top_level_separator(rest, sep, max(depth - 1, 0))
+
+  defp check_top_level_separator(<<c, _rest::binary>>, sep, 0) when c == sep, do: true
+
+  defp check_top_level_separator(<<_, rest::binary>>, sep, depth),
+    do: check_top_level_separator(rest, sep, depth)
+
   # Extract occurrence indicator (?, *, +) from end of spec
+  # Returns {inner, occurrence} or {:error, reason}
   defp extract_occurrence(spec) do
     spec = String.trim(spec)
 
@@ -414,17 +1009,29 @@ defmodule FnXML.DTD.Parser do
       String.ends_with?(spec, ")+") ->
         {String.trim_trailing(spec, "+"), :one_or_more}
 
+      # Check for invalid occurrence indicator after )
+      Regex.match?(~r/\)[^)]+$/, spec) ->
+        {:error, "Invalid occurrence indicator in content model: #{spec}"}
+
       true ->
         {spec, nil}
     end
   end
 
   # Split group items, respecting nested parens
+  # Returns list of items or {:error, reason} if any item is invalid
   defp parse_group_items(inner, separator) do
-    inner
-    |> split_respecting_parens(separator)
-    |> Enum.map(&String.trim/1)
-    |> Enum.map(&parse_item/1)
+    items =
+      inner
+      |> split_respecting_parens(separator)
+      |> Enum.map(&String.trim/1)
+      |> Enum.map(&parse_item/1)
+
+    # Check if any item is an error
+    case Enum.find(items, &match?({:error, _}, &1)) do
+      {:error, _} = err -> err
+      nil -> items
+    end
   end
 
   # Parse a single item which may have occurrence indicator
@@ -432,25 +1039,72 @@ defmodule FnXML.DTD.Parser do
     item = String.trim(item)
 
     cond do
-      String.ends_with?(item, "?") ->
-        {:optional, String.trim_trailing(item, "?")}
+      # #PCDATA keyword in mixed content
+      item == "#PCDATA" ->
+        :pcdata
 
-      String.ends_with?(item, "*") ->
-        {:zero_or_more, String.trim_trailing(item, "*")}
-
-      String.ends_with?(item, "+") ->
-        {:one_or_more, String.trim_trailing(item, "+")}
-
+      # Check for nested groups FIRST (with or without occurrence indicator)
+      # e.g., "(a,b)", "(a|b)+", "(a,b)*", "(a|b)?"
       String.starts_with?(item, "(") ->
-        # Nested group
+        # Nested group - propagate any errors
         case parse_group(item) do
           {:ok, model} -> model
-          _ -> item
+          {:error, _} = err -> err
         end
 
+      # Simple element with occurrence indicator
+      String.ends_with?(item, "?") ->
+        name = String.trim_trailing(item, "?")
+        validate_content_element_name(name, {:optional, name})
+
+      String.ends_with?(item, "*") ->
+        name = String.trim_trailing(item, "*")
+        validate_content_element_name(name, {:zero_or_more, name})
+
+      String.ends_with?(item, "+") ->
+        name = String.trim_trailing(item, "+")
+        validate_content_element_name(name, {:one_or_more, name})
+
       true ->
-        item
+        validate_content_element_name(item, item)
     end
+  end
+
+  # Validate that an element name in content model is a valid XML name
+  defp validate_content_element_name(name, result) do
+    cond do
+      # Empty name
+      name == "" ->
+        {:error, :empty_name}
+
+      # Name contains whitespace (missing separator)
+      String.contains?(name, " ") or String.contains?(name, "\t") ->
+        {:error, {:invalid_name, name}}
+
+      # Name starts with digit or invalid char
+      not valid_name_start_char?(String.first(name)) ->
+        {:error, {:invalid_name, name}}
+
+      # Name contains invalid characters
+      not valid_name?(name) ->
+        {:error, {:invalid_name, name}}
+
+      true ->
+        result
+    end
+  end
+
+  defp valid_name_start_char?(nil), do: false
+
+  defp valid_name_start_char?(char) do
+    <<c::utf8>> = char
+    c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?:
+  end
+
+  # Check if all characters in the name are valid XML name characters
+  defp valid_name?(name) do
+    # XML name: starts with letter/underscore/colon, followed by letters/digits/hyphens/underscores/colons/periods
+    Regex.match?(~r/^[a-zA-Z_:][a-zA-Z0-9._:-]*$/, name)
   end
 
   # Split a string by separator, but respect nested parentheses
@@ -476,12 +1130,6 @@ defmodule FnXML.DTD.Parser do
 
   defp do_split(<<c, rest::binary>>, sep, depth, current, acc) do
     do_split(rest, sep, depth, current <> <<c>>, acc)
-  end
-
-  # Parse complex groups with mixed operators (needs recursive descent)
-  defp parse_complex_group(_inner) do
-    # For now, return error - full implementation in Phase 4
-    {:error, "Complex content models with mixed operators not yet supported"}
   end
 
   # Parse attribute definitions from the spec after element name
@@ -539,39 +1187,106 @@ defmodule FnXML.DTD.Parser do
 
   # Parse enumeration attribute: (a|b|c) default
   defp parse_enum_attr(spec) do
-    case Regex.run(~r/^\(([^)]+)\)\s+(.+)$/s, spec) do
-      [_, values, rest] ->
-        enum_values = values |> String.split("|") |> Enum.map(&String.trim/1)
+    # Check for empty enumeration () first
+    if String.starts_with?(spec, "()") do
+      {:error, "Empty enumeration not allowed"}
+    else
+      # Use a regex that captures what's immediately after )
+      case Regex.run(~r/^\(([^)]*)\)(.*)$/s, spec) do
+        [_, values, after_paren] ->
+          values_trimmed = String.trim(values)
 
-        case parse_attr_default(String.trim(rest)) do
-          {:ok, default, remaining} ->
-            {:ok, {:enum, enum_values}, default, remaining}
+          cond do
+            # Empty enumeration
+            values_trimmed == "" ->
+              {:error, "Empty enumeration not allowed"}
 
-          {:error, _} = err ->
-            err
-        end
+            # Check for invalid comma separator (should be | per XML spec)
+            String.contains?(values, ",") ->
+              {:error, "Enumeration uses comma instead of '|': (#{values})"}
 
-      nil ->
-        {:error, "Invalid enumeration attribute: #{spec}"}
+            # Missing whitespace after enumeration (but empty is OK if at end)
+            after_paren != "" and not String.match?(after_paren, ~r/^\s/) ->
+              {:error, "Missing whitespace after enumeration"}
+
+            # Check for quoted values (not allowed in XML enumerations)
+            String.contains?(values, "\"") or String.contains?(values, "'") ->
+              {:error, "Quoted values not allowed in enumeration: (#{values})"}
+
+            true ->
+              enum_values = values |> String.split("|") |> Enum.map(&String.trim/1)
+
+              # Check for empty values in enumeration
+              if Enum.any?(enum_values, &(&1 == "")) do
+                {:error, "Empty value in enumeration: (#{values})"}
+              else
+                rest = String.trim(after_paren)
+
+                case parse_attr_default(rest) do
+                  {:ok, default, remaining} ->
+                    {:ok, {:enum, enum_values}, default, remaining}
+
+                  {:error, _} = err ->
+                    err
+                end
+              end
+          end
+
+        nil ->
+          {:error, "Invalid enumeration attribute: #{spec}"}
+      end
     end
   end
 
   # Parse NOTATION attribute
   defp parse_notation_attr(spec) do
-    case Regex.run(~r/^NOTATION\s+\(([^)]+)\)\s+(.+)$/s, spec) do
-      [_, notations, rest] ->
-        notation_names = notations |> String.split("|") |> Enum.map(&String.trim/1)
+    # Check for empty NOTATION list
+    if Regex.match?(~r/^NOTATION\s+\(\s*\)/, spec) do
+      {:error, "Empty NOTATION list not allowed"}
+    else
+      case Regex.run(~r/^NOTATION\s+\(([^)]*)\)(.*)$/s, spec) do
+        [_, notations, after_paren] ->
+          notations_trimmed = String.trim(notations)
 
-        case parse_attr_default(String.trim(rest)) do
-          {:ok, default, remaining} ->
-            {:ok, {:notation, notation_names}, default, remaining}
+          cond do
+            # Empty notation list
+            notations_trimmed == "" ->
+              {:error, "Empty NOTATION list not allowed"}
 
-          {:error, _} = err ->
-            err
-        end
+            # Check for comma separator (should be | per XML spec)
+            String.contains?(notations, ",") ->
+              {:error, "NOTATION list uses comma instead of '|': (#{notations})"}
 
-      nil ->
-        {:error, "Invalid NOTATION attribute: #{spec}"}
+            # Check for quoted names (not allowed in XML)
+            String.contains?(notations, "\"") or String.contains?(notations, "'") ->
+              {:error, "Quoted names not allowed in NOTATION list: (#{notations})"}
+
+            # Missing whitespace after notation list
+            after_paren != "" and not String.match?(after_paren, ~r/^\s/) ->
+              {:error, "Missing whitespace after NOTATION list"}
+
+            true ->
+              notation_names = notations |> String.split("|") |> Enum.map(&String.trim/1)
+
+              # Check for empty values
+              if Enum.any?(notation_names, &(&1 == "")) do
+                {:error, "Empty value in NOTATION list"}
+              else
+                rest = String.trim(after_paren)
+
+                case parse_attr_default(rest) do
+                  {:ok, default, remaining} ->
+                    {:ok, {:notation, notation_names}, default, remaining}
+
+                  {:error, _} = err ->
+                    err
+                end
+              end
+          end
+
+        nil ->
+          {:error, "Invalid NOTATION attribute: #{spec}"}
+      end
     end
   end
 
@@ -590,14 +1305,21 @@ defmodule FnXML.DTD.Parser do
 
     Enum.find_value(type_keywords, {:error, "Unknown attribute type: #{spec}"}, fn {keyword, type} ->
       if String.starts_with?(spec, keyword) do
-        rest = String.trim_leading(spec, keyword) |> String.trim()
+        after_keyword = String.slice(spec, String.length(keyword)..-1//1)
 
-        case parse_attr_default(rest) do
-          {:ok, default, remaining} ->
-            {:ok, type, default, remaining}
+        # Must have whitespace after keyword (XML spec requirement)
+        if after_keyword == "" or not String.match?(after_keyword, ~r/^\s/) do
+          {:error, "Missing whitespace after attribute type '#{keyword}'"}
+        else
+          rest = String.trim(after_keyword)
 
-          {:error, _} = err ->
-            err
+          case parse_attr_default(rest) do
+            {:ok, default, remaining} ->
+              {:ok, type, default, remaining}
+
+            {:error, _} = err ->
+              err
+          end
         end
       end
     end)
@@ -613,11 +1335,18 @@ defmodule FnXML.DTD.Parser do
         {:ok, :implied, String.trim_leading(spec, "#IMPLIED") |> String.trim()}
 
       String.starts_with?(spec, "#FIXED") ->
-        rest = String.trim_leading(spec, "#FIXED") |> String.trim()
+        after_fixed = String.slice(spec, 6..-1//1)
 
-        case extract_quoted_value(rest) do
-          {:ok, value, remaining} -> {:ok, {:fixed, value}, remaining}
-          {:error, _} = err -> err
+        # XML spec requires whitespace between #FIXED and the value
+        if after_fixed == "" or not String.match?(after_fixed, ~r/^\s/) do
+          {:error, "Missing whitespace after #FIXED"}
+        else
+          rest = String.trim(after_fixed)
+
+          case extract_quoted_value(rest) do
+            {:ok, value, remaining} -> {:ok, {:fixed, value}, remaining}
+            {:error, _} = err -> err
+          end
         end
 
       String.starts_with?(spec, "\"") or String.starts_with?(spec, "'") ->
@@ -641,4 +1370,448 @@ defmodule FnXML.DTD.Parser do
         {:error, "Expected quoted value: #{spec}"}
     end
   end
+
+  # Validate XML Name (for entity, element, attribute, notation names)
+  # Uses FnXML.Char for edition-specific character validation
+  defp validate_name(name, context, edition) do
+    case name do
+      "" ->
+        {:error, "Empty #{context} name"}
+
+      _ ->
+        if FnXML.Char.valid_name?(name, edition: edition) do
+          :ok
+        else
+          {:error, "Invalid #{context} name '#{name}' - contains invalid characters"}
+        end
+    end
+  end
+
+  # Validate entity value for general entities
+  # Must not contain bare & or % that isn't part of a valid reference
+  # Per XML spec Production [9] EntityValue, the content must be:
+  #   [^%&"] | PEReference | Reference
+  # This means bare % and & are NOT allowed - they must be part of references.
+  #
+  # In internal DTD subset, PEs are not recognized in literal entity values,
+  # so %name; patterns are still invalid (they're not recognized as PEReferences).
+  # In external DTDs, %name; is recognized and expanded as a PE reference.
+  defp validate_entity_value(value, _opts) do
+    # Check for bare % first (required in both internal and external DTDs)
+    case find_bare_percent(value) do
+      nil ->
+        validate_entity_value_content(value)
+
+      pos ->
+        {:error, "Entity value contains bare '%' at position #{pos}"}
+    end
+  end
+
+  # Common validation logic for entity values (ampersand and content checks)
+  defp validate_entity_value_content(value) do
+    case find_bare_ampersand(value) do
+      nil ->
+        # Expand character references and validate the result
+        case expand_char_refs(value) do
+          {:ok, expanded} ->
+            # Check if expanded value contains bare ampersands
+            # (e.g., &#38; expands to & which is a bare ampersand)
+            cond do
+              String.contains?(expanded, "&") and not_escaped_ampersand?(expanded) ->
+                {:error,
+                 "Entity replacement text produces bare '&' after character reference expansion"}
+
+              # Check if the replacement text is well-formed as content
+              not well_formed_content?(expanded) ->
+                {:error, "Entity replacement text is not well-formed"}
+
+              # Check for reserved PI target "xml" (case-insensitive)
+              # Per XML spec: PI targets matching [Xx][Mm][Ll] are reserved
+              has_reserved_pi_target?(expanded) ->
+                {:error, "Entity replacement text contains reserved PI target 'xml'"}
+
+              true ->
+                :ok
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      pos ->
+        {:error, "Entity value contains bare '&' at position #{pos}"}
+    end
+  end
+
+  # Check if content is well-formed (balanced tags)
+  # Per XML spec Section 4.3.2, entity replacement text must match the
+  # `content` production, meaning all elements must be complete (balanced).
+  defp well_formed_content?(content) do
+    cond do
+      # Content can't start with an end tag
+      Regex.match?(~r/^\s*<\//, content) ->
+        false
+
+      # Check for unclosed tags (< followed by name but no >)
+      # Pattern: < followed by name chars but NOT followed by > before another < or end
+      has_unclosed_tag?(content) ->
+        false
+
+      true ->
+        # Extract all tags in order with their positions
+        # We need to check proper nesting, not just counts
+        validate_tag_structure(content)
+    end
+  end
+
+  # Check if content contains a PI with reserved target "xml" (case-insensitive)
+  # Per XML spec: "The target names 'XML', 'xml', and so on are reserved"
+  defp has_reserved_pi_target?(content) do
+    # Match <?xml followed by whitespace or ?>
+    # This catches <?xml?>, <?xml ...?>, etc.
+    Regex.match?(~r/<\?[Xx][Mm][Ll](\s|\?>|$)/, content)
+  end
+
+  # Check for unclosed tags like "<foo" without closing ">"
+  defp has_unclosed_tag?(content) do
+    # Find all occurrences of < followed by name characters
+    # Each should have a > before the next < or end of string
+    check_unclosed_tags(content)
+  end
+
+  defp check_unclosed_tags(<<>>), do: false
+
+  defp check_unclosed_tags(<<?<, rest::binary>>) do
+    # Found <, now look for > before next < or end
+    case find_tag_end(rest) do
+      :found -> check_unclosed_tags(rest)
+      :unclosed -> true
+    end
+  end
+
+  defp check_unclosed_tags(<<_, rest::binary>>), do: check_unclosed_tags(rest)
+
+  defp find_tag_end(<<>>), do: :unclosed
+  defp find_tag_end(<<?>, _rest::binary>>), do: :found
+  defp find_tag_end(<<?<, _rest::binary>>), do: :unclosed
+  defp find_tag_end(<<_, rest::binary>>), do: find_tag_end(rest)
+
+  # Validate that tags are properly nested using a stack
+  defp validate_tag_structure(content) do
+    # Find all tags with their types and positions
+    tags = extract_all_tags(content)
+
+    # Use a stack to validate proper nesting
+    validate_tag_stack(tags, [])
+  end
+
+  # Extract all tags (start, end, self-closing) in order
+  defp extract_all_tags(content) do
+    # Pattern matches all tags
+    pattern = ~r/<(\/?)([a-zA-Z_][a-zA-Z0-9._:-]*)(?:\s[^>]*)?(\/?)>/
+
+    Regex.scan(pattern, content, return: :index)
+    |> Enum.map(fn [{start, len} | _] ->
+      tag_str = binary_part(content, start, len)
+
+      cond do
+        String.starts_with?(tag_str, "</") ->
+          # End tag
+          [_, name] = Regex.run(~r/<\/([a-zA-Z_][a-zA-Z0-9._:-]*)/, tag_str)
+          {:end, name}
+
+        String.ends_with?(tag_str, "/>") ->
+          # Self-closing tag - no stack change needed
+          :self_closing
+
+        true ->
+          # Start tag
+          [_, name] = Regex.run(~r/<([a-zA-Z_][a-zA-Z0-9._:-]*)/, tag_str)
+          {:start, name}
+      end
+    end)
+    |> Enum.reject(&(&1 == :self_closing))
+  end
+
+  # Validate tags using a stack - returns true if balanced
+  defp validate_tag_stack([], []), do: true
+  defp validate_tag_stack([], _stack), do: false
+
+  defp validate_tag_stack([{:start, name} | rest], stack) do
+    validate_tag_stack(rest, [name | stack])
+  end
+
+  defp validate_tag_stack([{:end, name} | rest], [name | stack]) do
+    validate_tag_stack(rest, stack)
+  end
+
+  # End tag doesn't match top of stack
+  defp validate_tag_stack([{:end, _name} | _rest], _stack), do: false
+
+  # Check if ampersand in expanded text is not part of an entity reference
+  defp not_escaped_ampersand?(text) do
+    # After char ref expansion, any & must be followed by a valid entity ref pattern
+    # Otherwise it's a bare ampersand
+    case :binary.match(text, "&") do
+      :nomatch ->
+        false
+
+      {pos, _} ->
+        rest = binary_part(text, pos + 1, byte_size(text) - pos - 1)
+        not valid_entity_ref_follows?(rest)
+    end
+  end
+
+  defp valid_entity_ref_follows?(rest) do
+    cond do
+      Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9._-]*;/, rest) -> true
+      Regex.match?(~r/^#[0-9]+;/, rest) -> true
+      Regex.match?(~r/^#x[0-9a-fA-F]+;/, rest) -> true
+      true -> false
+    end
+  end
+
+  # Expand character references in entity value
+  # Returns {:ok, expanded} or {:error, reason}
+  defp expand_char_refs(value) do
+    try do
+      expanded =
+        Regex.replace(~r/&#x([0-9a-fA-F]+);|&#([0-9]+);/, value, fn
+          full, hex, "" ->
+            case Integer.parse(hex, 16) do
+              {cp, ""} when cp >= 0 ->
+                try do
+                  <<cp::utf8>>
+                rescue
+                  _ -> throw({:invalid_char_ref, full})
+                end
+
+              _ ->
+                throw({:invalid_char_ref, full})
+            end
+
+          full, "", decimal ->
+            case Integer.parse(decimal) do
+              {cp, ""} when cp >= 0 ->
+                try do
+                  <<cp::utf8>>
+                rescue
+                  _ -> throw({:invalid_char_ref, full})
+                end
+
+              _ ->
+                throw({:invalid_char_ref, full})
+            end
+        end)
+
+      {:ok, expanded}
+    catch
+      {:invalid_char_ref, ref} -> {:error, "Invalid character reference: #{ref}"}
+    end
+  end
+
+  # Validate parameter entity value
+  # Must not contain bare & or % that aren't part of valid references
+  defp validate_param_entity_value(value) do
+    case find_bare_ampersand(value) do
+      nil ->
+        case find_bare_percent(value) do
+          nil -> :ok
+          pos -> {:error, "Parameter entity value contains bare '%' at position #{pos}"}
+        end
+
+      pos ->
+        {:error, "Parameter entity value contains bare '&' at position #{pos}"}
+    end
+  end
+
+  # Find bare & that isn't followed by a valid entity reference pattern
+  # Valid patterns: &name; or &#digits; or &#xhex;
+  defp find_bare_ampersand(value) do
+    find_bare_ampersand(value, 0)
+  end
+
+  defp find_bare_ampersand(<<>>, _pos), do: nil
+
+  defp find_bare_ampersand(<<"&", rest::binary>>, pos) do
+    # Check if followed by valid entity reference pattern
+    cond do
+      # Character reference: &#digits; or &#xhex;
+      Regex.match?(~r/^#[0-9]+;/, rest) ->
+        find_bare_ampersand(skip_until_semicolon(rest), pos + 1)
+
+      Regex.match?(~r/^#x[0-9a-fA-F]+;/, rest) ->
+        find_bare_ampersand(skip_until_semicolon(rest), pos + 1)
+
+      # Entity reference: &name;
+      Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9._-]*;/, rest) ->
+        find_bare_ampersand(skip_until_semicolon(rest), pos + 1)
+
+      # Bare &
+      true ->
+        pos
+    end
+  end
+
+  defp find_bare_ampersand(<<_, rest::binary>>, pos) do
+    find_bare_ampersand(rest, pos + 1)
+  end
+
+  # Find bare % that isn't followed by a valid PE reference pattern
+  defp find_bare_percent(value) do
+    find_bare_percent(value, 0)
+  end
+
+  defp find_bare_percent(<<>>, _pos), do: nil
+
+  defp find_bare_percent(<<"%", rest::binary>>, pos) do
+    # Check if followed by valid PE reference pattern: %name;
+    if Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9._-]*;/, rest) do
+      find_bare_percent(skip_until_semicolon(rest), pos + 1)
+    else
+      pos
+    end
+  end
+
+  defp find_bare_percent(<<_, rest::binary>>, pos) do
+    find_bare_percent(rest, pos + 1)
+  end
+
+  defp skip_until_semicolon(<<";", rest::binary>>), do: rest
+  defp skip_until_semicolon(<<_, rest::binary>>), do: skip_until_semicolon(rest)
+  defp skip_until_semicolon(<<>>), do: <<>>
+
+  # Validate PUBLIC identifier characters per XML spec
+  # PubidChar ::= #x20 | #xD | #xA | [a-zA-Z0-9] | [-'()+,./:=?;!*#@$_%]
+  @doc false
+  def validate_public_id(public_id) do
+    invalid_char =
+      public_id
+      |> String.graphemes()
+      |> Enum.find(fn char ->
+        not valid_pubid_char?(char)
+      end)
+
+    case invalid_char do
+      nil -> :ok
+      char -> {:error, "Invalid character '#{char}' in PUBLIC identifier"}
+    end
+  end
+
+  defp valid_pubid_char?(<<c>>) when c in [0x20, 0x0D, 0x0A], do: true
+  defp valid_pubid_char?(<<c>>) when c in ?a..?z or c in ?A..?Z or c in ?0..?9, do: true
+  defp valid_pubid_char?(<<c>>) when c in ~c[-'()+,./:=?;!*#@$_%], do: true
+  defp valid_pubid_char?(_), do: false
+
+  # ============================================================================
+  # PI validation in DTD internal subset
+  # ============================================================================
+
+  # Validate a PI inside DTD, return {:ok, remaining} or {:error, reason}
+  defp validate_pi_in_dtd(rest) do
+    case extract_pi_target(rest) do
+      {:ok, target, after_target} ->
+        if valid_pi_target_name?(target) do
+          # Skip to end of PI
+          case skip_to_pi_end(after_target) do
+            {:ok, remaining} -> {:ok, remaining}
+            :error -> {:error, "Unterminated PI in DTD internal subset"}
+          end
+        else
+          {:error, "Invalid PI target in DTD - contains invalid name characters"}
+        end
+
+      {:error, :empty} ->
+        {:error, "Empty PI target in DTD internal subset"}
+
+      {:error, :invalid_start} ->
+        {:error, "PI target must start with a valid name character"}
+
+      {:error, {:invalid_name_char, char}} ->
+        {:error, "Invalid character '#{char}' in PI target name"}
+    end
+  end
+
+  # Extract PI target name (characters before whitespace or ?>)
+  defp extract_pi_target(binary), do: extract_pi_target(binary, <<>>)
+
+  defp extract_pi_target(<<"?>", rest::binary>>, acc) when byte_size(acc) > 0 do
+    {:ok, acc, <<"?>", rest::binary>>}
+  end
+
+  defp extract_pi_target(<<"?>", _rest::binary>>, <<>>) do
+    {:error, :empty}
+  end
+
+  defp extract_pi_target(<<c, rest::binary>>, acc)
+       when c in [?\s, ?\t, ?\r, ?\n] and byte_size(acc) > 0 do
+    {:ok, acc, <<c, rest::binary>>}
+  end
+
+  defp extract_pi_target(<<c::utf8, rest::binary>>, <<>>) do
+    if pi_name_start_char?(c) do
+      extract_pi_target(rest, <<c::utf8>>)
+    else
+      {:error, :invalid_start}
+    end
+  end
+
+  defp extract_pi_target(<<c::utf8, rest::binary>>, acc) do
+    cond do
+      pi_name_char?(c) ->
+        extract_pi_target(rest, <<acc::binary, c::utf8>>)
+
+      # If the next char is not a valid name char and not whitespace,
+      # the PI target is malformed (e.g., "_)" where ) is invalid)
+      c not in [?\s, ?\t, ?\r, ?\n] ->
+        {:error, {:invalid_name_char, <<c::utf8>>}}
+
+      true ->
+        {:ok, acc, <<c::utf8, rest::binary>>}
+    end
+  end
+
+  defp extract_pi_target(<<>>, _acc), do: {:error, :empty}
+
+  # Skip to end of PI (?>)
+  defp skip_to_pi_end(<<"?>", rest::binary>>), do: {:ok, rest}
+  defp skip_to_pi_end(<<_, rest::binary>>), do: skip_to_pi_end(rest)
+  defp skip_to_pi_end(<<>>), do: :error
+
+  # Extract text declaration content (between <?xml and ?>)
+  defp extract_text_decl_content(binary), do: extract_text_decl_content(binary, <<>>)
+  defp extract_text_decl_content(<<"?>", rest::binary>>, acc), do: {:ok, acc, rest}
+
+  defp extract_text_decl_content(<<c, rest::binary>>, acc),
+    do: extract_text_decl_content(rest, <<acc::binary, c>>)
+
+  defp extract_text_decl_content(<<>>, _acc), do: :error
+
+  # Validate PI target name
+  defp valid_pi_target_name?(<<>>), do: false
+
+  defp valid_pi_target_name?(<<first::utf8, rest::binary>>) do
+    pi_name_start_char?(first) and pi_name_chars_valid?(rest)
+  end
+
+  defp pi_name_chars_valid?(<<>>), do: true
+
+  defp pi_name_chars_valid?(<<c::utf8, rest::binary>>) do
+    pi_name_char?(c) and pi_name_chars_valid?(rest)
+  end
+
+  # NameStartChar per XML 1.0 spec (same as parser guards)
+  defp pi_name_start_char?(c) when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?:, do: true
+  defp pi_name_start_char?(c) when c in 0x00C0..0x00D6 or c in 0x00D8..0x00F6, do: true
+  defp pi_name_start_char?(c) when c in 0x00F8..0x02FF or c in 0x0370..0x037D, do: true
+  defp pi_name_start_char?(c) when c in 0x037F..0x1FFF or c in 0x200C..0x200D, do: true
+  defp pi_name_start_char?(c) when c in 0x2070..0x218F or c in 0x2C00..0x2FEF, do: true
+  defp pi_name_start_char?(c) when c in 0x3001..0xD7FF or c in 0xF900..0xFDCF, do: true
+  defp pi_name_start_char?(c) when c in 0xFDF0..0xFFFD or c in 0x10000..0xEFFFF, do: true
+  defp pi_name_start_char?(_), do: false
+
+  # NameChar per XML 1.0 spec
+  defp pi_name_char?(c) when c == ?- or c == ?. or c in ?0..?9 or c == 0x00B7, do: true
+  defp pi_name_char?(c) when c in 0x0300..0x036F or c in 0x203F..0x2040, do: true
+  defp pi_name_char?(c), do: pi_name_start_char?(c)
 end

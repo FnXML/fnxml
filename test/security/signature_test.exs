@@ -115,7 +115,9 @@ defmodule FnXML.Security.SignatureTest do
       {_other_private, other_public} = generate_rsa_keypair()
 
       {:ok, signature} = Algorithms.sign(data, :rsa_sha256, private_key)
-      assert {:error, :invalid_signature} = Algorithms.verify(data, signature, :rsa_sha256, other_public)
+
+      assert {:error, :invalid_signature} =
+               Algorithms.verify(data, signature, :rsa_sha256, other_public)
     end
   end
 
@@ -125,12 +127,13 @@ defmodule FnXML.Security.SignatureTest do
     test "creates reference with digest" do
       xml = "<root><child>content</child></root>"
 
-      {:ok, reference} = Reference.create(xml,
-        reference_uri: "",
-        digest_algorithm: :sha256,
-        type: :enveloped,
-        c14n_algorithm: :exc_c14n
-      )
+      {:ok, reference} =
+        Reference.create(xml,
+          reference_uri: "",
+          digest_algorithm: :sha256,
+          type: :enveloped,
+          c14n_algorithm: :exc_c14n
+        )
 
       assert reference =~ "Reference"
       assert reference =~ "DigestValue"

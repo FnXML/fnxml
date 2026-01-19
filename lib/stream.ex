@@ -315,7 +315,10 @@ defmodule FnXML.Stream do
     error(element, "unexpected close tag #{tag_str}, missing open tag")
   end
 
-  defp process_item({:end_element, tag, _line, _ls, _pos} = element, {[head | new_stack] = stack, acc, fun}) do
+  defp process_item(
+         {:end_element, tag, _line, _ls, _pos} = element,
+         {[head | new_stack] = stack, acc, fun}
+       ) do
     tag_tuple = Element.tag(tag)
 
     cond do
@@ -421,7 +424,8 @@ defmodule FnXML.Stream do
     fun.(element, stack, acc) |> next(stack, fun)
   end
 
-  defp process_item({id, _, _, _, _, _} = element, {stack, acc, fun}) when id in @valid_element_id do
+  defp process_item({id, _, _, _, _, _} = element, {stack, acc, fun})
+       when id in @valid_element_id do
     fun.(element, stack, acc) |> next(stack, fun)
   end
 
@@ -554,9 +558,22 @@ defmodule FnXML.Stream do
   @spec filter_ws(Enumerable.t()) :: Enumerable.t()
   def filter_ws(stream) do
     filter(stream, fn
-      {:characters, content, _line, _ls, _pos}, _, acc -> {not String.match?(content, ~r/^\s*$/), acc}
-      {:space, _content, _line, _ls, _pos}, _, acc -> {false, acc}
-      _, _, acc -> {true, acc}
+      # 5-tuple from parser
+      {:characters, content, _line, _ls, _pos}, _, acc ->
+        {not String.match?(content, ~r/^\s*$/), acc}
+
+      {:space, _content, _line, _ls, _pos}, _, acc ->
+        {false, acc}
+
+      # 3-tuple normalized
+      {:characters, content, _loc}, _, acc ->
+        {not String.match?(content, ~r/^\s*$/), acc}
+
+      {:space, _content, _loc}, _, acc ->
+        {false, acc}
+
+      _, _, acc ->
+        {true, acc}
     end)
   end
 
@@ -593,12 +610,28 @@ defmodule FnXML.Stream do
     include = Keyword.get(opts, :include, not Keyword.get(opts, :exclude, false))
 
     filter(stream, fn
+      # 6-tuple from parser
       {:start_element, tag, _attrs, _line, _ls, _pos}, _, acc ->
         {_tag, ns} = Element.tag(tag)
         result = if ns in ns_list, do: include, else: not include
         {result, [result | acc]}
 
+      # 4-tuple normalized or with nil loc
+      {:start_element, tag, _attrs, _loc}, _, acc ->
+        {_tag, ns} = Element.tag(tag)
+        result = if ns in ns_list, do: include, else: not include
+        {result, [result | acc]}
+
+      # 5-tuple from parser
       {:end_element, _tag, _line, _ls, _pos}, _, [result | rest] ->
+        {result, rest}
+
+      # 3-tuple normalized
+      {:end_element, _tag, _loc}, _, [result | rest] ->
+        {result, rest}
+
+      # 2-tuple legacy
+      {:end_element, _tag}, _, [result | rest] ->
         {result, rest}
 
       _, _, [result | _] = acc ->

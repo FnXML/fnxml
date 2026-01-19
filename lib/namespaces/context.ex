@@ -65,10 +65,20 @@ defmodule FnXML.Namespaces.Context do
 
   @doc """
   Set the XML version for this context.
+  Accepts any 1.x version per XML 1.0 5th edition.
+  Unknown 1.x versions are treated as "1.0" for namespace purposes.
   """
   @spec set_xml_version(t(), String.t()) :: t()
-  def set_xml_version(ctx, version) when version in ["1.0", "1.1"] do
-    %{ctx | xml_version: version}
+  def set_xml_version(ctx, version) when is_binary(version) do
+    # Normalize unknown 1.x versions to "1.0" for internal handling
+    normalized =
+      case version do
+        "1.0" -> "1.0"
+        "1.1" -> "1.1"
+        _ -> "1.0"
+      end
+
+    %{ctx | xml_version: normalized}
   end
 
   @doc """

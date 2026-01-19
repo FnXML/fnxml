@@ -220,14 +220,16 @@ defmodule FnXML.Security.C14N.Serializer do
     # Add element's namespace prefix (or "" for default namespace)
     prefixes =
       case String.split(tag, ":", parts: 2) do
-        [_local] -> MapSet.put(prefixes, "")  # Element uses default namespace
+        # Element uses default namespace
+        [_local] -> MapSet.put(prefixes, "")
         [prefix, _local] -> MapSet.put(prefixes, prefix)
       end
 
     # Add prefixes from attribute names (attributes without prefix don't use any namespace)
     Enum.reduce(attrs, prefixes, fn {name, _value}, acc ->
       case String.split(name, ":", parts: 2) do
-        [_local] -> acc  # Unprefixed attributes have no namespace
+        # Unprefixed attributes have no namespace
+        [_local] -> acc
         [prefix, _local] -> MapSet.put(acc, prefix)
       end
     end)

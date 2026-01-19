@@ -34,7 +34,7 @@ defmodule FnXML.Entities do
       ...> |> FnXML.Parser.parse()
       ...> |> FnXML.Entities.resolve()
       ...> |> Enum.to_list()
-      ...> |> Enum.find(&match?({:characters, _, _}, &1))
+      ...> |> Enum.find(&match?({:characters, _, _, _, _}, &1))
       ...> |> elem(1)
       "Tom & Jerry"
 
@@ -43,7 +43,7 @@ defmodule FnXML.Entities do
       ...> |> FnXML.Parser.parse()
       ...> |> FnXML.Entities.resolve(entities: %{"copy" => "©"})
       ...> |> Enum.to_list()
-      ...> |> Enum.find(&match?({:characters, _, _}, &1))
+      ...> |> Enum.find(&match?({:characters, _, _, _, _}, &1))
       ...> |> elem(1)
       "©"
   """
@@ -77,9 +77,19 @@ defmodule FnXML.Entities do
     on_unknown = Keyword.get(opts, :on_unknown, :raise)
 
     Stream.flat_map(stream, fn
+      # 5-tuple format from parser
+      {:characters, content, line, ls, pos} ->
+        resolve_text_event_5(content, line, ls, pos, entities, on_unknown)
+
+      # 4-tuple normalized format
       {:characters, content, loc} ->
         resolve_text_event(content, loc, entities, on_unknown)
 
+      # 6-tuple format from parser
+      {:start_element, tag, attrs, line, ls, pos} ->
+        resolve_open_event_6(tag, attrs, line, ls, pos, entities, on_unknown)
+
+      # 4-tuple normalized format
       {:start_element, tag, attrs, loc} ->
         resolve_open_event(tag, attrs, loc, entities, on_unknown)
 
@@ -88,7 +98,18 @@ defmodule FnXML.Entities do
     end)
   end
 
-  # Resolve entities in text content
+  # Resolve entities in text content (5-tuple format from parser)
+  defp resolve_text_event_5(content, line, ls, pos, entities, on_unknown) do
+    case resolve_text(content, entities, on_unknown) do
+      {:ok, resolved} ->
+        [{:characters, resolved, line, ls, pos}]
+
+      {:error, error} ->
+        handle_resolution_error(error, on_unknown)
+    end
+  end
+
+  # Resolve entities in text content (4-tuple normalized format)
   defp resolve_text_event(content, loc, entities, on_unknown) do
     case resolve_text(content, entities, on_unknown) do
       {:ok, resolved} ->
@@ -99,7 +120,18 @@ defmodule FnXML.Entities do
     end
   end
 
-  # Resolve entities in attribute values
+  # Resolve entities in attribute values (6-tuple format from parser)
+  defp resolve_open_event_6(tag, attrs, line, ls, pos, entities, on_unknown) do
+    case resolve_attrs(attrs, entities, on_unknown) do
+      {:ok, resolved_attrs} ->
+        [{:start_element, tag, resolved_attrs, line, ls, pos}]
+
+      {:error, error} ->
+        handle_resolution_error(error, on_unknown)
+    end
+  end
+
+  # Resolve entities in attribute values (4-tuple normalized format)
   defp resolve_open_event(tag, attrs, loc, entities, on_unknown) do
     case resolve_attrs(attrs, entities, on_unknown) do
       {:ok, resolved_attrs} ->
@@ -111,6 +143,11 @@ defmodule FnXML.Entities do
   end
 
   # Handle errors based on on_unknown setting
+  # Bare ampersand errors (invalid_entity with "Bare '&'") are always emitted
+  defp handle_resolution_error(%Error{type: :invalid_entity, message: "Bare '&'" <> _} = error, _) do
+    [{:error, error}]
+  end
+
   defp handle_resolution_error(error, :raise), do: raise(error)
   defp handle_resolution_error(error, :emit), do: [{:error, error}]
   defp handle_resolution_error(_error, _), do: []
@@ -119,24 +156,154 @@ defmodule FnXML.Entities do
   Resolve entities in a text string.
 
   Returns `{:ok, resolved_string}` or `{:error, %FnXML.Error{}}`.
+
+  ## Options (via on_unknown parameter)
+
+  - `:raise` (default) - Raise on unknown entities or bare ampersands
+  - `:emit` - Return error tuple
+  - `:keep` - Keep entity reference as-is
+  - `:remove` - Remove the entity reference
   """
   def resolve_text(text, entities \\ @predefined, on_unknown \\ :raise) do
-    try do
-      resolved =
-        Regex.replace(@entity_pattern, text, fn full, prefix, ref ->
-          case resolve_ref(prefix, ref, entities, on_unknown) do
-            {:ok, value} -> value
-            {:keep, _} -> full
-            {:remove, _} -> ""
-            {:error, error} -> throw({:entity_error, error})
-          end
-        end)
+    # First check for bare ampersands (& not followed by valid entity ref)
+    # Bare ampersands are always an error regardless of on_unknown setting
+    case validate_ampersands(text) do
+      :ok ->
+        try do
+          resolved =
+            Regex.replace(@entity_pattern, text, fn full, prefix, ref ->
+              case resolve_ref(prefix, ref, entities, on_unknown) do
+                {:ok, value} -> value
+                {:keep, _} -> full
+                {:remove, _} -> ""
+                {:error, error} -> throw({:entity_error, error})
+              end
+            end)
 
-      {:ok, resolved}
-    catch
-      {:entity_error, error} -> {:error, error}
+          {:ok, resolved}
+        catch
+          {:entity_error, error} -> {:error, error}
+        end
+
+      {:error, error} ->
+        # Bare ampersands are always an error - they indicate malformed XML
+        {:error, error}
     end
   end
+
+  # Validate that all & characters are part of valid entity references
+  defp validate_ampersands(text) do
+    case find_bare_ampersand(text, 0) do
+      nil ->
+        :ok
+
+      offset ->
+        {:error,
+         Error.parse_error(
+           :invalid_entity,
+           "Bare '&' not allowed in text content; use '&amp;' instead",
+           nil,
+           nil,
+           %{offset: offset}
+         )}
+    end
+  end
+
+  # Find the first bare ampersand that isn't part of a valid entity reference
+  defp find_bare_ampersand(<<>>, _offset), do: nil
+
+  defp find_bare_ampersand(<<"&", rest::binary>>, offset) do
+    if valid_entity_start?(rest) do
+      # Skip past this valid entity reference
+      case :binary.match(rest, ";") do
+        {pos, 1} ->
+          find_bare_ampersand(
+            binary_part(rest, pos + 1, byte_size(rest) - pos - 1),
+            offset + pos + 2
+          )
+
+        :nomatch ->
+          # Unterminated entity reference
+          offset
+      end
+    else
+      # Bare ampersand
+      offset
+    end
+  end
+
+  defp find_bare_ampersand(<<_::utf8, rest::binary>>, offset) do
+    find_bare_ampersand(rest, offset + 1)
+  end
+
+  # Check if the text after & starts a valid entity reference
+  # For character references, be lenient here - let resolution code validate content
+  defp valid_entity_start?(<<"#x", rest::binary>>) do
+    # Hex character reference attempt: just check for non-empty content ending in ;
+    case :binary.match(rest, ";") do
+      {pos, 1} -> pos > 0
+      :nomatch -> false
+    end
+  end
+
+  defp valid_entity_start?(<<"#", rest::binary>>) do
+    # Decimal character reference attempt: just check for non-empty content ending in ;
+    case :binary.match(rest, ";") do
+      {pos, 1} -> pos > 0
+      :nomatch -> false
+    end
+  end
+
+  defp valid_entity_start?(<<first::utf8, _rest::binary>> = text) do
+    # Named entity: must start with valid name start char
+    if valid_name_start_char?(first) do
+      case :binary.match(text, ";") do
+        {pos, 1} ->
+          name = binary_part(text, 0, pos)
+          valid_xml_name?(name)
+
+        :nomatch ->
+          false
+      end
+    else
+      false
+    end
+  end
+
+  defp valid_entity_start?(_), do: false
+
+  # XML Name validation
+  defp valid_xml_name?(<<>>), do: false
+
+  defp valid_xml_name?(<<first::utf8, rest::binary>>) do
+    valid_name_start_char?(first) and valid_name_chars?(rest)
+  end
+
+  defp valid_name_start_char?(c) when c == ?: or c in ?A..?Z or c == ?_ or c in ?a..?z, do: true
+  defp valid_name_start_char?(c) when c >= 0xC0 and c <= 0xD6, do: true
+  defp valid_name_start_char?(c) when c >= 0xD8 and c <= 0xF6, do: true
+  defp valid_name_start_char?(c) when c >= 0xF8 and c <= 0x2FF, do: true
+  defp valid_name_start_char?(c) when c >= 0x370 and c <= 0x37D, do: true
+  defp valid_name_start_char?(c) when c >= 0x37F and c <= 0x1FFF, do: true
+  defp valid_name_start_char?(c) when c >= 0x200C and c <= 0x200D, do: true
+  defp valid_name_start_char?(c) when c >= 0x2070 and c <= 0x218F, do: true
+  defp valid_name_start_char?(c) when c >= 0x2C00 and c <= 0x2FEF, do: true
+  defp valid_name_start_char?(c) when c >= 0x3001 and c <= 0xD7FF, do: true
+  defp valid_name_start_char?(c) when c >= 0xF900 and c <= 0xFDCF, do: true
+  defp valid_name_start_char?(c) when c >= 0xFDF0 and c <= 0xFFFD, do: true
+  defp valid_name_start_char?(c) when c >= 0x10000 and c <= 0xEFFFF, do: true
+  defp valid_name_start_char?(_), do: false
+
+  defp valid_name_chars?(<<>>), do: true
+
+  defp valid_name_chars?(<<c::utf8, rest::binary>>) do
+    valid_name_char?(c) and valid_name_chars?(rest)
+  end
+
+  defp valid_name_char?(c) when c == ?- or c == ?. or c in ?0..?9 or c == 0xB7, do: true
+  defp valid_name_char?(c) when c >= 0x0300 and c <= 0x036F, do: true
+  defp valid_name_char?(c) when c >= 0x203F and c <= 0x2040, do: true
+  defp valid_name_char?(c), do: valid_name_start_char?(c)
 
   @doc """
   Resolve entities in attribute name-value pairs.

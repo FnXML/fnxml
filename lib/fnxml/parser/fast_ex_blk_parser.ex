@@ -22,6 +22,13 @@ defmodule FnXML.FastExBlkParser do
   # Inline frequently called helper functions
   @compile {:inline, utf8_size: 1}
 
+  # XML character guard per XML spec production [2]
+  # Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+  defguardp is_xml_char(c)
+            when c == 0x9 or c == 0xA or c == 0xD or
+                   c in 0x20..0xD7FF or c in 0xE000..0xFFFD or
+                   c in 0x10000..0x10FFFF
+
   # Name character guards per XML spec
   defguardp is_name_start(c)
             when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?: or
@@ -170,12 +177,14 @@ defmodule FnXML.FastExBlkParser do
   # Continue handling leftover when first '>' wasn't enough
   defp handle_leftover_continue(rest, leftover, chunk, search_start, acc_events) do
     remaining = byte_size(chunk) - search_start
+
     case :binary.match(chunk, ">", [{:scope, {search_start, remaining}}]) do
       {pos, 1} ->
         mini = leftover <> binary_part(chunk, search_start, pos - search_start + 1)
         {events, leftover_pos} = parse_block(mini, false)
 
         all_events = acc_events ++ events
+
         if leftover_pos do
           new_leftover = binary_part(mini, leftover_pos, byte_size(mini) - leftover_pos)
           handle_leftover_continue(rest, new_leftover, chunk, pos + 1, all_events)
@@ -193,11 +202,13 @@ defmodule FnXML.FastExBlkParser do
   # Parse the rest of a chunk after mini-block completed
   defp parse_rest_of_chunk(rest, chunk, start_pos, acc_events) do
     chunk_remaining = byte_size(chunk) - start_pos
+
     if chunk_remaining > 0 do
       rest_chunk = binary_part(chunk, start_pos, chunk_remaining)
       {events, leftover_pos} = parse_block(rest_chunk, false)
 
       all_events = acc_events ++ events
+
       if leftover_pos do
         leftover = binary_part(rest_chunk, leftover_pos, byte_size(rest_chunk) - leftover_pos)
         {all_events, {rest, leftover, false, false}}
@@ -276,26 +287,49 @@ defmodule FnXML.FastExBlkParser do
 
   defp parse_text(<<>>, xml, buf_pos, start, events) do
     # Emit text accumulated so far and return
-    events = if buf_pos > start do
-      text = binary_part(xml, start, buf_pos - start)
-      [{:characters, text, nil} | events]
-    else
-      events
-    end
+    events =
+      if buf_pos > start do
+        text = binary_part(xml, start, buf_pos - start)
+        [{:characters, text, nil} | events]
+      else
+        events
+      end
+
     {:lists.reverse(events), nil}
   end
 
   defp parse_text(<<"<", _::binary>> = rest, xml, buf_pos, start, events) do
     # Emit accumulated text
-    events = if buf_pos > start do
-      text = binary_part(xml, start, buf_pos - start)
-      [{:characters, text, nil} | events]
-    else
-      events
-    end
+    events =
+      if buf_pos > start do
+        text = binary_part(xml, start, buf_pos - start)
+        [{:characters, text, nil} | events]
+      else
+        events
+      end
 
     # Parse element - buf_pos is where '<' starts
     parse_element(rest, xml, buf_pos, buf_pos, events)
+  end
+
+  # ]]> is not allowed in text content (outside CDATA)
+  defp parse_text(<<"]]>", rest::binary>>, xml, buf_pos, start, events) do
+    # Emit text accumulated so far (if any)
+    events =
+      if buf_pos > start do
+        text = binary_part(xml, start, buf_pos - start)
+        [{:characters, text, nil} | events]
+      else
+        events
+      end
+
+    # Emit error for ]]> in content
+    events = [
+      {:error, :text_cdata_end, "']]>' not allowed in text content", nil, nil, nil} | events
+    ]
+
+    # Continue parsing after the illegal sequence (new text starts after ]]>)
+    parse_text(rest, xml, buf_pos + 3, buf_pos + 3, events)
   end
 
   defp parse_text(<<_, rest::binary>>, xml, buf_pos, start, events) do
@@ -315,18 +349,60 @@ defmodule FnXML.FastExBlkParser do
   end
 
   defp parse_element(<<"<!DOCTYPE", rest::binary>>, xml, buf_pos, elem_start, events) do
-    parse_doctype(rest, xml, buf_pos + 9, elem_start, buf_pos + 2, 1, events)
+    parse_doctype(rest, xml, buf_pos + 9, elem_start, buf_pos + 2, 1, nil, events)
   end
 
-  defp parse_element(<<"</", rest::binary>>, xml, buf_pos, elem_start, events) do
-    parse_close_tag_name(rest, xml, buf_pos + 2, elem_start, buf_pos + 2, events)
+  defp parse_element(
+         <<"</", rest2::binary>> = <<"</", c::utf8, _::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         events
+       )
+       when is_name_start(c) do
+    parse_close_tag_name(rest2, xml, buf_pos + 2, elem_start, buf_pos + 2, events)
   end
 
-  defp parse_element(<<"<?", rest::binary>>, xml, buf_pos, elem_start, events) do
-    parse_pi_name(rest, xml, buf_pos + 2, elem_start, buf_pos + 2, events)
+  # Invalid close tag name start character
+  defp parse_element(<<"</", _::binary>>, _xml, buf_pos, _elem_start, events) do
+    events = [
+      {:error, :invalid_close_tag, "Close tag must start with a valid name character", nil, nil,
+       nil}
+      | events
+    ]
+
+    {:lists.reverse(events), buf_pos + 2}
   end
 
-  defp parse_element(<<"<", rest2::binary>> = <<"<", c::utf8, _::binary>>, xml, buf_pos, elem_start, events)
+  defp parse_element(
+         <<"<?", rest2::binary>> = <<"<?", c::utf8, _::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         events
+       )
+       when is_name_start(c) do
+    parse_pi_name(rest2, xml, buf_pos + 2, elem_start, buf_pos + 2, events)
+  end
+
+  # Invalid PI target start character
+  defp parse_element(<<"<?", _::binary>>, _xml, buf_pos, _elem_start, events) do
+    events = [
+      {:error, :invalid_pi_target, "PI target must start with a valid name character", nil, nil,
+       nil}
+      | events
+    ]
+
+    {:lists.reverse(events), buf_pos + 2}
+  end
+
+  defp parse_element(
+         <<"<", rest2::binary>> = <<"<", c::utf8, _::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         events
+       )
        when is_name_start(c) do
     parse_open_tag_name(rest2, xml, buf_pos + 1, elem_start, buf_pos + 1, events)
   end
@@ -407,12 +483,30 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), elem_start}
   end
 
-  defp finish_open_tag(<<"/>", rest::binary>>, xml, buf_pos, name, attrs, _seen, _elem_start, events) do
+  defp finish_open_tag(
+         <<"/>", rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         _seen,
+         _elem_start,
+         events
+       ) do
     events = [{:end_element, name} | [{:start_element, name, attrs, nil} | events]]
     parse_content(rest, xml, buf_pos + 2, events)
   end
 
-  defp finish_open_tag(<<">", rest::binary>>, xml, buf_pos, name, attrs, _seen, _elem_start, events) do
+  defp finish_open_tag(
+         <<">", rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         _seen,
+         _elem_start,
+         events
+       ) do
     events = [{:start_element, name, attrs, nil} | events]
     parse_content(rest, xml, buf_pos + 1, events)
   end
@@ -422,7 +516,16 @@ defmodule FnXML.FastExBlkParser do
     finish_open_tag(rest, xml, buf_pos + 1, name, attrs, seen, elem_start, events)
   end
 
-  defp finish_open_tag(<<c::utf8, _::binary>> = rest, xml, buf_pos, name, attrs, seen, elem_start, events)
+  defp finish_open_tag(
+         <<c::utf8, _::binary>> = rest,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         events
+       )
        when is_name_start(c) do
     parse_attr_name(rest, xml, buf_pos, name, attrs, seen, elem_start, buf_pos, events)
   end
@@ -445,13 +548,33 @@ defmodule FnXML.FastExBlkParser do
   end
 
   # Fast path for ASCII name chars
-  defp parse_attr_name(<<c, rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, start, events)
+  defp parse_attr_name(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         start,
+         events
+       )
        when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or c == ?: do
     parse_attr_name(rest, xml, buf_pos + 1, name, attrs, seen, elem_start, start, events)
   end
 
   # Slow path for non-ASCII UTF-8
-  defp parse_attr_name(<<c::utf8, rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, start, events)
+  defp parse_attr_name(
+         <<c::utf8, rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         start,
+         events
+       )
        when is_name_char(c) do
     size = utf8_size(c)
     parse_attr_name(rest, xml, buf_pos + size, name, attrs, seen, elem_start, start, events)
@@ -466,12 +589,32 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_attr_eq(<<c, rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, attr_name, events)
+  defp parse_attr_eq(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         attr_name,
+         events
+       )
        when c in [?\s, ?\t, ?\r, ?\n] do
     parse_attr_eq(rest, xml, buf_pos + 1, name, attrs, seen, elem_start, attr_name, events)
   end
 
-  defp parse_attr_eq(<<"=", rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, attr_name, events) do
+  defp parse_attr_eq(
+         <<"=", rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         attr_name,
+         events
+       ) do
     parse_attr_quote(rest, xml, buf_pos + 1, name, attrs, seen, elem_start, attr_name, events)
   end
 
@@ -480,18 +623,60 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), nil}
   end
 
-  defp parse_attr_quote(<<>>, _xml, _buf_pos, _name, _attrs, _seen, elem_start, _attr_name, events) do
+  defp parse_attr_quote(
+         <<>>,
+         _xml,
+         _buf_pos,
+         _name,
+         _attrs,
+         _seen,
+         elem_start,
+         _attr_name,
+         events
+       ) do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_attr_quote(<<c, rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, attr_name, events)
+  defp parse_attr_quote(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         attr_name,
+         events
+       )
        when c in [?\s, ?\t, ?\r, ?\n] do
     parse_attr_quote(rest, xml, buf_pos + 1, name, attrs, seen, elem_start, attr_name, events)
   end
 
-  defp parse_attr_quote(<<q, rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, attr_name, events)
+  defp parse_attr_quote(
+         <<q, rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         attr_name,
+         events
+       )
        when q in [?", ?'] do
-    parse_attr_value(rest, xml, buf_pos + 1, name, attrs, seen, elem_start, attr_name, q, buf_pos + 1, events)
+    parse_attr_value(
+      rest,
+      xml,
+      buf_pos + 1,
+      name,
+      attrs,
+      seen,
+      elem_start,
+      attr_name,
+      q,
+      buf_pos + 1,
+      events
+    )
   end
 
   defp parse_attr_quote(_, _xml, _buf_pos, _name, _attrs, _seen, _elem_start, _attr_name, events) do
@@ -499,23 +684,105 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), nil}
   end
 
-  defp parse_attr_value(<<>>, _xml, _buf_pos, _name, _attrs, _seen, elem_start, _attr_name, _quote, _start, events) do
+  defp parse_attr_value(
+         <<>>,
+         _xml,
+         _buf_pos,
+         _name,
+         _attrs,
+         _seen,
+         elem_start,
+         _attr_name,
+         _quote,
+         _start,
+         events
+       ) do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_attr_value(<<q, rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, attr_name, q, start, events) do
+  defp parse_attr_value(
+         <<q, rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         attr_name,
+         q,
+         start,
+         events
+       ) do
     value = binary_part(xml, start, buf_pos - start)
-    {new_attrs, new_seen, events} = if attr_name in seen do
-      events = [{:error, :attr_unique, nil, nil} | events]
-      {[{attr_name, value} | attrs], seen, events}
-    else
-      {[{attr_name, value} | attrs], [attr_name | seen], events}
-    end
+
+    {new_attrs, new_seen, events} =
+      if attr_name in seen do
+        events = [{:error, :attr_unique, nil, nil} | events]
+        {[{attr_name, value} | attrs], seen, events}
+      else
+        {[{attr_name, value} | attrs], [attr_name | seen], events}
+      end
+
     finish_open_tag(rest, xml, buf_pos + 1, name, new_attrs, new_seen, elem_start, events)
   end
 
-  defp parse_attr_value(<<_, rest::binary>>, xml, buf_pos, name, attrs, seen, elem_start, attr_name, quote, start, events) do
-    parse_attr_value(rest, xml, buf_pos + 1, name, attrs, seen, elem_start, attr_name, quote, start, events)
+  # < is not allowed in attribute values
+  defp parse_attr_value(
+         <<"<", rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         attr_name,
+         quote,
+         start,
+         events
+       ) do
+    events = [{:error, :attr_lt, "'<' not allowed in attribute value", nil, nil, nil} | events]
+    # Continue parsing to recover - skip the < and continue
+    parse_attr_value(
+      rest,
+      xml,
+      buf_pos + 1,
+      name,
+      attrs,
+      seen,
+      elem_start,
+      attr_name,
+      quote,
+      start,
+      events
+    )
+  end
+
+  defp parse_attr_value(
+         <<_, rest::binary>>,
+         xml,
+         buf_pos,
+         name,
+         attrs,
+         seen,
+         elem_start,
+         attr_name,
+         quote,
+         start,
+         events
+       ) do
+    parse_attr_value(
+      rest,
+      xml,
+      buf_pos + 1,
+      name,
+      attrs,
+      seen,
+      elem_start,
+      attr_name,
+      quote,
+      start,
+      events
+    )
   end
 
   # ============================================================================
@@ -571,18 +838,37 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_comment(<<"-->", rest::binary>>, xml, buf_pos, _elem_start, start, has_double_dash, events) do
+  defp parse_comment(
+         <<"-->", rest::binary>>,
+         xml,
+         buf_pos,
+         _elem_start,
+         start,
+         has_double_dash,
+         events
+       ) do
     comment = binary_part(xml, start, buf_pos - start)
     events = [{:comment, comment, nil} | events]
-    events = if has_double_dash do
-      [{:error, :comment, nil, nil} | events]
-    else
-      events
-    end
+
+    events =
+      if has_double_dash do
+        [{:error, :comment, nil, nil} | events]
+      else
+        events
+      end
+
     parse_content(rest, xml, buf_pos + 3, events)
   end
 
-  defp parse_comment(<<"--", rest::binary>>, xml, buf_pos, elem_start, start, _has_double_dash, events) do
+  defp parse_comment(
+         <<"--", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         _has_double_dash,
+         events
+       ) do
     parse_comment(rest, xml, buf_pos + 2, elem_start, start, true, events)
   end
 
@@ -590,7 +876,15 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_comment(<<_, rest::binary>>, xml, buf_pos, elem_start, start, has_double_dash, events) do
+  defp parse_comment(
+         <<_, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         has_double_dash,
+         events
+       ) do
     parse_comment(rest, xml, buf_pos + 1, elem_start, start, has_double_dash, events)
   end
 
@@ -622,28 +916,181 @@ defmodule FnXML.FastExBlkParser do
 
   # ============================================================================
   # DOCTYPE
+  # Tracks quote state: nil = not in quote, ?" = double quote, ?' = single quote
   # ============================================================================
 
-  defp parse_doctype(<<>>, _xml, _buf_pos, elem_start, _start, _dtd_depth, events) do
+  defp parse_doctype(<<>>, _xml, _buf_pos, elem_start, _start, _dtd_depth, _quote, events) do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_doctype(<<">", rest::binary>>, xml, buf_pos, _elem_start, start, 1, events) do
+  # End of DOCTYPE (depth=1, not in quotes)
+  defp parse_doctype(<<">", rest::binary>>, xml, buf_pos, _elem_start, start, 1, nil, events) do
     content = binary_part(xml, start, buf_pos - start)
     events = [{:dtd, content, nil} | events]
     parse_content(rest, xml, buf_pos + 1, events)
   end
 
-  defp parse_doctype(<<">", rest::binary>>, xml, buf_pos, elem_start, start, dtd_depth, events) do
-    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth - 1, events)
+  # > decrements depth only when not in quotes
+  defp parse_doctype(
+         <<">", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         nil,
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth - 1, nil, events)
   end
 
-  defp parse_doctype(<<"<", rest::binary>>, xml, buf_pos, elem_start, start, dtd_depth, events) do
-    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth + 1, events)
+  # > inside quotes - just skip
+  defp parse_doctype(
+         <<">", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         quote,
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, quote, events)
   end
 
-  defp parse_doctype(<<_, rest::binary>>, xml, buf_pos, elem_start, start, dtd_depth, events) do
-    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, events)
+  # < increments depth only when not in quotes
+  defp parse_doctype(
+         <<"<", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         nil,
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth + 1, nil, events)
+  end
+
+  # < inside quotes - just skip
+  defp parse_doctype(
+         <<"<", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         quote,
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, quote, events)
+  end
+
+  # Double quote - toggle quote state
+  defp parse_doctype(
+         <<"\"", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         nil,
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, ?", events)
+  end
+
+  defp parse_doctype(
+         <<"\"", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         ?",
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, nil, events)
+  end
+
+  # Single quote - toggle quote state
+  defp parse_doctype(
+         <<"'", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         nil,
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, ?', events)
+  end
+
+  defp parse_doctype(
+         <<"'", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         ?',
+         events
+       ) do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, nil, events)
+  end
+
+  # Fast path for common ASCII characters (valid XML chars, excluding < > " ')
+  defp parse_doctype(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         quote,
+         events
+       )
+       when c in 0x20..0x21 or c in 0x23..0x26 or c in 0x28..0x3B or c == 0x3D or c in 0x3F..0x7F or
+              c == 0x9 or c == 0xA or c == 0xD do
+    parse_doctype(rest, xml, buf_pos + 1, elem_start, start, dtd_depth, quote, events)
+  end
+
+  # Slow path for non-ASCII UTF-8 - validate is_xml_char
+  defp parse_doctype(
+         <<c::utf8, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         start,
+         dtd_depth,
+         quote,
+         events
+       )
+       when is_xml_char(c) do
+    size = utf8_size(c)
+    parse_doctype(rest, xml, buf_pos + size, elem_start, start, dtd_depth, quote, events)
+  end
+
+  # Invalid XML character in DOCTYPE
+  defp parse_doctype(
+         <<c::utf8, _rest::binary>>,
+         _xml,
+         buf_pos,
+         _elem_start,
+         _start,
+         _dtd_depth,
+         _quote,
+         events
+       ) do
+    events = [
+      {:error, :invalid_char,
+       "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in DOCTYPE",
+       nil, nil, nil}
+      | events
+    ]
+
+    {:lists.reverse(events), buf_pos}
   end
 
   # ============================================================================
@@ -727,17 +1174,41 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_prolog_attr_name(<<"?>", rest::binary>>, xml, buf_pos, _elem_start, prolog_attrs, _start, events) do
+  defp parse_prolog_attr_name(
+         <<"?>", rest::binary>>,
+         xml,
+         buf_pos,
+         _elem_start,
+         prolog_attrs,
+         _start,
+         events
+       ) do
     events = [{:prolog, "xml", Enum.reverse(prolog_attrs), nil} | events]
     parse_content(rest, xml, buf_pos + 2, events)
   end
 
-  defp parse_prolog_attr_name(<<c, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, start, events)
+  defp parse_prolog_attr_name(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         start,
+         events
+       )
        when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or c == ?: do
     parse_prolog_attr_name(rest, xml, buf_pos + 1, elem_start, prolog_attrs, start, events)
   end
 
-  defp parse_prolog_attr_name(<<c::utf8, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, start, events)
+  defp parse_prolog_attr_name(
+         <<c::utf8, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         start,
+         events
+       )
        when is_name_char(c) do
     size = utf8_size(c)
     parse_prolog_attr_name(rest, xml, buf_pos + size, elem_start, prolog_attrs, start, events)
@@ -752,12 +1223,28 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_prolog_attr_eq(<<c, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, attr_name, events)
+  defp parse_prolog_attr_eq(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         attr_name,
+         events
+       )
        when c in [?\s, ?\t, ?\r, ?\n] do
     parse_prolog_attr_eq(rest, xml, buf_pos + 1, elem_start, prolog_attrs, attr_name, events)
   end
 
-  defp parse_prolog_attr_eq(<<"=", rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, attr_name, events) do
+  defp parse_prolog_attr_eq(
+         <<"=", rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         attr_name,
+         events
+       ) do
     parse_prolog_attr_quote(rest, xml, buf_pos + 1, elem_start, prolog_attrs, attr_name, events)
   end
 
@@ -766,18 +1253,52 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), nil}
   end
 
-  defp parse_prolog_attr_quote(<<>>, _xml, _buf_pos, elem_start, _prolog_attrs, _attr_name, events) do
+  defp parse_prolog_attr_quote(
+         <<>>,
+         _xml,
+         _buf_pos,
+         elem_start,
+         _prolog_attrs,
+         _attr_name,
+         events
+       ) do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_prolog_attr_quote(<<c, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, attr_name, events)
+  defp parse_prolog_attr_quote(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         attr_name,
+         events
+       )
        when c in [?\s, ?\t, ?\r, ?\n] do
     parse_prolog_attr_quote(rest, xml, buf_pos + 1, elem_start, prolog_attrs, attr_name, events)
   end
 
-  defp parse_prolog_attr_quote(<<q, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, attr_name, events)
+  defp parse_prolog_attr_quote(
+         <<q, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         attr_name,
+         events
+       )
        when q in [?", ?'] do
-    parse_prolog_attr_value(rest, xml, buf_pos + 1, elem_start, prolog_attrs, attr_name, q, buf_pos + 1, events)
+    parse_prolog_attr_value(
+      rest,
+      xml,
+      buf_pos + 1,
+      elem_start,
+      prolog_attrs,
+      attr_name,
+      q,
+      buf_pos + 1,
+      events
+    )
   end
 
   defp parse_prolog_attr_quote(_, _xml, _buf_pos, _elem_start, _prolog_attrs, _attr_name, events) do
@@ -785,35 +1306,96 @@ defmodule FnXML.FastExBlkParser do
     {:lists.reverse(events), nil}
   end
 
-  defp parse_prolog_attr_value(<<>>, _xml, _buf_pos, elem_start, _prolog_attrs, _attr_name, _quote, _start, events) do
+  defp parse_prolog_attr_value(
+         <<>>,
+         _xml,
+         _buf_pos,
+         elem_start,
+         _prolog_attrs,
+         _attr_name,
+         _quote,
+         _start,
+         events
+       ) do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_prolog_attr_value(<<q, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, attr_name, q, start, events) do
+  defp parse_prolog_attr_value(
+         <<q, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         attr_name,
+         q,
+         start,
+         events
+       ) do
     value = binary_part(xml, start, buf_pos - start)
     new_prolog_attrs = [{attr_name, value} | prolog_attrs]
     parse_prolog_after_attr(rest, xml, buf_pos + 1, elem_start, new_prolog_attrs, events)
   end
 
-  defp parse_prolog_attr_value(<<_, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, attr_name, quote, start, events) do
-    parse_prolog_attr_value(rest, xml, buf_pos + 1, elem_start, prolog_attrs, attr_name, quote, start, events)
+  defp parse_prolog_attr_value(
+         <<_, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         attr_name,
+         quote,
+         start,
+         events
+       ) do
+    parse_prolog_attr_value(
+      rest,
+      xml,
+      buf_pos + 1,
+      elem_start,
+      prolog_attrs,
+      attr_name,
+      quote,
+      start,
+      events
+    )
   end
 
   defp parse_prolog_after_attr(<<>>, _xml, _buf_pos, elem_start, _prolog_attrs, events) do
     {:lists.reverse(events), elem_start}
   end
 
-  defp parse_prolog_after_attr(<<"?>", rest::binary>>, xml, buf_pos, _elem_start, prolog_attrs, events) do
+  defp parse_prolog_after_attr(
+         <<"?>", rest::binary>>,
+         xml,
+         buf_pos,
+         _elem_start,
+         prolog_attrs,
+         events
+       ) do
     events = [{:prolog, "xml", Enum.reverse(prolog_attrs), nil} | events]
     parse_content(rest, xml, buf_pos + 2, events)
   end
 
-  defp parse_prolog_after_attr(<<c, rest::binary>>, xml, buf_pos, elem_start, prolog_attrs, events)
+  defp parse_prolog_after_attr(
+         <<c, rest::binary>>,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         events
+       )
        when c in [?\s, ?\t, ?\r, ?\n] do
     parse_prolog_after_attr(rest, xml, buf_pos + 1, elem_start, prolog_attrs, events)
   end
 
-  defp parse_prolog_after_attr(<<c::utf8, _::binary>> = rest, xml, buf_pos, elem_start, prolog_attrs, events)
+  defp parse_prolog_after_attr(
+         <<c::utf8, _::binary>> = rest,
+         xml,
+         buf_pos,
+         elem_start,
+         prolog_attrs,
+         events
+       )
        when is_name_start(c) do
     parse_prolog_attr_name(rest, xml, buf_pos, elem_start, prolog_attrs, buf_pos, events)
   end

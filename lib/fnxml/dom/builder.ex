@@ -97,27 +97,38 @@ defmodule FnXML.DOM.Builder do
     }
   end
 
-  # Handle open tag - push new element onto stack
-  defp handle_event({:start_element, tag, attrs, _loc}, stack, prolog, doctype, _include_comments) do
-    {prefix, local_name} = parse_qname(tag)
-    namespace_uri = find_namespace_uri(attrs, prefix)
+  # ===========================================================================
+  # handle_event/5 clauses - all grouped together
+  # ===========================================================================
 
-    elem = %Element{
-      tag: local_name,
-      attributes: attrs,
-      children: [],
-      namespace_uri: namespace_uri,
-      prefix: prefix
-    }
-
-    {[elem | stack], prolog, doctype}
+  # Handle open tag - 6-tuple from parser
+  defp handle_event(
+         {:start_element, tag, attrs, _line, _ls, _pos},
+         stack,
+         prolog,
+         doctype,
+         include_comments
+       ) do
+    handle_start_element(tag, attrs, stack, prolog, doctype, include_comments)
   end
 
-  # Handle close tag - pop element and add to parent's children
-  defp handle_event({:end_element, _tag}, [current | rest], prolog, doctype, _include_comments) do
+  # Handle open tag - 4-tuple normalized format
+  defp handle_event({:start_element, tag, attrs, _loc}, stack, prolog, doctype, include_comments) do
+    handle_start_element(tag, attrs, stack, prolog, doctype, include_comments)
+  end
+
+  # Handle close tag - 5-tuple from parser
+  defp handle_event(
+         {:end_element, _tag, _line, _ls, _pos},
+         [current | rest],
+         prolog,
+         doctype,
+         _include_comments
+       ) do
     handle_close(current, rest, prolog, doctype)
   end
 
+  # Handle close tag - 3-tuple normalized format
   defp handle_event(
          {:end_element, _tag, _loc},
          [current | rest],
@@ -128,7 +139,23 @@ defmodule FnXML.DOM.Builder do
     handle_close(current, rest, prolog, doctype)
   end
 
-  # Handle text - add to current element's children
+  # Handle close tag - 2-tuple format (legacy)
+  defp handle_event({:end_element, _tag}, [current | rest], prolog, doctype, _include_comments) do
+    handle_close(current, rest, prolog, doctype)
+  end
+
+  # Handle text - 5-tuple from parser
+  defp handle_event(
+         {:characters, content, _line, _ls, _pos},
+         [%Element{children: children} = elem | rest],
+         prolog,
+         doctype,
+         _include_comments
+       ) do
+    {[%{elem | children: children ++ [content]} | rest], prolog, doctype}
+  end
+
+  # Handle text - 3-tuple normalized format
   defp handle_event(
          {:characters, content, _loc},
          [%Element{children: children} = elem | rest],
@@ -139,7 +166,22 @@ defmodule FnXML.DOM.Builder do
     {[%{elem | children: children ++ [content]} | rest], prolog, doctype}
   end
 
-  # Handle text outside of elements (ignore whitespace-only)
+  # Handle text outside of elements (5-tuple from parser)
+  defp handle_event(
+         {:characters, content, _line, _ls, _pos},
+         [],
+         prolog,
+         doctype,
+         _include_comments
+       ) do
+    if String.match?(content, ~r/^\s*$/) do
+      {[], prolog, doctype}
+    else
+      {[content], prolog, doctype}
+    end
+  end
+
+  # Handle text outside of elements (3-tuple normalized format)
   defp handle_event({:characters, content, _loc}, [], prolog, doctype, _include_comments) do
     if String.match?(content, ~r/^\s*$/) do
       {[], prolog, doctype}
@@ -148,7 +190,18 @@ defmodule FnXML.DOM.Builder do
     end
   end
 
-  # Handle CDATA - add to current element's children
+  # Handle CDATA - 5-tuple from parser
+  defp handle_event(
+         {:cdata, content, _line, _ls, _pos},
+         [%Element{children: children} = elem | rest],
+         prolog,
+         doctype,
+         _include_comments
+       ) do
+    {[%{elem | children: children ++ [{:cdata, content}]} | rest], prolog, doctype}
+  end
+
+  # Handle CDATA - 3-tuple normalized format
   defp handle_event(
          {:cdata, content, _loc},
          [%Element{children: children} = elem | rest],
@@ -159,32 +212,87 @@ defmodule FnXML.DOM.Builder do
     {[%{elem | children: children ++ [{:cdata, content}]} | rest], prolog, doctype}
   end
 
-  # Handle comment (when including)
-  defp handle_event({:comment, content, _loc}, stack, prolog, doctype, true = _include_comments) do
-    case stack do
-      [%Element{children: children} = elem | rest] ->
-        {[%{elem | children: children ++ [{:comment, content}]} | rest], prolog, doctype}
-
-      [] ->
-        {[{:comment, content}], prolog, doctype}
-    end
+  # Handle comment - 5-tuple from parser (when including)
+  defp handle_event(
+         {:comment, content, _line, _ls, _pos},
+         stack,
+         prolog,
+         doctype,
+         true = _include_comments
+       ) do
+    handle_comment(content, stack, prolog, doctype)
   end
 
+  # Handle comment - 3-tuple normalized format (when including)
+  defp handle_event({:comment, content, _loc}, stack, prolog, doctype, true = _include_comments) do
+    handle_comment(content, stack, prolog, doctype)
+  end
+
+  # Handle comment - 5-tuple from parser (not including)
+  defp handle_event(
+         {:comment, _content, _line, _ls, _pos},
+         stack,
+         prolog,
+         doctype,
+         false = _include_comments
+       ) do
+    {stack, prolog, doctype}
+  end
+
+  # Handle comment - 3-tuple normalized format (not including)
   defp handle_event({:comment, _content, _loc}, stack, prolog, doctype, false = _include_comments) do
     {stack, prolog, doctype}
   end
 
-  # Handle prolog
+  # Handle prolog - 6-tuple from parser
+  defp handle_event(
+         {:prolog, _name, attrs, _line, _ls, _pos},
+         stack,
+         _prolog,
+         doctype,
+         _include_comments
+       ) do
+    {stack, attrs, doctype}
+  end
+
+  # Handle prolog - 4-tuple normalized format
   defp handle_event({:prolog, _name, attrs, _loc}, stack, _prolog, doctype, _include_comments) do
     {stack, attrs, doctype}
   end
 
-  # Handle DTD
+  # Handle DTD - 5-tuple from parser
+  defp handle_event({:dtd, content, _line, _ls, _pos}, stack, prolog, _doctype, _include_comments) do
+    {stack, prolog, content}
+  end
+
+  # Handle DTD - 3-tuple normalized format
   defp handle_event({:dtd, content, _loc}, stack, prolog, _doctype, _include_comments) do
     {stack, prolog, content}
   end
 
-  # Handle processing instructions - add to current element's children
+  # Handle processing instructions - 6-tuple from parser (inside element)
+  defp handle_event(
+         {:processing_instruction, target, content, _line, _ls, _pos},
+         [%Element{children: children} = elem | rest],
+         prolog,
+         doctype,
+         _include_comments
+       ) do
+    {[%{elem | children: children ++ [{:pi, target, content}]} | rest], prolog, doctype}
+  end
+
+  # Handle processing instructions - 6-tuple from parser (outside element)
+  defp handle_event(
+         {:processing_instruction, _target, _content, _line, _ls, _pos},
+         stack,
+         prolog,
+         doctype,
+         _include_comments
+       ) do
+    {stack, prolog, doctype}
+  end
+
+  # Handle processing instructions - 4-tuple normalized format (inside element)
   defp handle_event(
          {:processing_instruction, target, content, _loc},
          [%Element{children: children} = elem | rest],
@@ -195,6 +303,7 @@ defmodule FnXML.DOM.Builder do
     {[%{elem | children: children ++ [{:pi, target, content}]} | rest], prolog, doctype}
   end
 
+  # Handle processing instructions - 4-tuple normalized format (outside element)
   defp handle_event(
          {:processing_instruction, _target, _content, _loc},
          stack,
@@ -205,7 +314,18 @@ defmodule FnXML.DOM.Builder do
     {stack, prolog, doctype}
   end
 
-  # Handle errors (ignore for building)
+  # Handle errors - 6-tuple from parser (ignore for building)
+  defp handle_event(
+         {:error, _type, _msg, _line, _ls, _pos},
+         stack,
+         prolog,
+         doctype,
+         _include_comments
+       ) do
+    {stack, prolog, doctype}
+  end
+
+  # Handle errors - 3-tuple normalized format (ignore for building)
   defp handle_event({:error, _msg, _loc}, stack, prolog, doctype, _include_comments) do
     {stack, prolog, doctype}
   end
@@ -222,6 +342,35 @@ defmodule FnXML.DOM.Builder do
   # Catch-all for unknown events
   defp handle_event(_event, stack, prolog, doctype, _include_comments) do
     {stack, prolog, doctype}
+  end
+
+  # ===========================================================================
+  # Helper functions
+  # ===========================================================================
+
+  defp handle_start_element(tag, attrs, stack, prolog, doctype, _include_comments) do
+    {prefix, local_name} = parse_qname(tag)
+    namespace_uri = find_namespace_uri(attrs, prefix)
+
+    elem = %Element{
+      tag: local_name,
+      attributes: attrs,
+      children: [],
+      namespace_uri: namespace_uri,
+      prefix: prefix
+    }
+
+    {[elem | stack], prolog, doctype}
+  end
+
+  defp handle_comment(content, stack, prolog, doctype) do
+    case stack do
+      [%Element{children: children} = elem | rest] ->
+        {[%{elem | children: children ++ [{:comment, content}]} | rest], prolog, doctype}
+
+      [] ->
+        {[{:comment, content}], prolog, doctype}
+    end
   end
 
   # Close element and add to parent or return as root

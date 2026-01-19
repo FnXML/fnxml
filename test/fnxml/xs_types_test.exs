@@ -2,7 +2,7 @@ defmodule FnXML.XsTypesTest do
   use ExUnit.Case, async: true
 
   alias FnXML.XsTypes
-  alias FnXML.XsTypes.{Hierarchy, Facets}
+  alias FnXML.XsTypes.Hierarchy
 
   describe "validate/2" do
     test "validates string type" do
@@ -296,7 +296,8 @@ defmodule FnXML.XsTypesTest do
     end
 
     test "replaces whitespace for normalizedString type" do
-      assert "  hello world  " = XsTypes.normalize_whitespace("  hello\nworld  ", :normalizedString)
+      assert "  hello world  " =
+               XsTypes.normalize_whitespace("  hello\nworld  ", :normalizedString)
     end
 
     test "collapses whitespace for token type" do
@@ -337,12 +338,21 @@ defmodule FnXML.XsTypesTest do
 
     test "validates pattern facet" do
       assert :ok = XsTypes.validate_with_facets("abc123", :string, [{:pattern, "[a-z]+[0-9]+"}])
-      assert {:error, _} = XsTypes.validate_with_facets("123abc", :string, [{:pattern, "[a-z]+[0-9]+"}])
+
+      assert {:error, _} =
+               XsTypes.validate_with_facets("123abc", :string, [{:pattern, "[a-z]+[0-9]+"}])
     end
 
     test "validates enumeration facet" do
-      assert :ok = XsTypes.validate_with_facets("red", :string, [{:enumeration, ["red", "green", "blue"]}])
-      assert {:error, _} = XsTypes.validate_with_facets("yellow", :string, [{:enumeration, ["red", "green", "blue"]}])
+      assert :ok =
+               XsTypes.validate_with_facets("red", :string, [
+                 {:enumeration, ["red", "green", "blue"]}
+               ])
+
+      assert {:error, _} =
+               XsTypes.validate_with_facets("yellow", :string, [
+                 {:enumeration, ["red", "green", "blue"]}
+               ])
     end
 
     test "validates minInclusive facet" do
@@ -362,7 +372,9 @@ defmodule FnXML.XsTypesTest do
 
     test "validates fractionDigits facet" do
       assert :ok = XsTypes.validate_with_facets("3.14", :decimal, [{:fractionDigits, 2}])
-      assert {:error, _} = XsTypes.validate_with_facets("3.14159", :decimal, [{:fractionDigits, 2}])
+
+      assert {:error, _} =
+               XsTypes.validate_with_facets("3.14159", :decimal, [{:fractionDigits, 2}])
     end
 
     test "validates multiple facets" do
@@ -371,6 +383,7 @@ defmodule FnXML.XsTypesTest do
         {:maxLength, 10},
         {:pattern, "[a-z]+"}
       ]
+
       assert :ok = XsTypes.validate_with_facets("hello", :string, facets)
       assert {:error, _} = XsTypes.validate_with_facets("", :string, facets)
       assert {:error, _} = XsTypes.validate_with_facets("Hello123", :string, facets)
@@ -547,14 +560,18 @@ defmodule FnXML.XsTypesTest do
       assert {:ok, %{years: 1}} = XsTypes.parse("P1Y", :yearMonthDuration)
       assert {:ok, %{months: 2}} = XsTypes.parse("P2M", :yearMonthDuration)
       assert {:ok, %{years: 1, months: 2}} = XsTypes.parse("P1Y2M", :yearMonthDuration)
-      assert {:ok, %{negative: true, years: 1, months: 2}} = XsTypes.parse("-P1Y2M", :yearMonthDuration)
+
+      assert {:ok, %{negative: true, years: 1, months: 2}} =
+               XsTypes.parse("-P1Y2M", :yearMonthDuration)
     end
 
     test "encodes yearMonthDuration from map" do
       assert {:ok, "P1Y"} = XsTypes.encode(%{years: 1}, :yearMonthDuration)
       assert {:ok, "P2M"} = XsTypes.encode(%{months: 2}, :yearMonthDuration)
       assert {:ok, "P1Y2M"} = XsTypes.encode(%{years: 1, months: 2}, :yearMonthDuration)
-      assert {:ok, "-P1Y2M"} = XsTypes.encode(%{negative: true, years: 1, months: 2}, :yearMonthDuration)
+
+      assert {:ok, "-P1Y2M"} =
+               XsTypes.encode(%{negative: true, years: 1, months: 2}, :yearMonthDuration)
     end
   end
 
@@ -577,15 +594,23 @@ defmodule FnXML.XsTypesTest do
       assert {:ok, %{hours: 2}} = XsTypes.parse("PT2H", :dayTimeDuration)
       assert {:ok, %{minutes: 30}} = XsTypes.parse("PT30M", :dayTimeDuration)
       assert {:ok, %{seconds: 45.0}} = XsTypes.parse("PT45S", :dayTimeDuration)
-      assert {:ok, %{days: 1, hours: 2, minutes: 30, seconds: 45.0}} = XsTypes.parse("P1DT2H30M45S", :dayTimeDuration)
-      assert {:ok, %{negative: true, days: 1, hours: 2}} = XsTypes.parse("-P1DT2H", :dayTimeDuration)
+
+      assert {:ok, %{days: 1, hours: 2, minutes: 30, seconds: 45.0}} =
+               XsTypes.parse("P1DT2H30M45S", :dayTimeDuration)
+
+      assert {:ok, %{negative: true, days: 1, hours: 2}} =
+               XsTypes.parse("-P1DT2H", :dayTimeDuration)
     end
 
     test "encodes dayTimeDuration from map" do
       assert {:ok, "P1D"} = XsTypes.encode(%{days: 1}, :dayTimeDuration)
       assert {:ok, "PT2H"} = XsTypes.encode(%{hours: 2}, :dayTimeDuration)
-      assert {:ok, "P1DT2H30M45.0S"} = XsTypes.encode(%{days: 1, hours: 2, minutes: 30, seconds: 45.0}, :dayTimeDuration)
-      assert {:ok, "-P1DT2H"} = XsTypes.encode(%{negative: true, days: 1, hours: 2}, :dayTimeDuration)
+
+      assert {:ok, "P1DT2H30M45.0S"} =
+               XsTypes.encode(%{days: 1, hours: 2, minutes: 30, seconds: 45.0}, :dayTimeDuration)
+
+      assert {:ok, "-P1DT2H"} =
+               XsTypes.encode(%{negative: true, days: 1, hours: 2}, :dayTimeDuration)
     end
   end
 

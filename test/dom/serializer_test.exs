@@ -5,12 +5,14 @@ defmodule FnXML.DOM.SerializerTest do
 
   describe "to_string/2" do
     test "serializes special child types (comment, CDATA, PI)" do
-      elem = Element.new("root", [], [
-        {:comment, "test comment"},
-        {:cdata, "<data>"},
-        {:pi, "target", "data"},
-        {:pi, "empty", nil}
-      ])
+      elem =
+        Element.new("root", [], [
+          {:comment, "test comment"},
+          {:cdata, "<data>"},
+          {:pi, "target", "data"},
+          {:pi, "empty", nil}
+        ])
+
       result = Serializer.to_string(elem)
 
       assert result =~ "<!--test comment-->"
@@ -31,6 +33,7 @@ defmodule FnXML.DOM.SerializerTest do
         root: Element.new("root", [], []),
         prolog: %{version: "1.0", encoding: "UTF-8"}
       }
+
       result = Serializer.to_string(doc, xml_declaration: true)
       assert result =~ ~s(<?xml version="1.0" encoding="UTF-8"?>)
 
@@ -50,12 +53,13 @@ defmodule FnXML.DOM.SerializerTest do
     end
 
     test "pretty printing with indent options" do
-      elem = Element.new("root", [], [
-        {:comment, "c"},
-        {:cdata, "d"},
-        {:pi, "t", "d"},
-        Element.new("child", [], [])
-      ])
+      elem =
+        Element.new("root", [], [
+          {:comment, "c"},
+          {:cdata, "d"},
+          {:pi, "t", "d"},
+          Element.new("child", [], [])
+        ])
 
       # Tab indent
       assert Serializer.to_string(elem, pretty: true, indent: "\t") =~ "\t<child/>"
@@ -78,13 +82,15 @@ defmodule FnXML.DOM.SerializerTest do
 
   describe "to_stream/1" do
     test "streams element events including special types" do
-      elem = Element.new("root", [], [
-        "text",
-        {:comment, "c"},
-        {:cdata, "d"},
-        {:pi, "t", "d"},
-        Element.new("child", [], [])
-      ])
+      elem =
+        Element.new("root", [], [
+          "text",
+          {:comment, "c"},
+          {:cdata, "d"},
+          {:pi, "t", "d"},
+          Element.new("child", [], [])
+        ])
+
       events = Serializer.to_stream(elem) |> Enum.to_list()
 
       assert {:start_element, "root", [], nil} in events

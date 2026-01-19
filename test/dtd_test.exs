@@ -308,8 +308,15 @@ defmodule FnXML.DTDTest do
         |> FnXML.DTD.EntityResolver.resolve(model)
         |> Enum.to_list()
 
-      text_event = Enum.find(events, &match?({:characters, _, _}, &1))
-      assert {:characters, "Hello, World!", _} = text_event
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "Hello, World!"
     end
 
     test "entity resolution with DTD from stream" do
@@ -328,9 +335,16 @@ defmodule FnXML.DTDTest do
         |> FnXML.DTD.EntityResolver.resolve(model, on_unknown: :keep)
         |> Enum.to_list()
 
-      text_event = Enum.find(events, &match?({:characters, _, _}, &1))
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
       # Character references are preserved for FnXML.Entities
-      assert {:characters, content, _} = text_event
+      content = elem(text_event, 1)
       assert content =~ "Copyright"
       assert content =~ "Trademark"
     end

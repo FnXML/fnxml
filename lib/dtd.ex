@@ -88,6 +88,7 @@ defmodule FnXML.DTD do
   ## Options
 
   - `:external_resolver` - Function to fetch external DTD content
+  - `:edition` - XML 1.0 edition for name validation (4 or 5, default: 5)
 
   ## Examples
 
@@ -106,8 +107,17 @@ defmodule FnXML.DTD do
           {:ok, Model.t()} | {:error, String.t()} | :no_dtd
   def from_stream(stream, opts \\ []) do
     stream
-    |> Enum.find(&match?({:dtd, _, _}, &1))
+    |> Enum.find(fn
+      {:dtd, _, _, _, _} -> true
+      {:dtd, _, _} -> true
+      _ -> false
+    end)
     |> case do
+      # 5-tuple from parser
+      {:dtd, content, _line, _ls, _pos} ->
+        parse_doctype(content, opts)
+
+      # 3-tuple normalized
       {:dtd, content, _loc} ->
         parse_doctype(content, opts)
 
@@ -124,6 +134,11 @@ defmodule FnXML.DTD do
       "DOCTYPE root [...]"
       "DOCTYPE root SYSTEM \\"file.dtd\\""
       "DOCTYPE root PUBLIC \\"-//...//\\" \\"file.dtd\\" [...]"
+
+  ## Options
+
+  - `:external_resolver` - Function to fetch external DTD content
+  - `:edition` - XML 1.0 edition for name validation (4 or 5, default: 5)
 
   ## Examples
 
@@ -149,7 +164,7 @@ defmodule FnXML.DTD do
             {{system_id, public_id}, resolver} ->
               case resolver.(system_id, public_id) do
                 {:ok, external_content} ->
-                  case Parser.parse(external_content) do
+                  case Parser.parse(external_content, opts) do
                     {:ok, external_model} -> merge_models(model, external_model)
                     {:error, _} -> model
                   end
@@ -165,7 +180,7 @@ defmodule FnXML.DTD do
             {:ok, model}
 
           subset ->
-            case Parser.parse(subset) do
+            case Parser.parse(subset, opts) do
               {:ok, subset_model} -> {:ok, merge_models(model, subset_model)}
               {:error, _} = err -> err
             end
@@ -173,6 +188,183 @@ defmodule FnXML.DTD do
 
       {:error, _} = err ->
         err
+    end
+  end
+
+  @doc """
+  Check for circular entity references in a DTD model.
+
+  Returns `{:ok, model}` if no cycles found, or `{:error, message}` if
+  circular references are detected.
+
+  ## Examples
+
+      iex> model = %FnXML.DTD.Model{entities: %{"e1" => "&e2;", "e2" => "&e1;"}}
+      iex> FnXML.DTD.check_circular_entities(model)
+      {:error, "Circular entity reference: e1 -> e2 -> e1"}
+
+  """
+  @spec check_circular_entities(Model.t()) :: {:ok, Model.t()} | {:error, String.t()}
+  def check_circular_entities(%Model{entities: entities} = model) do
+    # Build reference graph: entity name -> list of referenced entity names
+    refs = build_entity_refs(entities)
+
+    # Check each entity for cycles
+    case find_cycle(refs) do
+      nil -> {:ok, model}
+      cycle -> {:error, "Circular entity reference: #{Enum.join(cycle, " -> ")}"}
+    end
+  end
+
+  # Build a map of entity name -> list of entity names it references
+  defp build_entity_refs(entities) do
+    entity_pattern = ~r/&([a-zA-Z_][a-zA-Z0-9._-]*);/
+
+    entities
+    |> Enum.map(fn {name, value} ->
+      # Extract the string value from various entity storage formats
+      str_value =
+        case value do
+          {:internal, v} when is_binary(v) -> v
+          v when is_binary(v) -> v
+          _ -> nil
+        end
+
+      refs =
+        case str_value do
+          nil ->
+            []
+
+          v ->
+            Regex.scan(entity_pattern, v)
+            |> Enum.map(fn [_, ref_name] -> ref_name end)
+        end
+
+      {name, refs}
+    end)
+    |> Map.new()
+  end
+
+  # Find a cycle in the entity reference graph using DFS
+  defp find_cycle(refs) do
+    entity_names = Map.keys(refs)
+
+    Enum.find_value(entity_names, fn start ->
+      find_cycle_from(start, refs, [start], MapSet.new([start]))
+    end)
+  end
+
+  defp find_cycle_from(current, refs, path, visited) do
+    referenced = Map.get(refs, current, [])
+
+    Enum.find_value(referenced, fn ref ->
+      cond do
+        # Found a cycle back to an entity in our path
+        ref in path ->
+          cycle_start = Enum.find_index(path, &(&1 == ref))
+          Enum.slice(path, cycle_start..-1//1) ++ [ref]
+
+        # Already visited in another branch (not a cycle through our path)
+        MapSet.member?(visited, ref) ->
+          nil
+
+        # Continue DFS
+        true ->
+          find_cycle_from(ref, refs, path ++ [ref], MapSet.put(visited, ref))
+      end
+    end)
+  end
+
+  @doc """
+  Check for undefined entity references in a DTD model.
+
+  Validates that all entity references in entity values point to either:
+  - Predefined XML entities (amp, lt, gt, quot, apos)
+  - Entities defined in the same DTD model
+
+  Returns `{:ok, model}` if all references are valid, or `{:error, message}`
+  if undefined entity references are found.
+  """
+  @predefined_entities MapSet.new(["amp", "lt", "gt", "quot", "apos"])
+
+  @spec check_undefined_entities(Model.t()) :: {:ok, Model.t()} | {:error, String.t()}
+  def check_undefined_entities(%Model{entities: entities, attributes: attributes} = model) do
+    defined = entities |> Map.keys() |> MapSet.new()
+    all_valid = MapSet.union(defined, @predefined_entities)
+
+    # Check each entity value for undefined references
+    undefined_in_entity =
+      entities
+      |> Enum.find_value(fn {entity_name, value} ->
+        str_value =
+          case value do
+            {:internal, v} when is_binary(v) -> v
+            v when is_binary(v) -> v
+            _ -> nil
+          end
+
+        case str_value do
+          nil ->
+            nil
+
+          v ->
+            # Remove CDATA sections before checking - entity refs inside CDATA are literal text
+            v_without_cdata = Regex.replace(~r/<!\[CDATA\[.*?\]\]>/s, v, "")
+
+            # Find entity references that are not defined
+            refs =
+              Regex.scan(~r/&([a-zA-Z_][a-zA-Z0-9._-]*);/, v_without_cdata)
+              |> Enum.map(fn [_, ref_name] -> ref_name end)
+
+            bad_ref = Enum.find(refs, fn ref -> not MapSet.member?(all_valid, ref) end)
+            if bad_ref, do: {:entity, entity_name, bad_ref}, else: nil
+        end
+      end)
+
+    # Check ATTLIST default values for undefined entity references
+    undefined_in_attlist =
+      if undefined_in_entity == nil do
+        attributes
+        |> Enum.find_value(fn {_elem_name, attr_defs} ->
+          Enum.find_value(attr_defs, fn attr_def ->
+            default_value =
+              case attr_def do
+                %{default: {:default, v}} -> v
+                %{default: {:value, v}} -> v
+                %{default: {:fixed, v}} -> v
+                {_name, _type, {:default, v}} -> v
+                {_name, _type, {:value, v}} -> v
+                {_name, _type, {:fixed, v}} -> v
+                _ -> nil
+              end
+
+            case default_value do
+              nil ->
+                nil
+
+              v ->
+                refs =
+                  Regex.scan(~r/&([a-zA-Z_][a-zA-Z0-9._-]*);/, v)
+                  |> Enum.map(fn [_, ref_name] -> ref_name end)
+
+                bad_ref = Enum.find(refs, fn ref -> not MapSet.member?(all_valid, ref) end)
+                if bad_ref, do: {:attlist, bad_ref}, else: nil
+            end
+          end)
+        end)
+      else
+        nil
+      end
+
+    case {undefined_in_entity, undefined_in_attlist} do
+      {nil, nil} ->
+        {:ok, model}
+
+      {{:entity, entity_name, bad_ref}, _} ->
+        {:error, "Entity '#{entity_name}' references undefined entity '&#{bad_ref};'"}
+
+      {_, {:attlist, bad_ref}} ->
+        {:error, "ATTLIST default value references undefined entity '&#{bad_ref};'"}
     end
   end
 
@@ -220,36 +412,11 @@ defmodule FnXML.DTD do
   defp parse_external_and_subset(<<"[", rest::binary>>, root_name) do
     # Internal subset only
     case extract_internal_subset(rest) do
-      {:ok, subset} -> {:ok, root_name, nil, subset}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp parse_external_and_subset(<<"SYSTEM", rest::binary>>, root_name) do
-    rest = String.trim(rest)
-
-    case extract_quoted_string(rest) do
-      {:ok, system_id, remainder} ->
-        parse_optional_subset(String.trim(remainder), root_name, {system_id, nil})
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
-  defp parse_external_and_subset(<<"PUBLIC", rest::binary>>, root_name) do
-    rest = String.trim(rest)
-
-    case extract_quoted_string(rest) do
-      {:ok, public_id, remainder} ->
-        remainder = String.trim(remainder)
-
-        case extract_quoted_string(remainder) do
-          {:ok, system_id, final_remainder} ->
-            parse_optional_subset(String.trim(final_remainder), root_name, {system_id, public_id})
-
-          {:error, _} = err ->
-            err
+      {:ok, subset, remainder} ->
+        # Validate nothing significant after ]
+        case validate_after_internal_subset(remainder) do
+          :ok -> {:ok, root_name, nil, subset}
+          {:error, _} = err -> err
         end
 
       {:error, _} = err ->
@@ -257,9 +424,70 @@ defmodule FnXML.DTD do
     end
   end
 
+  defp parse_external_and_subset(<<"SYSTEM", rest::binary>>, root_name) do
+    # Must have whitespace after SYSTEM keyword
+    if not starts_with_whitespace?(rest) do
+      {:error, "Missing whitespace after SYSTEM keyword"}
+    else
+      rest = String.trim(rest)
+
+      case extract_quoted_string(rest) do
+        {:ok, system_id, remainder} ->
+          parse_optional_subset(String.trim(remainder), root_name, {system_id, nil})
+
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
+
+  defp parse_external_and_subset(<<"PUBLIC", rest::binary>>, root_name) do
+    # Must have whitespace after PUBLIC keyword
+    if not starts_with_whitespace?(rest) do
+      {:error, "Missing whitespace after PUBLIC keyword"}
+    else
+      rest = String.trim(rest)
+
+      case extract_quoted_string(rest) do
+        {:ok, public_id, remainder} ->
+          # Validate PUBLIC ID characters per XML spec
+          case validate_public_id(public_id) do
+            :ok ->
+              # Must have whitespace between public ID and system ID
+              if not starts_with_whitespace?(remainder) do
+                {:error, "Missing whitespace between public and system identifiers"}
+              else
+                remainder = String.trim(remainder)
+
+                case extract_quoted_string(remainder) do
+                  {:ok, system_id, final_remainder} ->
+                    parse_optional_subset(
+                      String.trim(final_remainder),
+                      root_name,
+                      {system_id, public_id}
+                    )
+
+                  {:error, _} = err ->
+                    err
+                end
+              end
+
+            {:error, _} = err ->
+              err
+          end
+
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
+
   defp parse_external_and_subset(_, _root_name) do
     {:error, "Invalid DOCTYPE: expected SYSTEM, PUBLIC, or ["}
   end
+
+  defp starts_with_whitespace?(<<c, _::binary>>) when c in [?\s, ?\t, ?\n, ?\r], do: true
+  defp starts_with_whitespace?(_), do: false
 
   # Parse optional internal subset after external identifier
   defp parse_optional_subset("", root_name, external_id) do
@@ -268,8 +496,14 @@ defmodule FnXML.DTD do
 
   defp parse_optional_subset(<<"[", rest::binary>>, root_name, external_id) do
     case extract_internal_subset(rest) do
-      {:ok, subset} -> {:ok, root_name, external_id, subset}
-      {:error, _} = err -> err
+      {:ok, subset, remainder} ->
+        case validate_after_internal_subset(remainder) do
+          :ok -> {:ok, root_name, external_id, subset}
+          {:error, _} = err -> err
+        end
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -283,29 +517,90 @@ defmodule FnXML.DTD do
     case find_closing_bracket(content, 0, 0) do
       {:ok, subset_end} ->
         subset = String.slice(content, 0, subset_end) |> String.trim()
-        {:ok, subset}
+        # Return remainder after ]
+        remainder = String.slice(content, subset_end + 1, byte_size(content)) |> String.trim()
+        {:ok, subset, remainder}
 
       :error ->
         {:error, "Unterminated internal subset"}
     end
   end
 
-  # Find the closing ] accounting for nested < > in declarations
-  defp find_closing_bracket(<<"]", _::binary>>, pos, 0), do: {:ok, pos}
+  # Validate nothing significant appears after the internal subset's closing ]
+  defp validate_after_internal_subset(""), do: :ok
 
-  defp find_closing_bracket(<<"]", rest::binary>>, pos, depth),
-    do: find_closing_bracket(rest, pos + 1, depth - 1)
+  defp validate_after_internal_subset(remainder) do
+    # Only whitespace is allowed after ] and before closing >
+    # PE references or other content is not allowed
+    if String.match?(remainder, ~r/^[\s]*$/) do
+      :ok
+    else
+      {:error, "Invalid content after internal subset: #{String.slice(remainder, 0, 30)}"}
+    end
+  end
 
-  defp find_closing_bracket(<<"<", rest::binary>>, pos, depth),
-    do: find_closing_bracket(rest, pos + 1, depth + 1)
+  # Find the closing ] accounting for nested < > in declarations and quoted strings
+  defp find_closing_bracket(content, pos, depth) do
+    find_closing_bracket(content, pos, depth, nil)
+  end
 
-  defp find_closing_bracket(<<">", rest::binary>>, pos, depth),
-    do: find_closing_bracket(rest, pos + 1, max(0, depth - 1))
+  # Found closing ] at depth 0, not in quotes
+  defp find_closing_bracket(<<"]", _::binary>>, pos, 0, nil), do: {:ok, pos}
 
-  defp find_closing_bracket(<<_, rest::binary>>, pos, depth),
-    do: find_closing_bracket(rest, pos + 1, depth)
+  # ] while in quotes - just skip it
+  defp find_closing_bracket(<<"]", rest::binary>>, pos, depth, quote) when quote != nil,
+    do: find_closing_bracket(rest, pos + 1, depth, quote)
 
-  defp find_closing_bracket(<<>>, _pos, _depth), do: :error
+  # ] not in quotes, depth > 0
+  defp find_closing_bracket(<<"]", rest::binary>>, pos, depth, nil),
+    do: find_closing_bracket(rest, pos + 1, depth - 1, nil)
+
+  # Enter/exit double quote
+  defp find_closing_bracket(<<"\"", rest::binary>>, pos, depth, nil),
+    do: find_closing_bracket(rest, pos + 1, depth, ?")
+
+  defp find_closing_bracket(<<"\"", rest::binary>>, pos, depth, ?"),
+    do: find_closing_bracket(rest, pos + 1, depth, nil)
+
+  # Enter/exit single quote
+  defp find_closing_bracket(<<"'", rest::binary>>, pos, depth, nil),
+    do: find_closing_bracket(rest, pos + 1, depth, ?')
+
+  defp find_closing_bracket(<<"'", rest::binary>>, pos, depth, ?'),
+    do: find_closing_bracket(rest, pos + 1, depth, nil)
+
+  # Comment inside DTD - skip entire comment without tracking quotes
+  defp find_closing_bracket(<<"<!--", rest::binary>>, pos, depth, nil) do
+    case skip_comment(rest, pos + 4) do
+      {:ok, new_pos, remaining} ->
+        find_closing_bracket(remaining, new_pos, depth, nil)
+
+      :error ->
+        :error
+    end
+  end
+
+  # < and > only count when not in quotes
+  defp find_closing_bracket(<<"<", rest::binary>>, pos, depth, nil),
+    do: find_closing_bracket(rest, pos + 1, depth + 1, nil)
+
+  defp find_closing_bracket(<<">", rest::binary>>, pos, depth, nil),
+    do: find_closing_bracket(rest, pos + 1, max(0, depth - 1), nil)
+
+  # Any char while in quotes - just skip
+  defp find_closing_bracket(<<_, rest::binary>>, pos, depth, quote) when quote != nil,
+    do: find_closing_bracket(rest, pos + 1, depth, quote)
+
+  # Any other char not in quotes
+  defp find_closing_bracket(<<_, rest::binary>>, pos, depth, nil),
+    do: find_closing_bracket(rest, pos + 1, depth, nil)
+
+  defp find_closing_bracket(<<>>, _pos, _depth, _quote), do: :error
+
+  # Skip comment content until -->
+  defp skip_comment(<<"-->", rest::binary>>, pos), do: {:ok, pos + 3, rest}
+  defp skip_comment(<<_, rest::binary>>, pos), do: skip_comment(rest, pos + 1)
+  defp skip_comment(<<>>, _pos), do: :error
 
   # Extract a quoted string (single or double quotes)
   defp extract_quoted_string(<<?", rest::binary>>) do
@@ -335,6 +630,29 @@ defmodule FnXML.DTD do
   defp extract_quoted_string(_) do
     {:error, "Expected quoted string"}
   end
+
+  # Validate PUBLIC identifier characters per XML spec
+  # PubidChar ::= #x20 | #xD | #xA | [a-zA-Z0-9] | [-'()+,./:=?;!*#@$_%]
+  defp validate_public_id(public_id) do
+    # Check each character is a valid PubidChar
+    invalid_char =
+      public_id
+      |> String.graphemes()
+      |> Enum.find(fn char ->
+        not valid_pubid_char?(char)
+      end)
+
+    case invalid_char do
+      nil -> :ok
+      char -> {:error, "Invalid character '#{char}' in PUBLIC identifier"}
+    end
+  end
+
+  # Valid PubidChar characters
+  defp valid_pubid_char?(<<c>>) when c in [0x20, 0x0D, 0x0A], do: true
+  defp valid_pubid_char?(<<c>>) when c in ?a..?z or c in ?A..?Z or c in ?0..?9, do: true
+  defp valid_pubid_char?(<<c>>) when c in ~c[-'()+,./:=?;!*#@$_%], do: true
+  defp valid_pubid_char?(_), do: false
 
   # Merge two models, second takes precedence
   defp merge_models(base, override) do

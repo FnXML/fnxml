@@ -78,12 +78,13 @@ defmodule FnXML.Stream.SimpleFormTest do
       # Simulated stream with multiple roots
       stream = [
         {:start_document, nil},
-        {:start_element, "a", [], {1,0,0}},
+        {:start_element, "a", [], {1, 0, 0}},
         {:end_element, "a"},
-        {:start_element, "b", [], {1,0,5}},
+        {:start_element, "b", [], {1, 0, 5}},
         {:end_element, "b"},
         {:end_document, nil}
       ]
+
       result = stream |> SimpleForm.from_stream()
       # Result may be a single tuple (last element) or a list
       assert is_tuple(result) or is_list(result)
@@ -92,11 +93,13 @@ defmodule FnXML.Stream.SimpleFormTest do
     test "handles text outside elements" do
       stream = [
         {:start_document, nil},
-        {:characters, "   ", {1,0,0}},  # whitespace - ignored
-        {:start_element, "root", [], {1,0,3}},
+        # whitespace - ignored
+        {:characters, "   ", {1, 0, 0}},
+        {:start_element, "root", [], {1, 0, 3}},
         {:end_element, "root"},
         {:end_document, nil}
       ]
+
       result = stream |> SimpleForm.from_stream()
       assert {"root", [], []} = result
     end
@@ -104,9 +107,10 @@ defmodule FnXML.Stream.SimpleFormTest do
     test "handles non-whitespace text outside elements" do
       stream = [
         {:start_document, nil},
-        {:characters, "text", {1,0,0}},
+        {:characters, "text", {1, 0, 0}},
         {:end_document, nil}
       ]
+
       result = stream |> SimpleForm.from_stream()
       assert "text" in List.wrap(result)
     end
@@ -138,8 +142,12 @@ defmodule FnXML.Stream.SimpleFormTest do
 
     test "handles nested elements" do
       events = {"a", [], [{"b", [], []}]} |> SimpleForm.to_stream() |> Enum.to_list()
-      tags = events |> Enum.filter(&match?({:start_element, _, _, _}, &1))
-                    |> Enum.map(fn {:start_element, tag, _, _} -> tag end)
+
+      tags =
+        events
+        |> Enum.filter(&match?({:start_element, _, _, _}, &1))
+        |> Enum.map(fn {:start_element, tag, _, _} -> tag end)
+
       assert "a" in tags
       assert "b" in tags
     end
@@ -153,8 +161,12 @@ defmodule FnXML.Stream.SimpleFormTest do
   describe "list_to_stream/1" do
     test "converts list of SimpleForm to stream" do
       events = [{"a", [], []}, {"b", [], []}] |> SimpleForm.list_to_stream() |> Enum.to_list()
-      tags = events |> Enum.filter(&match?({:start_element, _, _, _}, &1))
-                    |> Enum.map(fn {:start_element, tag, _, _} -> tag end)
+
+      tags =
+        events
+        |> Enum.filter(&match?({:start_element, _, _, _}, &1))
+        |> Enum.map(fn {:start_element, tag, _, _} -> tag end)
+
       assert "a" in tags
       assert "b" in tags
     end
@@ -201,9 +213,14 @@ defmodule FnXML.Stream.SimpleFormTest do
     end
 
     test "converts nested elements" do
-      elem = %Element{tag: "a", attributes: [], children: [
-        %Element{tag: "b", attributes: [], children: []}
-      ]}
+      elem = %Element{
+        tag: "a",
+        attributes: [],
+        children: [
+          %Element{tag: "b", attributes: [], children: []}
+        ]
+      }
+
       assert {"a", [], [{"b", [], []}]} = SimpleForm.from_dom(elem)
     end
 
