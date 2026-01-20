@@ -403,24 +403,35 @@ end
 
 ### DTD-Aware Parser
 
-With entity definitions from DTD:
+For XML with inline DTD (most common case), use `FnXML.DTD.resolve/2`:
 
 ```elixir
 defmodule DtdAwareParser do
-  def parse(xml, dtd_path) do
-    {:ok, dtd_content} = File.read(dtd_path)
-    {:ok, dtd_model} = FnXML.DTD.Parser.parse(dtd_content)
+  def parse(xml) do
+    xml
+    |> FnXML.parse_stream()
+    |> FnXML.DTD.resolve()              # Extracts and resolves DTD entities
+    |> FnXML.Validate.well_formed()
+    |> Enum.to_list()
+  end
+end
+```
 
-    entities =
-      dtd_model.entities
-      |> Enum.filter(fn {_, v} -> match?({:internal, _}, v) end)
-      |> Enum.map(fn {name, {:internal, value}} -> {name, value} end)
-      |> Map.new()
+For XML with external DTD file:
+
+```elixir
+defmodule ExternalDtdParser do
+  def parse(xml, base_path) do
+    # Build resolver for external DTD references
+    resolver = fn system_id, _public_id ->
+      path = Path.join(Path.dirname(base_path), system_id)
+      File.read(path)
+    end
 
     xml
     |> FnXML.parse_stream()
+    |> FnXML.DTD.resolve(external_resolver: resolver)
     |> FnXML.Validate.well_formed()
-    |> FnXML.Entities.resolve(entities: entities)
     |> Enum.to_list()
   end
 end
@@ -514,11 +525,12 @@ flowchart TB
 
     subgraph TRANSFORMS["TRANSFORMS"]
         direction TB
-        T1["FnXML.Entities.resolve"]
+        T0["FnXML.DTD.resolve - DTD entities"]
+        T1["FnXML.Entities.resolve - Predefined entities"]
         T2["FnXML.Namespaces.resolve"]
         T3["FnXML.filter_whitespace"]
         T4["FnXML.halt_on_error"]
-        T1 --- T2 --- T3 --- T4
+        T0 --- T1 --- T2 --- T3 --- T4
     end
 
     subgraph OUTPUT["OUTPUT"]
@@ -539,7 +551,36 @@ flowchart TB
 
 ## DTD Processing
 
-### Parse DTD
+### Pipeline-Friendly Entity Resolution (Recommended)
+
+Use `FnXML.DTD.resolve/2` for single-pass DTD entity resolution:
+
+```elixir
+xml
+|> FnXML.parse_stream()
+|> FnXML.DTD.resolve()                  # Handles DTD extraction and entity resolution
+|> FnXML.Validate.well_formed()
+|> Enum.to_list()
+
+# With options
+xml
+|> FnXML.parse_stream()
+|> FnXML.DTD.resolve(
+  on_unknown: :keep,                    # :raise | :emit | :keep | :remove
+  edition: 5,                           # XML edition for re-parsing entity markup
+  external_resolver: &fetch_dtd/2       # For external DTD files
+)
+|> Enum.to_list()
+```
+
+This function:
+- Buffers events until DTD or root element is seen
+- Extracts internal entity definitions from inline DTD
+- Resolves entity references (custom + predefined like `&amp;`, `&lt;`)
+- Re-parses entity values containing XML markup
+- Works in a single streaming pass
+
+### Parse DTD Separately
 
 ```elixir
 FnXML.DTD.Parser.parse(dtd_string, edition: 5)

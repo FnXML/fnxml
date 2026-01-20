@@ -349,4 +349,296 @@ defmodule FnXML.DTDTest do
       assert content =~ "Trademark"
     end
   end
+
+  describe "resolve/2 pipeline function" do
+    test "processes DTD entities in pipeline" do
+      xml = """
+      <!DOCTYPE note [<!ENTITY greeting "Hello">]>
+      <note>&greeting;</note>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> Enum.to_list()
+
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "Hello"
+    end
+
+    test "handles XML without DTD" do
+      xml = "<note>Hello</note>"
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> Enum.to_list()
+
+      # Should have start_element for "note"
+      assert Enum.any?(events, fn
+               {:start_element, "note", _, _, _, _} -> true
+               {:start_element, "note", _, _} -> true
+               _ -> false
+             end)
+
+      # Should have text content
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "Hello"
+    end
+
+    test "resolves entities in attributes" do
+      xml = """
+      <!DOCTYPE doc [<!ENTITY val "test">]>
+      <doc attr="&val;"/>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> Enum.to_list()
+
+      start_event =
+        Enum.find(events, fn
+          {:start_element, "doc", _, _, _, _} -> true
+          {:start_element, "doc", _, _} -> true
+          _ -> false
+        end)
+
+      assert start_event != nil
+
+      attrs =
+        case start_event do
+          {:start_element, _, attrs, _, _, _} -> attrs
+          {:start_element, _, attrs, _} -> attrs
+        end
+
+      assert Enum.find(attrs, fn {name, _} -> name == "attr" end) == {"attr", "test"}
+    end
+
+    test "composes with other transforms" do
+      xml = """
+      <!DOCTYPE doc [<!ENTITY e "value">]>
+      <doc><child>&e;</child></doc>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> FnXML.Validate.well_formed()
+        |> FnXML.filter_whitespace()
+        |> Enum.to_list()
+
+      # Should not have any error events
+      refute Enum.any?(events, fn
+               {:error, _, _, _, _, _} -> true
+               {:error, _, _} -> true
+               {:error, _} -> true
+               _ -> false
+             end)
+
+      # Text should be resolved
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "value"
+    end
+
+    test "handles nested entity definitions" do
+      xml = """
+      <!DOCTYPE message [
+        <!ENTITY hello "Hello">
+        <!ENTITY world "World">
+        <!ENTITY greeting "&hello;, &world;!">
+      ]>
+      <message>&greeting;</message>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> Enum.to_list()
+
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "Hello, World!"
+    end
+
+    test "preserves predefined entities" do
+      xml = """
+      <!DOCTYPE doc [<!ENTITY custom "value">]>
+      <doc>&custom; &amp; &lt;tag&gt;</doc>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> FnXML.Entities.resolve()
+        |> Enum.to_list()
+
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      # Custom entity resolved by DTD.resolve, predefined by Entities.resolve
+      assert elem(text_event, 1) == "value & <tag>"
+    end
+
+    test "on_unknown: :emit returns error for undefined entities" do
+      xml = """
+      <!DOCTYPE doc []>
+      <doc>&undefined;</doc>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve(on_unknown: :emit)
+        |> Enum.to_list()
+
+      # Should have an error event
+      assert Enum.any?(events, fn
+               {:error, _} -> true
+               {:error, _, _} -> true
+               {:error, _, _, _, _, _} -> true
+               _ -> false
+             end)
+    end
+
+    test "on_unknown: :keep preserves undefined entities" do
+      xml = """
+      <!DOCTYPE doc []>
+      <doc>&undefined;</doc>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve(on_unknown: :keep)
+        |> Enum.to_list()
+
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "&undefined;"
+    end
+
+    test "buffers prolog and passes through" do
+      xml = """
+      <?xml version="1.0"?>
+      <!DOCTYPE doc [<!ENTITY e "val">]>
+      <doc>&e;</doc>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> Enum.to_list()
+
+      # Prolog should be preserved
+      assert Enum.any?(events, fn
+               {:prolog, "xml", _, _, _, _} -> true
+               {:prolog, "xml", _, _} -> true
+               _ -> false
+             end)
+
+      # Entity should be resolved
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      assert elem(text_event, 1) == "val"
+    end
+
+    test "handles multiple text nodes with entities" do
+      xml = """
+      <!DOCTYPE doc [
+        <!ENTITY a "A">
+        <!ENTITY b "B">
+      ]>
+      <doc><x>&a;</x><y>&b;</y></doc>
+      """
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve()
+        |> Enum.to_list()
+
+      text_events =
+        Enum.filter(events, fn
+          {:characters, content, _, _, _} -> String.trim(content) != ""
+          {:characters, content, _} -> String.trim(content) != ""
+          _ -> false
+        end)
+
+      texts = Enum.map(text_events, &elem(&1, 1))
+      assert "A" in texts
+      assert "B" in texts
+    end
+
+    test "handles DTD with external resolver" do
+      xml = """
+      <!DOCTYPE doc SYSTEM "test.dtd" [
+        <!ENTITY local "local-value">
+      ]>
+      <doc>&external; &local;</doc>
+      """
+
+      resolver = fn "test.dtd", nil ->
+        {:ok, "<!ENTITY external \"external-value\">"}
+      end
+
+      events =
+        FnXML.parse_stream(xml)
+        |> DTD.resolve(external_resolver: resolver, on_unknown: :keep)
+        |> Enum.to_list()
+
+      text_event =
+        Enum.find(events, fn
+          {:characters, _, _, _, _} -> true
+          {:characters, _, _} -> true
+          _ -> false
+        end)
+
+      assert text_event != nil
+      content = elem(text_event, 1)
+      assert content =~ "external-value"
+      assert content =~ "local-value"
+    end
+  end
 end

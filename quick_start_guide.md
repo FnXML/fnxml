@@ -621,7 +621,9 @@ DTDs provide:
 
 ### How to Use DTDs
 
-**Parsing Documents with DTDs**
+**Pipeline-Friendly Entity Resolution (Recommended)**
+
+Use `FnXML.DTD.resolve/2` to extract and resolve DTD entities in a single streaming pass:
 
 ```elixir
 xml = """
@@ -636,30 +638,62 @@ xml = """
 </root>
 """
 
-# Parser resolves entity references
-events = FnXML.Parser.parse(xml)
+# Single-pass DTD entity resolution
+events = xml
+|> FnXML.parse_stream()
+|> FnXML.DTD.resolve()              # Extracts entities from DTD and resolves them
+|> FnXML.Validate.well_formed()
+|> Enum.to_list()
+
 # The &company; entity is resolved to "Acme Corp"
+# Predefined entities (&amp;, &lt;, etc.) are also resolved
+```
+
+**With External DTD**
+
+```elixir
+# Build resolver for external DTD references
+resolver = fn system_id, _public_id ->
+  path = Path.join("/path/to/dtds", system_id)
+  File.read(path)
+end
+
+events = xml
+|> FnXML.parse_stream()
+|> FnXML.DTD.resolve(external_resolver: resolver)
+|> Enum.to_list()
+```
+
+**Options**
+
+```elixir
+FnXML.DTD.resolve(stream,
+  on_unknown: :keep,              # :raise | :emit | :keep | :remove
+  edition: 5,                     # XML edition for re-parsing markup
+  external_resolver: resolver,    # Function for external DTD files
+  max_expansion_depth: 10,        # Prevent entity expansion attacks
+  max_total_expansion: 1_000_000  # Maximum expanded content size
+)
 ```
 
 **Accessing DTD Information**
 
 ```elixir
-# Parse DTD separately
+# Parse DTD separately for validation/inspection
 dtd_text = """
 <!ELEMENT root (child*)>
 <!ELEMENT child (#PCDATA)>
 <!ATTLIST child type (a|b|c) "a">
 """
 
-{:ok, dtd} = FnXML.DTD.parse(dtd_text)
+{:ok, dtd} = FnXML.DTD.Parser.parse(dtd_text)
 
 # Query element definitions
-FnXML.DTD.element_content(dtd, "root")   # => {:children, [{:element, "child", :zero_or_more}]}
-FnXML.DTD.element_content(dtd, "child")  # => :pcdata
+dtd.elements["root"]   # => element content model
+dtd.elements["child"]  # => #PCDATA
 
 # Query attribute definitions
-FnXML.DTD.attributes(dtd, "child")
-# => [%{name: "type", type: {:enumeration, ["a", "b", "c"]}, default: {:value, "a"}}]
+dtd.attributes["child"]  # => attribute definitions
 ```
 
 ---
