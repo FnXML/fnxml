@@ -51,24 +51,49 @@ defmodule ParseBench do
     IO.puts("  large.xml:  #{byte_size(@large)} bytes")
     IO.puts("")
 
+    IO.puts("Parsers:")
+    IO.puts("  macro_blk_ed5:        MacroBlkParser Edition 5 (default, permissive Unicode)")
+    IO.puts("  macro_blk_ed5_stream: MacroBlkParser Edition 5 with 64KB chunked streaming")
+    IO.puts("  macro_blk_ed4:        MacroBlkParser Edition 4 (strict character validation)")
+    IO.puts("  macro_blk_ed4_stream: MacroBlkParser Edition 4 with 64KB chunked streaming")
+    IO.puts("  ex_blk_parser:        ExBlkParser (legacy)")
+    IO.puts("  fast_ex_blk:          FastExBlkParser (legacy)")
+    IO.puts("")
+
     Benchee.run(
       %{
-        # FnXML parsers - single block
-        "ex_blk_parser" => fn {xml, _path} ->
-          FnXML.ExBlkParser.parse(xml)
+        # MacroBlkParser - Edition 5 (default, more permissive Unicode)
+        "macro_blk_ed5" => fn {xml, _path} ->
+          [xml]
+          |> FnXML.MacroBlkParser.Edition5.stream()
+          |> Enum.to_list()
         end,
-        "fast_ex_blk" => fn {xml, _path} ->
-          FnXML.FastExBlkParser.parse(xml)
+        "macro_blk_ed5_stream" => fn {_xml, path} ->
+          File.stream!(path, [], 65536)
+          |> FnXML.MacroBlkParser.Edition5.stream()
+          |> Enum.to_list()
         end,
 
-        # FnXML parsers - 64KB chunked streaming
-        "ex_blk_stream" => fn {_xml, path} ->
+        # MacroBlkParser - Edition 4 (stricter character validation)
+        "macro_blk_ed4" => fn {xml, _path} ->
+          [xml]
+          |> FnXML.MacroBlkParser.Edition4.stream()
+          |> Enum.to_list()
+        end,
+        "macro_blk_ed4_stream" => fn {_xml, path} ->
           File.stream!(path, [], 65536)
+          |> FnXML.MacroBlkParser.Edition4.stream()
+          |> Enum.to_list()
+        end,
+
+        # Legacy parsers
+        "ex_blk_parser" => fn {xml, _path} ->
+          [xml]
           |> FnXML.ExBlkParser.stream()
           |> Enum.to_list()
         end,
-        "fast_ex_blk_stream" => fn {_xml, path} ->
-          File.stream!(path, [], 65536)
+        "fast_ex_blk" => fn {xml, _path} ->
+          [xml]
           |> FnXML.FastExBlkParser.stream()
           |> Enum.to_list()
         end,
@@ -112,24 +137,49 @@ defmodule ParseBench do
 
     IO.puts("File: medium.xml (#{byte_size(@medium)} bytes)\n")
 
+    IO.puts("Parsers:")
+    IO.puts("  macro_blk_ed5:        MacroBlkParser Edition 5 (default, permissive Unicode)")
+    IO.puts("  macro_blk_ed5_stream: MacroBlkParser Edition 5 with 64KB chunked streaming")
+    IO.puts("  macro_blk_ed4:        MacroBlkParser Edition 4 (strict character validation)")
+    IO.puts("  macro_blk_ed4_stream: MacroBlkParser Edition 4 with 64KB chunked streaming")
+    IO.puts("  ex_blk_parser:        ExBlkParser (legacy)")
+    IO.puts("  fast_ex_blk:          FastExBlkParser (legacy)")
+    IO.puts("")
+
     Benchee.run(
       %{
-        # FnXML parsers - single block
-        "ex_blk_parser" => fn ->
-          FnXML.ExBlkParser.parse(@medium)
+        # MacroBlkParser - Edition 5 (default, more permissive Unicode)
+        "macro_blk_ed5" => fn ->
+          [@medium]
+          |> FnXML.MacroBlkParser.Edition5.stream()
+          |> Enum.to_list()
         end,
-        "fast_ex_blk" => fn ->
-          FnXML.FastExBlkParser.parse(@medium)
+        "macro_blk_ed5_stream" => fn ->
+          File.stream!(@medium_path, [], 65536)
+          |> FnXML.MacroBlkParser.Edition5.stream()
+          |> Enum.to_list()
         end,
 
-        # FnXML parsers - 64KB chunked streaming
-        "ex_blk_stream" => fn ->
+        # MacroBlkParser - Edition 4 (stricter character validation)
+        "macro_blk_ed4" => fn ->
+          [@medium]
+          |> FnXML.MacroBlkParser.Edition4.stream()
+          |> Enum.to_list()
+        end,
+        "macro_blk_ed4_stream" => fn ->
           File.stream!(@medium_path, [], 65536)
+          |> FnXML.MacroBlkParser.Edition4.stream()
+          |> Enum.to_list()
+        end,
+
+        # Legacy parsers
+        "ex_blk_parser" => fn ->
+          [@medium]
           |> FnXML.ExBlkParser.stream()
           |> Enum.to_list()
         end,
-        "fast_ex_blk_stream" => fn ->
-          File.stream!(@medium_path, [], 65536)
+        "fast_ex_blk" => fn ->
+          [@medium]
           |> FnXML.FastExBlkParser.stream()
           |> Enum.to_list()
         end,
