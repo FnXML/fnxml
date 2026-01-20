@@ -380,7 +380,7 @@ defmodule Mix.Tasks.Conformance.Xml do
 
         # Extract entity names from internal DTD declarations
         # Returns {parsed_entities, unparsed_entities, external_entities, entity_values}
-        {internal_entities, internal_unparsed, internal_external, entity_values} =
+        {internal_entities, internal_unparsed, internal_external, _entity_values} =
           if has_external_only_dtd do
             {MapSet.new(), MapSet.new(), MapSet.new(), %{}}
           else
@@ -434,6 +434,9 @@ defmodule Mix.Tasks.Conformance.Xml do
               {merged_entities, internal_unparsed, internal_external}
           end
 
+        # Build external resolver for DTD.resolve() to fetch external DTD content
+        external_resolver = build_external_resolver(test.uri)
+
         # Use edition-specific parser for proper character validation
         parser = FnXML.MacroBlkParser.parser(edition)
 
@@ -454,9 +457,14 @@ defmodule Mix.Tasks.Conformance.Xml do
           # Validate attribute values don't contain forbidden '<' character
           # Must be BEFORE entity resolution so &lt; is still an entity ref
           |> FnXML.Validate.attribute_values()
-          # Use :keep for unknown entities since we don't parse external DTDs
-          # Pass edition for re-parsing entity values that contain markup
-          |> FnXML.Entities.resolve(on_unknown: :keep, entities: entity_values, edition: edition)
+          # Use FnXML.DTD.resolve() for pipeline-friendly DTD entity resolution
+          # This extracts entities from the DTD event and resolves them in one pass
+          # Use :keep for unknown entities since we may not have all external entities
+          |> FnXML.DTD.resolve(
+            on_unknown: :keep,
+            edition: edition,
+            external_resolver: external_resolver
+          )
           # Validate namespace constraints (NSC: Prefix Declared, etc.)
           # Skip if NAMESPACE="no" in test definition
           |> maybe_validate_namespaces(test.namespace)
@@ -829,6 +837,21 @@ defmodule Mix.Tasks.Conformance.Xml do
   # Apply namespace validation only if NAMESPACE attribute is not "no"
   defp maybe_validate_namespaces(stream, true), do: FnXML.Namespaces.validate(stream)
   defp maybe_validate_namespaces(stream, false), do: stream
+
+  # Build an external resolver function for FnXML.DTD.resolve()
+  # This resolves relative URIs against the test file's directory
+  defp build_external_resolver(test_uri) do
+    base_dir = Path.dirname(test_uri)
+
+    fn system_id, _public_id ->
+      resolved_path = Path.join(base_dir, system_id)
+
+      case File.read(resolved_path) do
+        {:ok, content} -> {:ok, content}
+        {:error, reason} -> {:error, {:file_error, resolved_path, reason}}
+      end
+    end
+  end
 
   # Check for namespace URI equality after DTD-aware attribute normalization
   # Per XML spec, NMTOKEN/ID/IDREF/ENTITY/NOTATION types normalize leading/trailing whitespace

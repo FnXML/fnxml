@@ -665,4 +665,300 @@ defmodule FnXML.DTD do
       root_element: override.root_element || base.root_element
     }
   end
+
+  # ============================================================================
+  # Pipeline-Friendly DTD Resolution
+  # ============================================================================
+
+  @doc """
+  Process DTD in a streaming pipeline.
+
+  Extracts entity definitions from the DTD event and resolves entity
+  references in all subsequent events. Buffers events until DTD is
+  seen, then flushes with resolution applied.
+
+  This is the recommended way to handle DTD entity resolution in a
+  single-pass streaming pipeline:
+
+      FnXML.parse_stream(xml)
+      |> FnXML.DTD.resolve()
+      |> FnXML.Validate.well_formed()
+      |> Enum.to_list()
+
+  ## Options
+
+  - `:on_unknown` - How to handle unknown entities: `:raise` | `:emit` | `:keep` | `:remove` (default: `:keep`)
+  - `:edition` - XML edition for re-parsing entity content with markup (default: 5)
+  - `:max_expansion_depth` - Maximum entity nesting (default: 10)
+  - `:max_total_expansion` - Maximum expanded size (default: 1_000_000)
+  - `:external_resolver` - Function `(system_id, public_id) -> {:ok, content} | {:error, reason}`
+    to fetch external DTD content (not external entity content)
+
+  ## Examples
+
+      # Basic usage
+      FnXML.parse_stream(xml)
+      |> FnXML.DTD.resolve()
+      |> Enum.to_list()
+
+      # With options
+      FnXML.parse_stream(xml)
+      |> FnXML.DTD.resolve(on_unknown: :emit)
+      |> FnXML.Validate.well_formed()
+      |> Enum.to_list()
+
+  ## How It Works
+
+  Per XML spec, DTD must appear after the prolog but before the root element.
+  This function buffers events until either a DTD or root element is seen:
+
+  1. If DTD found: extract internal entities, flush buffer with resolution, continue resolving
+  2. If root element found first: no DTD, flush buffer, continue resolving predefined entities only
+
+  In both cases, predefined XML entities (`&amp;`, `&lt;`, `&gt;`, `&apos;`, `&quot;`)
+  and numeric character references (`&#60;`, `&#x3C;`) are always resolved.
+
+  Entity values containing XML markup (e.g., `<!ENTITY e "<foo/>">`) are re-parsed
+  using the edition-specific parser to validate character classes.
+
+  External entity references (SYSTEM/PUBLIC) are NOT resolved - they are kept as-is
+  when `on_unknown: :keep` is set (the default). Only internal entity definitions
+  from the DTD are used for resolution.
+
+  The buffer only holds pre-root events (prolog, comments, PIs, whitespace),
+  which is typically just a few events.
+  """
+  @spec resolve(Enumerable.t(), keyword()) :: Enumerable.t()
+  def resolve(stream, opts \\ []) do
+    on_unknown = Keyword.get(opts, :on_unknown, :keep)
+    edition = Keyword.get(opts, :edition, 5)
+
+    # Initial state: {buffer, model}
+    # buffer = list of events before DTD (reversed for efficiency)
+    # model = nil | {:ok, entities_map} | :no_dtd | {:error, reason}
+    Stream.transform(stream, {[], nil}, fn event, {buffer, model} ->
+      resolve_dtd_event(event, buffer, model, on_unknown, edition, opts)
+    end)
+  end
+
+  # State: waiting for DTD or root element
+  defp resolve_dtd_event(event, buffer, nil, on_unknown, edition, opts) do
+    case event do
+      # Found DTD - extract entities and flush buffer with resolution
+      {:dtd, content, _, _, _} = dtd_event ->
+        handle_dtd_found(dtd_event, content, buffer, on_unknown, edition, opts)
+
+      {:dtd, content, _} = dtd_event ->
+        handle_dtd_found(dtd_event, content, buffer, on_unknown, edition, opts)
+
+      # Found start_element before DTD - no DTD in document
+      # Flush buffer and resolve this event (for predefined entities in attributes)
+      {:start_element, _, _, _, _, _} = elem_event ->
+        flushed = Enum.reverse(buffer)
+        resolved_elem = resolve_event(elem_event, %{}, on_unknown, edition)
+        {flushed ++ resolved_elem, {[], :no_dtd}}
+
+      {:start_element, _, _, _} = elem_event ->
+        flushed = Enum.reverse(buffer)
+        resolved_elem = resolve_event(elem_event, %{}, on_unknown, edition)
+        {flushed ++ resolved_elem, {[], :no_dtd}}
+
+      # Error events - flush buffer and pass through error, set state to :no_dtd
+      {:error, _, _, _, _, _} = error_event ->
+        flushed = Enum.reverse(buffer)
+        {flushed ++ [error_event], {[], :no_dtd}}
+
+      {:error, _, _} = error_event ->
+        flushed = Enum.reverse(buffer)
+        {flushed ++ [error_event], {[], :no_dtd}}
+
+      {:error, _} = error_event ->
+        flushed = Enum.reverse(buffer)
+        {flushed ++ [error_event], {[], :no_dtd}}
+
+      # End document without root element (malformed) - flush buffer
+      {:end_document, _} = end_event ->
+        flushed = Enum.reverse(buffer)
+        {flushed ++ [end_event], {[], :no_dtd}}
+
+      # Other pre-root events (prolog, comments, PIs, whitespace) - buffer them
+      _ ->
+        {[], {[event | buffer], nil}}
+    end
+  end
+
+  # State: have DTD - resolve entities in events
+  defp resolve_dtd_event(event, [], {:ok, entities}, on_unknown, edition, _opts) do
+    {resolve_event(event, entities, on_unknown, edition), {[], {:ok, entities}}}
+  end
+
+  # State: no DTD in document - still resolve predefined entities
+  defp resolve_dtd_event(event, [], :no_dtd, on_unknown, edition, _opts) do
+    # Even without a DTD, we need to resolve predefined entities (&amp;, &lt;, etc.)
+    # and validate entity reference syntax
+    {resolve_event(event, %{}, on_unknown, edition), {[], :no_dtd}}
+  end
+
+  # State: DTD had error - still resolve predefined entities
+  defp resolve_dtd_event(event, [], {:error, _reason}, on_unknown, edition, _opts) do
+    # Even with a DTD error, we should still resolve predefined entities
+    {resolve_event(event, %{}, on_unknown, edition), {[], {:error, :passthrough}}}
+  end
+
+  defp handle_dtd_found(dtd_event, content, buffer, on_unknown, edition, opts) do
+    case extract_entities_from_content(content, opts) do
+      {:ok, entities} ->
+        # Flush buffer with resolution applied
+        resolved_buffer =
+          buffer
+          |> Enum.reverse()
+          |> Enum.flat_map(&resolve_event(&1, entities, on_unknown, edition))
+
+        # Also resolve entities in the DTD event itself (though rare)
+        resolved_dtd = resolve_event(dtd_event, entities, on_unknown, edition)
+        {resolved_buffer ++ resolved_dtd, {[], {:ok, entities}}}
+
+      {:error, reason} ->
+        # DTD parse error - flush buffer as-is, emit error event
+        flushed = Enum.reverse(buffer)
+        error_event = {:error, :dtd_parse, "DTD parse error: #{inspect(reason)}", nil, nil, nil}
+        {flushed ++ [error_event, dtd_event], {[], {:error, reason}}}
+    end
+  end
+
+  defp extract_entities_from_content(content, opts) do
+    # Use external_resolver for fetching external DTD content (parse_doctype)
+    # but NOT for resolving external entity references (only internal entities)
+    with {:ok, model} <- parse_doctype(content, opts) do
+      # Don't pass external_resolver here - we only want internal entities
+      # External entities will be kept as-is with on_unknown: :keep
+      entity_opts = Keyword.delete(opts, :external_resolver)
+      FnXML.DTD.EntityResolver.extract_and_expand_entities(model, entity_opts)
+    end
+  end
+
+  # Resolve entities in a single event
+  defp resolve_event({:characters, text, line, ls, pos}, entities, on_unknown, edition) do
+    case FnXML.Entities.resolve_text(text, entities, on_unknown) do
+      {:ok, resolved} ->
+        # If resolved content contains markup, re-parse it
+        if String.starts_with?(resolved, "<") do
+          reparse_markup(resolved, edition)
+        else
+          [{:characters, resolved, line, ls, pos}]
+        end
+
+      {:error, error} ->
+        # On error, emit both error and original
+        [{:error, error}, {:characters, text, line, ls, pos}]
+    end
+  end
+
+  defp resolve_event({:characters, text, loc}, entities, on_unknown, edition) do
+    case FnXML.Entities.resolve_text(text, entities, on_unknown) do
+      {:ok, resolved} ->
+        # If resolved content contains markup, re-parse it
+        if String.starts_with?(resolved, "<") do
+          reparse_markup(resolved, edition)
+        else
+          [{:characters, resolved, loc}]
+        end
+
+      {:error, error} ->
+        [{:error, error}, {:characters, text, loc}]
+    end
+  end
+
+  defp resolve_event({:start_element, tag, attrs, line, ls, pos}, entities, on_unknown, _edition) do
+    {resolved_attrs, attr_errors} = resolve_attributes(attrs, entities, on_unknown)
+    attr_errors ++ [{:start_element, tag, resolved_attrs, line, ls, pos}]
+  end
+
+  defp resolve_event({:start_element, tag, attrs, loc}, entities, on_unknown, _edition) do
+    {resolved_attrs, attr_errors} = resolve_attributes(attrs, entities, on_unknown)
+    attr_errors ++ [{:start_element, tag, resolved_attrs, loc}]
+  end
+
+  defp resolve_event(event, _entities, _on_unknown, _edition) do
+    # Pass through other events unchanged (comments, PIs, end_element, etc.)
+    [event]
+  end
+
+  # Returns {resolved_attrs, error_events}
+  defp resolve_attributes(attrs, entities, on_unknown) do
+    {resolved, errors} =
+      Enum.reduce(attrs, {[], []}, fn {name, value}, {acc_attrs, acc_errors} ->
+        case FnXML.Entities.resolve_text(value, entities, on_unknown) do
+          {:ok, resolved} ->
+            {[{name, resolved} | acc_attrs], acc_errors}
+
+          {:error, error} ->
+            # Emit error but keep original value
+            {[{name, value} | acc_attrs], [{:error, error} | acc_errors]}
+        end
+      end)
+
+    {Enum.reverse(resolved), Enum.reverse(errors)}
+  end
+
+  # Re-parse entity content that contains markup with edition-specific parser
+  # This handles cases like <!ENTITY e "<&#x309a;></&#x309a;>"> where the entity
+  # value contains XML elements that need edition-specific validation
+  defp reparse_markup(content, edition) do
+    # First, expand character references in the content
+    expanded = expand_char_refs_in_string(content)
+
+    # Re-parse with edition-specific parser
+    parser = FnXML.MacroBlkParser.parser(edition)
+
+    events =
+      [expanded]
+      |> parser.stream()
+      |> Enum.to_list()
+
+    # Check for errors - if any error, return it
+    case Enum.find(events, &match?({:error, _, _, _, _, _}, &1)) do
+      nil -> events
+      error -> [error]
+    end
+  end
+
+  # Expand character references in a string (&#decimal; and &#xhex;)
+  defp expand_char_refs_in_string(text) do
+    text
+    |> expand_hex_char_refs()
+    |> expand_decimal_char_refs()
+  end
+
+  defp expand_hex_char_refs(text) do
+    Regex.replace(~r/&#x([0-9a-fA-F]+);/, text, fn _, hex ->
+      case Integer.parse(hex, 16) do
+        {codepoint, ""} when codepoint >= 0 ->
+          try do
+            <<codepoint::utf8>>
+          rescue
+            _ -> "&#x#{hex};"
+          end
+
+        _ ->
+          "&#x#{hex};"
+      end
+    end)
+  end
+
+  defp expand_decimal_char_refs(text) do
+    Regex.replace(~r/&#([0-9]+);/, text, fn _, decimal ->
+      case Integer.parse(decimal) do
+        {codepoint, ""} when codepoint >= 0 ->
+          try do
+            <<codepoint::utf8>>
+          rescue
+            _ -> "&##{decimal};"
+          end
+
+        _ ->
+          "&##{decimal};"
+      end
+    end)
+  end
 end
