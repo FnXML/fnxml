@@ -71,19 +71,21 @@ defmodule FnXML.Entities do
 
   - `:entities` - Map of custom entity name => replacement (merged with predefined)
   - `:on_unknown` - `:raise` | `:emit` | `:keep` | `:remove` (default: :raise)
+  - `:edition` - XML 1.0 edition (4 or 5) for re-parsing entity values with markup
   """
   def resolve(stream, opts \\ []) do
     entities = Map.merge(@predefined, Keyword.get(opts, :entities, %{}))
     on_unknown = Keyword.get(opts, :on_unknown, :raise)
+    edition = Keyword.get(opts, :edition, 5)
 
     Stream.flat_map(stream, fn
       # 5-tuple format from parser
       {:characters, content, line, ls, pos} ->
-        resolve_text_event_5(content, line, ls, pos, entities, on_unknown)
+        resolve_text_event_5(content, line, ls, pos, entities, on_unknown, edition)
 
       # 4-tuple normalized format
       {:characters, content, loc} ->
-        resolve_text_event(content, loc, entities, on_unknown)
+        resolve_text_event(content, loc, entities, on_unknown, edition)
 
       # 6-tuple format from parser
       {:start_element, tag, attrs, line, ls, pos} ->
@@ -99,10 +101,18 @@ defmodule FnXML.Entities do
   end
 
   # Resolve entities in text content (5-tuple format from parser)
-  defp resolve_text_event_5(content, line, ls, pos, entities, on_unknown) do
+  defp resolve_text_event_5(content, line, ls, pos, entities, on_unknown, edition) do
+    # First check if any DTD-defined entities with markup are referenced
+    has_markup_entities = has_entities_with_markup?(content, entities)
+
     case resolve_text(content, entities, on_unknown) do
       {:ok, resolved} ->
-        [{:characters, resolved, line, ls, pos}]
+        # Only re-parse if we know a markup-containing entity was expanded
+        if has_markup_entities do
+          reparse_markup(resolved, edition)
+        else
+          [{:characters, resolved, line, ls, pos}]
+        end
 
       {:error, error} ->
         handle_resolution_error(error, on_unknown)
@@ -110,14 +120,99 @@ defmodule FnXML.Entities do
   end
 
   # Resolve entities in text content (4-tuple normalized format)
-  defp resolve_text_event(content, loc, entities, on_unknown) do
+  defp resolve_text_event(content, loc, entities, on_unknown, edition) do
+    has_markup_entities = has_entities_with_markup?(content, entities)
+
     case resolve_text(content, entities, on_unknown) do
       {:ok, resolved} ->
-        [{:characters, resolved, loc}]
+        if has_markup_entities do
+          reparse_markup(resolved, edition)
+        else
+          [{:characters, resolved, loc}]
+        end
 
       {:error, error} ->
         handle_resolution_error(error, on_unknown)
     end
+  end
+
+  # Check if any entity references in content point to entities with markup values
+  # Only checks DTD-defined entities (not predefined amp, lt, gt, quot, apos)
+  defp has_entities_with_markup?(content, entities) do
+    # Find all named entity references (not character refs)
+    Regex.scan(~r/&([a-zA-Z_:][a-zA-Z0-9._:-]*);/, content)
+    |> Enum.any?(fn [_, name] ->
+      # Skip predefined entities
+      if name in ["amp", "lt", "gt", "quot", "apos"] do
+        false
+      else
+        case Map.get(entities, name) do
+          nil -> false
+          value -> String.contains?(value, "<")
+        end
+      end
+    end)
+  end
+
+  # Re-parse entity content that contains markup with edition-specific parser
+  # This handles cases like <!ENTITY e "<&#x309a;></&#x309a;>"> where the entity
+  # value contains XML elements that need edition-specific validation
+  defp reparse_markup(content, edition) do
+    # First, expand character references in the content
+    expanded = expand_char_refs_in_string(content)
+
+    # Re-parse with edition-specific parser
+    parser = FnXML.MacroBlkParser.parser(edition)
+
+    events =
+      [expanded]
+      |> parser.stream()
+      |> Enum.to_list()
+
+    # Check for errors - if any error, return it
+    case Enum.find(events, &match?({:error, _, _, _, _, _}, &1)) do
+      nil -> events
+      error -> [error]
+    end
+  end
+
+  # Expand character references in a string (&#decimal; and &#xhex;)
+  defp expand_char_refs_in_string(text) do
+    text
+    |> expand_hex_char_refs()
+    |> expand_decimal_char_refs()
+  end
+
+  defp expand_hex_char_refs(text) do
+    Regex.replace(~r/&#x([0-9a-fA-F]+);/, text, fn _, hex ->
+      case Integer.parse(hex, 16) do
+        {codepoint, ""} when codepoint >= 0 ->
+          try do
+            <<codepoint::utf8>>
+          rescue
+            _ -> "&#x#{hex};"
+          end
+
+        _ ->
+          "&#x#{hex};"
+      end
+    end)
+  end
+
+  defp expand_decimal_char_refs(text) do
+    Regex.replace(~r/&#([0-9]+);/, text, fn _, decimal ->
+      case Integer.parse(decimal) do
+        {codepoint, ""} when codepoint >= 0 ->
+          try do
+            <<codepoint::utf8>>
+          rescue
+            _ -> "&##{decimal};"
+          end
+
+        _ ->
+          "&##{decimal};"
+      end
+    end)
   end
 
   # Resolve entities in attribute values (6-tuple format from parser)
