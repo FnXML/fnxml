@@ -93,7 +93,7 @@ defmodule FnXML.DTD.Parser do
   defp parse_expanded(dtd_string, edition, external) do
     result =
       dtd_string
-      |> extract_declarations(external: external)
+      |> extract_declarations(external: external, edition: edition)
       |> Enum.reduce_while({:ok, Model.new()}, fn
         # Handle error from extract_declarations (e.g., conditional sections)
         {:error, msg}, _acc ->
@@ -649,25 +649,26 @@ defmodule FnXML.DTD.Parser do
   # Handles quoted strings containing > characters
   defp extract_declarations(dtd_string, opts) do
     external = Keyword.get(opts, :external, false)
-    extract_declarations_impl(dtd_string, [], external)
+    edition = Keyword.get(opts, :edition, 5)
+    extract_declarations_impl(dtd_string, [], external, edition)
   end
 
-  defp extract_declarations_impl("", acc, _external), do: Enum.reverse(acc)
+  defp extract_declarations_impl("", acc, _external, _edition), do: Enum.reverse(acc)
 
-  defp extract_declarations_impl(<<"<![", _rest::binary>>, acc, _external) do
+  defp extract_declarations_impl(<<"<![", _rest::binary>>, acc, _external, _edition) do
     # Conditional section (INCLUDE/IGNORE) - not allowed in internal subset
     # For external DTDs, these should already be processed by ExternalResolver
     [{:error, "Conditional sections (INCLUDE/IGNORE) not allowed in internal DTD subset"} | acc]
     |> Enum.reverse()
   end
 
-  defp extract_declarations_impl(<<"<?xml", _rest::binary>>, acc, false) do
+  defp extract_declarations_impl(<<"<?xml", _rest::binary>>, acc, false, _edition) do
     # XML declaration not allowed in internal subset (can only appear at document start)
     [{:error, "XML declaration not allowed in internal DTD subset"} | acc]
     |> Enum.reverse()
   end
 
-  defp extract_declarations_impl(<<"<?xml", rest::binary>>, acc, true) do
+  defp extract_declarations_impl(<<"<?xml", rest::binary>>, acc, true, edition) do
     # Text declaration is allowed in external DTD, but must validate content
     # TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'
     # Text declarations MUST appear at the beginning of the external entity
@@ -692,7 +693,7 @@ defmodule FnXML.DTD.Parser do
             |> Enum.reverse()
 
           true ->
-            extract_declarations_impl(remaining, acc, true)
+            extract_declarations_impl(remaining, acc, true, edition)
         end
 
       :error ->
@@ -701,12 +702,12 @@ defmodule FnXML.DTD.Parser do
     end
   end
 
-  defp extract_declarations_impl(<<"<?", rest::binary>>, acc, external) do
-    # Validate PI target in DTD internal subset
-    case validate_pi_in_dtd(rest) do
+  defp extract_declarations_impl(<<"<?", rest::binary>>, acc, external, edition) do
+    # Validate PI target in DTD internal subset with edition-specific char validation
+    case validate_pi_in_dtd(rest, edition) do
       {:ok, remaining} ->
         # PI is valid, continue processing
-        extract_declarations_impl(remaining, acc, external)
+        extract_declarations_impl(remaining, acc, external, edition)
 
       {:error, reason} ->
         # Invalid PI target
@@ -714,12 +715,12 @@ defmodule FnXML.DTD.Parser do
     end
   end
 
-  defp extract_declarations_impl(<<"<!--", rest::binary>>, acc, external) do
+  defp extract_declarations_impl(<<"<!--", rest::binary>>, acc, external, edition) do
     # Comment - skip until --> without processing quotes
     # Comments can contain any characters including ' and " without issues
     case skip_to_comment_end(rest) do
       {:ok, remaining} ->
-        extract_declarations_impl(remaining, acc, external)
+        extract_declarations_impl(remaining, acc, external, edition)
 
       :not_found ->
         # Unterminated comment - return what we have
@@ -727,31 +728,31 @@ defmodule FnXML.DTD.Parser do
     end
   end
 
-  defp extract_declarations_impl(<<"<!", rest::binary>>, acc, external) do
+  defp extract_declarations_impl(<<"<!", rest::binary>>, acc, external, edition) do
     # Found start of a declaration, extract it respecting quotes
     case extract_single_declaration(rest, "<!") do
       {:ok, decl, remaining} ->
-        extract_declarations_impl(remaining, [decl | acc], external)
+        extract_declarations_impl(remaining, [decl | acc], external, edition)
 
       :not_found ->
         # Skip this <! and continue
-        extract_declarations_impl(rest, acc, external)
+        extract_declarations_impl(rest, acc, external, edition)
     end
   end
 
   # Element-like tag without ! (e.g., <NOTATION instead of <!NOTATION)
-  defp extract_declarations_impl(<<"<", c, _rest::binary>>, acc, _external)
+  defp extract_declarations_impl(<<"<", c, _rest::binary>>, acc, _external, _edition)
        when c in ?a..?z or c in ?A..?Z do
     [{:error, "Invalid declaration in DTD - missing '!' after '<'"} | acc]
     |> Enum.reverse()
   end
 
   # PE reference: must be %Name; with no whitespace
-  defp extract_declarations_impl(<<"%", rest::binary>>, acc, external) do
+  defp extract_declarations_impl(<<"%", rest::binary>>, acc, external, edition) do
     case validate_pe_reference_syntax(rest) do
       {:ok, remaining} ->
         # Valid PE reference syntax (we don't expand, just skip)
-        extract_declarations_impl(remaining, acc, external)
+        extract_declarations_impl(remaining, acc, external, edition)
 
       {:error, reason} ->
         [{:error, reason} | acc] |> Enum.reverse()
@@ -760,7 +761,7 @@ defmodule FnXML.DTD.Parser do
 
   # General entity reference in DTD - not allowed
   # General entity references can only appear in element content and attribute values
-  defp extract_declarations_impl(<<"&", rest::binary>>, acc, _external) do
+  defp extract_declarations_impl(<<"&", rest::binary>>, acc, _external, _edition) do
     # Check if this looks like an entity reference (& followed by name char)
     case rest do
       <<c, _::binary>> when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?# ->
@@ -774,8 +775,8 @@ defmodule FnXML.DTD.Parser do
     end
   end
 
-  defp extract_declarations_impl(<<_, rest::binary>>, acc, external) do
-    extract_declarations_impl(rest, acc, external)
+  defp extract_declarations_impl(<<_, rest::binary>>, acc, external, edition) do
+    extract_declarations_impl(rest, acc, external, edition)
   end
 
   # Validate PE reference syntax: %Name;
@@ -1708,17 +1709,19 @@ defmodule FnXML.DTD.Parser do
   # ============================================================================
 
   # Validate a PI inside DTD, return {:ok, remaining} or {:error, reason}
-  defp validate_pi_in_dtd(rest) do
-    case extract_pi_target(rest) do
+  # Uses edition-specific character validation
+  defp validate_pi_in_dtd(rest, edition) do
+    case extract_pi_target(rest, edition) do
       {:ok, target, after_target} ->
-        if valid_pi_target_name?(target) do
+        # Use edition-specific name validation
+        if FnXML.Char.valid_name?(target, edition: edition) do
           # Skip to end of PI
           case skip_to_pi_end(after_target) do
             {:ok, remaining} -> {:ok, remaining}
             :error -> {:error, "Unterminated PI in DTD internal subset"}
           end
         else
-          {:error, "Invalid PI target in DTD - contains invalid name characters"}
+          {:error, "Invalid PI target '#{target}' in DTD - contains invalid name characters for Edition #{edition}"}
         end
 
       {:error, :empty} ->
@@ -1733,33 +1736,34 @@ defmodule FnXML.DTD.Parser do
   end
 
   # Extract PI target name (characters before whitespace or ?>)
-  defp extract_pi_target(binary), do: extract_pi_target(binary, <<>>)
+  # Uses edition-specific character validation
+  defp extract_pi_target(binary, edition), do: extract_pi_target_impl(binary, <<>>, edition)
 
-  defp extract_pi_target(<<"?>", rest::binary>>, acc) when byte_size(acc) > 0 do
+  defp extract_pi_target_impl(<<"?>", rest::binary>>, acc, _edition) when byte_size(acc) > 0 do
     {:ok, acc, <<"?>", rest::binary>>}
   end
 
-  defp extract_pi_target(<<"?>", _rest::binary>>, <<>>) do
+  defp extract_pi_target_impl(<<"?>", _rest::binary>>, <<>>, _edition) do
     {:error, :empty}
   end
 
-  defp extract_pi_target(<<c, rest::binary>>, acc)
+  defp extract_pi_target_impl(<<c, rest::binary>>, acc, _edition)
        when c in [?\s, ?\t, ?\r, ?\n] and byte_size(acc) > 0 do
     {:ok, acc, <<c, rest::binary>>}
   end
 
-  defp extract_pi_target(<<c::utf8, rest::binary>>, <<>>) do
-    if pi_name_start_char?(c) do
-      extract_pi_target(rest, <<c::utf8>>)
+  defp extract_pi_target_impl(<<c::utf8, rest::binary>>, <<>>, edition) do
+    if FnXML.Char.name_start_char?(c, edition: edition) do
+      extract_pi_target_impl(rest, <<c::utf8>>, edition)
     else
       {:error, :invalid_start}
     end
   end
 
-  defp extract_pi_target(<<c::utf8, rest::binary>>, acc) do
+  defp extract_pi_target_impl(<<c::utf8, rest::binary>>, acc, edition) do
     cond do
-      pi_name_char?(c) ->
-        extract_pi_target(rest, <<acc::binary, c::utf8>>)
+      FnXML.Char.name_char?(c, edition: edition) ->
+        extract_pi_target_impl(rest, <<acc::binary, c::utf8>>, edition)
 
       # If the next char is not a valid name char and not whitespace,
       # the PI target is malformed (e.g., "_)" where ) is invalid)
@@ -1771,7 +1775,7 @@ defmodule FnXML.DTD.Parser do
     end
   end
 
-  defp extract_pi_target(<<>>, _acc), do: {:error, :empty}
+  defp extract_pi_target_impl(<<>>, _acc, _edition), do: {:error, :empty}
 
   # Skip to end of PI (?>)
   defp skip_to_pi_end(<<"?>", rest::binary>>), do: {:ok, rest}
@@ -1787,31 +1791,4 @@ defmodule FnXML.DTD.Parser do
 
   defp extract_text_decl_content(<<>>, _acc), do: :error
 
-  # Validate PI target name
-  defp valid_pi_target_name?(<<>>), do: false
-
-  defp valid_pi_target_name?(<<first::utf8, rest::binary>>) do
-    pi_name_start_char?(first) and pi_name_chars_valid?(rest)
-  end
-
-  defp pi_name_chars_valid?(<<>>), do: true
-
-  defp pi_name_chars_valid?(<<c::utf8, rest::binary>>) do
-    pi_name_char?(c) and pi_name_chars_valid?(rest)
-  end
-
-  # NameStartChar per XML 1.0 spec (same as parser guards)
-  defp pi_name_start_char?(c) when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?:, do: true
-  defp pi_name_start_char?(c) when c in 0x00C0..0x00D6 or c in 0x00D8..0x00F6, do: true
-  defp pi_name_start_char?(c) when c in 0x00F8..0x02FF or c in 0x0370..0x037D, do: true
-  defp pi_name_start_char?(c) when c in 0x037F..0x1FFF or c in 0x200C..0x200D, do: true
-  defp pi_name_start_char?(c) when c in 0x2070..0x218F or c in 0x2C00..0x2FEF, do: true
-  defp pi_name_start_char?(c) when c in 0x3001..0xD7FF or c in 0xF900..0xFDCF, do: true
-  defp pi_name_start_char?(c) when c in 0xFDF0..0xFFFD or c in 0x10000..0xEFFFF, do: true
-  defp pi_name_start_char?(_), do: false
-
-  # NameChar per XML 1.0 spec
-  defp pi_name_char?(c) when c == ?- or c == ?. or c in ?0..?9 or c == 0x00B7, do: true
-  defp pi_name_char?(c) when c in 0x0300..0x036F or c in 0x203F..0x2040, do: true
-  defp pi_name_char?(c), do: pi_name_start_char?(c)
 end

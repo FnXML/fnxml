@@ -77,26 +77,70 @@ defmodule FnXML.ExternalResolver do
     # Extract PE definitions from external DTD content
     external_pe_defs = FnXML.ParameterEntities.extract_definitions(content)
 
-    # Merge: internal subset takes precedence
-    merged_pe_defs = Map.merge(external_pe_defs, internal_pe_defs)
+    # Check for partial markup in PE definitions (WFC: PE Boundary)
+    case check_pe_boundaries(external_pe_defs) do
+      :ok ->
+        # Merge: internal subset takes precedence
+        merged_pe_defs = Map.merge(external_pe_defs, internal_pe_defs)
 
-    # Expand PEs in the external DTD content
-    # This is necessary because conditional sections may use PE references
-    # for the INCLUDE/IGNORE keyword, e.g., <![%MAYBE;[...]]>
-    case FnXML.ParameterEntities.expand(content, merged_pe_defs) do
-      {:ok, expanded} ->
-        case process_conditional_sections(expanded) do
-          {:ok, processed} ->
-            # Always parse with external: true for external DTDs
-            # This enables stricter validation (e.g., bare % not allowed in entity values)
-            FnXML.DTD.Parser.parse(processed, Keyword.put(opts, :external, true))
+        # Expand PEs in the external DTD content
+        # This is necessary because conditional sections may use PE references
+        # for the INCLUDE/IGNORE keyword, e.g., <![%MAYBE;[...]]>
+        case FnXML.ParameterEntities.expand(content, merged_pe_defs) do
+          {:ok, expanded} ->
+            case process_conditional_sections(expanded) do
+              {:ok, processed} ->
+                # Always parse with external: true for external DTDs
+                # This enables stricter validation (e.g., bare % not allowed in entity values)
+                FnXML.DTD.Parser.parse(processed, Keyword.put(opts, :external, true))
 
-          {:error, _} = err ->
-            err
+              {:error, _} = err ->
+                err
+            end
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Check that PE replacement text doesn't contain partial markup constructs
+  # Per XML spec, PEs must be well-balanced with respect to markup
+  defp check_pe_boundaries(pe_defs) do
+    invalid =
+      Enum.find(pe_defs, fn {_name, value} ->
+        has_partial_markup?(value)
+      end)
+
+    case invalid do
+      nil -> :ok
+      {name, _} -> {:error, "PE '#{name}' contains partial markup (violates WFC: PE Boundary)"}
+    end
+  end
+
+  defp has_partial_markup?(value) do
+    # Check for partial comment: <!-- without -->
+    # Check for partial declaration: <! without closing >
+    has_partial_comment?(value) or
+      has_partial_declaration?(value)
+  end
+
+  defp has_partial_comment?(value) do
+    String.contains?(value, "<!--") and not String.contains?(value, "-->")
+  end
+
+  defp has_partial_declaration?(value) do
+    # Check for declaration starts without corresponding close
+    cond do
+      # Starts with <!ELEMENT, <!ATTLIST, etc but doesn't end with >
+      Regex.match?(~r/<!(?:ELEMENT|ATTLIST|ENTITY|NOTATION)\s/, value) ->
+        not String.ends_with?(String.trim(value), ">")
+
+      true ->
+        false
     end
   end
 
