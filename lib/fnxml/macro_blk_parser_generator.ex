@@ -75,6 +75,9 @@ defmodule FnXML.MacroBlkParserGenerator do
                        c in 0x20..0xD7FF or c in 0xE000..0xFFFD or
                        c in 0x10000..0x10FFFF
 
+      defguardp is_name_start_ascii(c)
+                when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?:
+      
       # Edition 5 NameStartChar
       # NameStartChar ::= ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6] | [#xD8-#xF6] |
       #                   [#xF8-#x2FF] | [#x370-#x37D] | [#x37F-#x1FFF] |
@@ -82,7 +85,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       #                   [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] |
       #                   [#x10000-#xEFFFF]
       defguardp is_name_start(c)
-                when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?: or
+                when is_name_start_ascii(c) or
                        c in 0x00C0..0x00D6 or c in 0x00D8..0x00F6 or
                        c in 0x00F8..0x02FF or c in 0x0370..0x037D or
                        c in 0x037F..0x1FFF or c in 0x200C..0x200D or
@@ -90,6 +93,9 @@ defmodule FnXML.MacroBlkParserGenerator do
                        c in 0x3001..0xD7FF or c in 0xF900..0xFDCF or
                        c in 0xFDF0..0xFFFD or c in 0x10000..0xEFFFF
 
+      defguardp is_name_char_ascii(c)
+                when is_name_start_ascii(c) or c == ?- or c == ?. or c in ?0..?9
+      
       # Edition 5 NameChar
       # NameChar ::= NameStartChar | "-" | "." | [0-9] | #xB7 |
       #              [#x0300-#x036F] | [#x203F-#x2040]
@@ -111,6 +117,9 @@ defmodule FnXML.MacroBlkParserGenerator do
                        c in 0x20..0xD7FF or c in 0xE000..0xFFFD or
                        c in 0x10000..0x10FFFF
 
+      defguardp is_name_start_ascii(c)
+                when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?:
+
       # Edition 4 NameStartChar = Letter | '_' | ':'
       # Letter = BaseChar | Ideographic
       # BaseChar and Ideographic from Appendix B
@@ -119,8 +128,7 @@ defmodule FnXML.MacroBlkParserGenerator do
                 # BaseChar 1-byte
                 # BaseChar 2-byte (from Appendix B)
                 # Ideographic
-                when c == ?_ or c == ?: or
-                       c in ?A..?Z or c in ?a..?z or
+                when is_name_start_ascii(c) or
                        c in 0xC0..0xD6 or c in 0xD8..0xF6 or c in 0xF8..0xFF or
                        c in 0x0100..0x0131 or c in 0x0134..0x013E or c in 0x0141..0x0148 or
                        c in 0x014A..0x017E or
@@ -207,6 +215,9 @@ defmodule FnXML.MacroBlkParserGenerator do
                        c in 0xAC00..0xD7A3 or
                        c in 0x4E00..0x9FA5 or c == 0x3007 or c in 0x3021..0x3029
 
+      defguardp is_name_char_ascii(c)
+                when is_name_start_ascii(c) or c == ?- or c == ?. or c in ?0..?9 or c == 0xB7
+                       
       # Edition 4 NameChar = Letter | Digit | '.' | '-' | '_' | ':' | CombiningChar | Extender
       defguardp is_name_char(c)
                 # Additional NameChar characters
@@ -624,6 +635,61 @@ defmodule FnXML.MacroBlkParserGenerator do
       # Element dispatch
       # ============================================================================
 
+      defp parse_element(<<"<", rest2::binary>> = <<"<", c, _::binary>>, xml, buf_pos, abs_pos, line, ls, events)
+           when is_name_start_ascii(c) do
+        parse_open_tag_name(rest2, xml, buf_pos + 1, abs_pos + 1, line, ls, {line, ls, abs_pos + 1}, buf_pos + 1, buf_pos, events)
+      end
+           
+      defp parse_element(<<"<", rest2::binary>> = <<"<", c::utf8, _::binary>>, xml, buf_pos, abs_pos, line, ls, events)
+           when is_name_start(c) do
+        parse_open_tag_name(
+          rest2,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 1,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(
+             <<"</", rest2::binary>> = <<"</", c::utf8, _::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             events
+           )
+           when is_name_start(c) do
+        parse_close_tag_name(
+          rest2,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos + 2,
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(<<"</", _::binary>>, _xml, _buf_pos, abs_pos, line, ls, events) do
+        events = [
+          {:error, :invalid_close_tag, "Close tag must start with a valid name character", line,
+           ls, abs_pos + 2}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos + 2)
+      end
+
       defp parse_element(<<"<!--", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
         parse_comment(
           rest,
@@ -670,40 +736,6 @@ defmodule FnXML.MacroBlkParserGenerator do
           buf_pos,
           events
         )
-      end
-
-      defp parse_element(
-             <<"</", rest2::binary>> = <<"</", c::utf8, _::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             events
-           )
-           when is_name_start(c) do
-        parse_close_tag_name(
-          rest2,
-          xml,
-          buf_pos + 2,
-          abs_pos + 2,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 2,
-          buf_pos,
-          events
-        )
-      end
-
-      defp parse_element(<<"</", _::binary>>, _xml, _buf_pos, abs_pos, line, ls, events) do
-        events = [
-          {:error, :invalid_close_tag, "Close tag must start with a valid name character", line,
-           ls, abs_pos + 2}
-          | events
-        ]
-
-        complete(events, line, ls, abs_pos + 2)
       end
 
       # XML declaration - only valid at document start (abs_pos == 0)
@@ -804,30 +836,6 @@ defmodule FnXML.MacroBlkParserGenerator do
         ]
 
         complete(events, line, ls, abs_pos + 2)
-      end
-
-      defp parse_element(
-             <<"<", rest2::binary>> = <<"<", c::utf8, _::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             events
-           )
-           when is_name_start(c) do
-        parse_open_tag_name(
-          rest2,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 1,
-          buf_pos,
-          events
-        )
       end
 
       defp parse_element(<<"<">>, _xml, buf_pos, abs_pos, line, ls, events) do
