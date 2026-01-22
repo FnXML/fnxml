@@ -280,12 +280,12 @@ defmodule FnXML.MacroBlkParserGenerator do
 
       # Return format helper - complete (no leftover)
       defp complete(events, line, ls, abs_pos) do
-        {:lists.reverse(events), nil, {line, ls, abs_pos}}
+        {:lists.reverse(events), nil, line, ls, abs_pos}
       end
 
       # Return format helper - incomplete (has leftover starting at elem_start)
       defp incomplete(events, elem_start, line, ls, abs_pos) do
-        {:lists.reverse(events), elem_start, {line, ls, abs_pos}}
+        {:lists.reverse(events), elem_start, line, ls, abs_pos}
       end
 
       # ============================================================================
@@ -315,21 +315,18 @@ defmodule FnXML.MacroBlkParserGenerator do
       @doc """
       Parse a single block of XML.
       """
-      def parse_block(block, _prev_block, _prev_pos, line, ls, abs_pos) do
-        if abs_pos == 0 do
-          case block do
-            <<0xFE, 0xFF, _::binary>> ->
-              {[{:error, :utf16, nil, line, ls, abs_pos}], nil, {line, ls, abs_pos}}
+      def parse_block(block, prev_block, prev_pos, line, ls, abs_pos)
 
-            <<0xFF, 0xFE, _::binary>> ->
-              {[{:error, :utf16, nil, line, ls, abs_pos}], nil, {line, ls, abs_pos}}
+      def parse_block(<<0xFE, 0xFF, _::binary>>, _, _, line, ls, abs_pos) do
+        {[{:error, :utf16, nil, line, ls, abs_pos}], nil, line, ls, abs_pos}
+      end
 
-            _ ->
-              parse_content(block, block, 0, abs_pos, line, ls, [])
-          end
-        else
-          parse_content(block, block, 0, abs_pos, line, ls, [])
-        end
+      def parse_block(<<0xFF, 0xFE, _::binary>>, _, _, line, ls, abs_pos) do
+        {[{:error, :utf16, nil, line, ls, abs_pos}], nil, line, ls, abs_pos}
+      end
+
+      def parse_block(block, _, _, line, ls, abs_pos) do
+        parse_content(block, block, 0, abs_pos, line, ls, [])
       end
 
       # ============================================================================
@@ -369,7 +366,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       end
 
       defp handle_chunk(rest, chunk, line, ls, abs_pos) do
-        {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+        {events, leftover_pos, new_line, new_ls, new_abs_pos} =
           parse_block(chunk, nil, 0, line, ls, abs_pos)
 
         if leftover_pos do
@@ -385,7 +382,7 @@ defmodule FnXML.MacroBlkParserGenerator do
           {pos, 1} ->
             mini = leftover <> binary_part(chunk, 0, pos + 1)
 
-            {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+            {events, leftover_pos, new_line, new_ls, new_abs_pos} =
               parse_block(mini, nil, 0, line, ls, abs_pos)
 
             if leftover_pos do
@@ -426,7 +423,7 @@ defmodule FnXML.MacroBlkParserGenerator do
           {pos, 1} ->
             mini = leftover <> binary_part(chunk, search_start, pos - search_start + 1)
 
-            {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+            {events, leftover_pos, new_line, new_ls, new_abs_pos} =
               parse_block(mini, nil, 0, line, ls, abs_pos)
 
             all_events = acc_events ++ events
@@ -460,7 +457,7 @@ defmodule FnXML.MacroBlkParserGenerator do
         if chunk_remaining > 0 do
           rest_chunk = binary_part(chunk, start_pos, chunk_remaining)
 
-          {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+          {events, leftover_pos, new_line, new_ls, new_abs_pos} =
             parse_block(rest_chunk, nil, 0, line, ls, abs_pos)
 
           all_events = acc_events ++ events
@@ -484,297 +481,143 @@ defmodule FnXML.MacroBlkParserGenerator do
         complete(events, line, ls, abs_pos)
       end
 
-      defp parse_content(<<"<?xml ", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_prolog(
-          rest,
-          xml,
-          buf_pos + 6,
-          abs_pos + 6,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos,
-          events
-        )
-      end
-
-      defp parse_content(<<"<?xml\t", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_prolog(
-          rest,
-          xml,
-          buf_pos + 6,
-          abs_pos + 6,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos,
-          events
-        )
-      end
-
-      defp parse_content(<<"<?xml\n", rest::binary>>, xml, buf_pos, abs_pos, line, _ls, events) do
-        parse_prolog(
-          rest,
-          xml,
-          buf_pos + 6,
-          abs_pos + 6,
-          line + 1,
-          abs_pos + 6,
-          {line, abs_pos + 6 - 6, abs_pos + 1},
-          buf_pos,
-          events
-        )
-      end
-
-      # At document start: <?xml followed by non-whitespace is malformed XMLDecl
-      # The XML spec requires whitespace after "<?xml" (S in VersionInfo)
-      defp parse_content(<<"<?xml", c, _::binary>>, _xml, _buf_pos, 0 = abs_pos, line, ls, events)
-           when c not in [?\s, ?\t, ?\n, ?\r, ?\?] do
-        events = [
-          {:error, :malformed_xml_decl, "Missing whitespace after '<?xml' in XML declaration",
-           line, ls, abs_pos}
-          | events
-        ]
-
-        complete(events, line, ls, abs_pos + 5)
-      end
-
       defp parse_content(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, events) do
         parse_element(rest, xml, buf_pos, abs_pos, line, ls, events)
       end
 
+      defp parse_content(<<c, _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, events) when c in [?\s, ?\t, ?\n] do
+        parse_ws(rest, xml, buf_pos, abs_pos, line, ls, {line, ls, abs_pos}, buf_pos, events)
+      end
+
       defp parse_content(rest, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_text(
-          rest,
-          xml,
-          buf_pos,
-          abs_pos,
-          line,
-          ls,
-          {line, ls, abs_pos},
-          buf_pos,
-          true,
-          events
-        )
+        parse_text(rest, xml, buf_pos, abs_pos, line, ls, {line, ls, abs_pos}, buf_pos, events)
       end
 
       # ============================================================================
       # Text parsing
       # ============================================================================
 
-      defp parse_text(<<>>, xml, buf_pos, abs_pos, line, ls, loc, start, all_ws, events) do
-        events =
-          if buf_pos > start do
-            text = binary_part(xml, start, buf_pos - start)
-            {l, lls, lp} = loc
-
-            if all_ws do
-              [{:space, text, l, lls, lp} | events]
-            else
-              [{:characters, text, l, lls, lp} | events]
-            end
-          else
-            events
-          end
-
-        complete(events, line, ls, abs_pos)
+      defp parse_ws(<<c, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) when c in [?\s, ?\t] do
+        parse_ws(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, events)
       end
 
-      defp parse_text(
-             <<"<", _::binary>> = rest,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             loc,
-             start,
-             all_ws,
-             events
-           ) do
-        events =
-          if buf_pos > start do
-            text = binary_part(xml, start, buf_pos - start)
-            {l, lls, lp} = loc
+      defp parse_ws(<<?\n, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) do
+        pos = abs_pos + 1
+        parse_ws(rest, xml, buf_pos + 1, pos, line+1, pos, loc, start, events)
+      end
 
-            if all_ws do
-              [{:space, text, l, lls, lp} | events]
-            else
-              [{:characters, text, l, lls, lp} | events]
-            end
-          else
-            events
-          end
-
+      defp parse_ws(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, loc, start, events) when buf_pos > start do
+        text = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+        parse_element(rest, xml, buf_pos, abs_pos, line, ls, [{:space, text, l, lls, lp} | events])
+      end
+      
+      defp parse_ws(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, loc, _start, events) do
         parse_element(rest, xml, buf_pos, abs_pos, line, ls, events)
       end
 
-      defp parse_text(
-             <<?\n, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             _ls,
-             loc,
-             start,
-             all_ws,
-             events
-           ) do
-        parse_text(
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line + 1,
-          abs_pos + 1,
-          loc,
-          start,
-          all_ws,
-          events
-        )
+      defp parse_ws(<<>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) when buf_pos > start do
+        text = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+
+        [{:space, text, l, lls, lp} | events]
+        |> complete(line, ls, abs_pos)
       end
 
-      defp parse_text(
-             <<c, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             loc,
-             start,
-             all_ws,
-             events
-           )
-           when c in [?\s, ?\t] do
-        parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, all_ws, events)
+      defp parse_ws(<<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, _start, events) do
+        complete(events, line, ls, abs_pos)
       end
 
-      defp parse_text(
-             <<"]]>", rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             loc,
-             start,
-             all_ws,
-             events
-           ) do
-        events =
-          if buf_pos > start do
-            text = binary_part(xml, start, buf_pos - start)
-            {l, lls, lp} = loc
-
-            if all_ws do
-              [{:space, text, l, lls, lp} | events]
-            else
-              [{:characters, text, l, lls, lp} | events]
-            end
-          else
-            events
-          end
-
-        events = [
-          {:error, :text_cdata_end, "']]>' not allowed in text content", line, ls, abs_pos}
-          | events
-        ]
-
-        parse_text(
-          rest,
-          xml,
-          buf_pos + 3,
-          abs_pos + 3,
-          line,
-          ls,
-          {line, ls, abs_pos + 3},
-          buf_pos + 3,
-          true,
-          events
-        )
+      # transition to characters if we find a non-space
+      defp parse_ws(rest, xml, buf_pos, abs_pos, line, ls, loc, start, events) do
+        parse_text(rest, xml, buf_pos, abs_pos, line, ls, loc, start, events)
       end
-
+      
+      
       # ASCII fast path for valid XML chars (excludes <, ], control chars; newline/tab handled above)
-      defp parse_text(
-             <<c, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             loc,
-             start,
-             _all_ws,
-             events
-           )
+      defp parse_text(<<c, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events)
            when c in 0x20..0x3B or c == 0x3D or c in 0x3F..0x5C or c in 0x5E..0x7F or c == 0x0D do
-        parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, false, events)
+        parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, events)
+      end
+
+      defp parse_text(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, loc, start, events) when buf_pos > start do
+        text = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+        parse_element(rest, xml, buf_pos, abs_pos, line, ls,[{:characters, text, l, lls, lp} | events])
+      end
+      
+      defp parse_text(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, loc, start, events) do
+        parse_element(rest, xml, buf_pos, abs_pos, line, ls, events)
+      end
+
+      defp parse_text(<<?\n, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) do
+        pos = abs_pos + 1
+        parse_text(rest, xml, buf_pos + 1, pos, line+1, pos, loc, start, events)
       end
 
       # Non-ASCII UTF-8: validate with is_xml_char guard
-      defp parse_text(
-             <<c::utf8, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             loc,
-             start,
-             _all_ws,
-             events
-           )
+      defp parse_text(<<c::utf8, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events)
            when is_xml_char(c) do
         size = utf8_size(c)
-        parse_text(rest, xml, buf_pos + size, abs_pos + size, line, ls, loc, start, false, events)
+        parse_text(rest, xml, buf_pos + size, abs_pos + size, line, ls, loc, start, events)
       end
 
+      defp parse_text(<<>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) when buf_pos > start do
+        text = binary_part(xml, start, buf_pos - start)
+        {l, lls, lp} = loc
+
+        [{:characters, text, l, lls, lp} | events]
+        |> complete(line, ls, abs_pos)
+      end
+
+      defp parse_text(<<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, _start, events) do
+        complete(events, line, ls, abs_pos)
+      end
+
+      # the string ]]> is not allowed in text
+      defp parse_text(<<"]", rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) do
+        case rest do
+          <<"]>", rest2::binary>> ->
+            {l, lls, lp} = loc
+            text = binary_part(xml, start, buf_pos - start)
+            events = [
+              {:error, :text_cdata_end, "']]>' not allowed in text content", line, ls, abs_pos}
+              | [{:characters, text, l, lls, lp} | events]
+            ]
+            parse_text(rest2, xml, buf_pos + 3, abs_pos + 3, line, ls, {line, ls, abs_pos + 3}, buf_pos + 3, events)
+
+          <<"]">> ->
+            text = binary_part(xml, start, buf_pos - start)
+            {l, lls, lp} = loc
+            incomplete(events, buf_pos, line, ls, abs_pos)
+
+          _ ->
+            parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, events)
+            
+        end
+      end
+
+
       # Invalid XML character - emit error and stop
-      defp parse_text(
-             <<c::utf8, _rest::binary>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _loc,
-             _start,
-             _all_ws,
-             events
-           ) do
-        events = [
+      defp parse_text(<<c::utf8, _rest::binary>>, _xml, _buf_pos, abs_pos, line, ls, _loc, _start, events) do
+        [
           {:error, :invalid_char,
            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in text content",
            line, ls, abs_pos}
           | events
         ]
-
-        complete(events, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
-      defp parse_text(
-             <<byte, _rest::binary>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _loc,
-             _start,
-             _all_ws,
-             events
-           )
+      defp parse_text(<<byte, _rest::binary>>, _xml, _buf_pos, abs_pos, line, ls, _loc, _start, events)
            when byte >= 0x80 do
-        events = [
+        [
           {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in text content", line, ls,
            abs_pos}
           | events
         ]
-
-        complete(events, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       # ============================================================================
@@ -861,6 +704,72 @@ defmodule FnXML.MacroBlkParserGenerator do
         ]
 
         complete(events, line, ls, abs_pos + 2)
+      end
+
+      # XML declaration - only valid at document start (abs_pos == 0)
+      defp parse_element(
+             <<"<?xml", ws, rest::binary>>,
+             xml,
+             buf_pos,
+             0 = abs_pos,
+             line,
+             ls,
+             events
+           )
+           when ws in [?\s, ?\t] do
+        parse_prolog(
+          rest,
+          xml,
+          buf_pos + 6,
+          abs_pos + 6,
+          line,
+          ls,
+          {line, ls, abs_pos + 1},
+          buf_pos,
+          events
+        )
+      end
+
+      defp parse_element(
+             <<"<?xml\n", rest::binary>>,
+             xml,
+             buf_pos,
+             0 = abs_pos,
+             line,
+             _ls,
+             events
+           ) do
+        parse_prolog(
+          rest,
+          xml,
+          buf_pos + 6,
+          abs_pos + 6,
+          line + 1,
+          abs_pos + 6,
+          {line, 0, abs_pos + 1},
+          buf_pos,
+          events
+        )
+      end
+
+      # Malformed XML declaration at document start - missing whitespace after <?xml
+      defp parse_element(
+             <<"<?xml", c, _::binary>>,
+             _xml,
+             _buf_pos,
+             0 = abs_pos,
+             line,
+             ls,
+             events
+           )
+           when c not in [?\s, ?\t, ?\n, ?\?] do
+        events = [
+          {:error, :malformed_xml_decl, "Missing whitespace after '<?xml' in XML declaration",
+           line, ls, abs_pos}
+          | events
+        ]
+
+        complete(events, line, ls, abs_pos + 5)
       end
 
       defp parse_element(
