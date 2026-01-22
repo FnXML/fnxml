@@ -551,6 +551,13 @@ defmodule FnXML.MacroBlkParserGenerator do
         parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, events)
       end
 
+      # Non-ASCII UTF-8: validate with is_xml_char guard
+      defp parse_text(<<c::utf8, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events)
+           when is_xml_char(c) do
+        size = utf8_size(c)
+        parse_text(rest, xml, buf_pos + size, abs_pos + size, line, ls, loc, start, events)
+      end
+
       defp parse_text(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, loc, start, events) when buf_pos > start do
         text = binary_part(xml, start, buf_pos - start)
         {l, lls, lp} = loc
@@ -564,13 +571,6 @@ defmodule FnXML.MacroBlkParserGenerator do
       defp parse_text(<<?\n, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) do
         pos = abs_pos + 1
         parse_text(rest, xml, buf_pos + 1, pos, line+1, pos, loc, start, events)
-      end
-
-      # Non-ASCII UTF-8: validate with is_xml_char guard
-      defp parse_text(<<c::utf8, rest::binary>>, xml, buf_pos, abs_pos, line, ls, loc, start, events)
-           when is_xml_char(c) do
-        size = utf8_size(c)
-        parse_text(rest, xml, buf_pos + size, abs_pos + size, line, ls, loc, start, events)
       end
 
       defp parse_text(<<>>, xml, buf_pos, abs_pos, line, ls, loc, start, events) when buf_pos > start do
@@ -910,8 +910,7 @@ defmodule FnXML.MacroBlkParserGenerator do
              elem_start,
              events
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_open_tag_name(
           rest,
           xml,
@@ -1387,8 +1386,7 @@ defmodule FnXML.MacroBlkParserGenerator do
              elem_start,
              events
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_attr_name(
           rest,
           xml,
@@ -2052,8 +2050,7 @@ defmodule FnXML.MacroBlkParserGenerator do
              elem_start,
              events
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_close_tag_name(
           rest,
           xml,
@@ -3283,8 +3280,7 @@ defmodule FnXML.MacroBlkParserGenerator do
              elem_start,
              events
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_pi_name(
           rest,
           xml,
@@ -3722,8 +3718,7 @@ defmodule FnXML.MacroBlkParserGenerator do
              elem_start,
              events
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_prolog_attr_name(
           rest,
           xml,
