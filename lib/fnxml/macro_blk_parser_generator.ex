@@ -29,9 +29,32 @@ defmodule FnXML.MacroBlkParserGenerator do
 
   ## Options
   - `:edition` - Required. Either `4` or `5`.
+  - `:disable` - Optional. List of event types to disable (compile-time filtering).
+                 Valid values: `:space`, `:comment`, `:cdata`, `:prolog`, `:characters`,
+                              `:start_element`, `:end_element`, `:error`
+  - `:positions` - Optional. How to include position data in events.
+                  - `:full` (default) - Include line, ls, abs_pos
+                  - `:line_only` - Include only line number
+                  - `:none` - No position data
+
+  ## Examples
+
+      # Full featured parser (default)
+      use FnXML.MacroBlkParserGenerator, edition: 5
+
+      # Minimal parser - no whitespace, comments, or positions
+      use FnXML.MacroBlkParserGenerator, edition: 5,
+        disable: [:space, :comment],
+        positions: :none
+
+      # Structure only - no text content
+      use FnXML.MacroBlkParserGenerator, edition: 5,
+        disable: [:characters, :space, :comment, :cdata]
   """
   defmacro __using__(opts) do
     edition = Keyword.fetch!(opts, :edition)
+    disabled = Keyword.get(opts, :disable, [])
+    positions = Keyword.get(opts, :positions, :full)
 
     quote do
       @moduledoc """
@@ -39,6 +62,9 @@ defmodule FnXML.MacroBlkParserGenerator do
 
       Auto-generated with edition-specific character validation inlined
       for maximum performance. No runtime edition dispatch.
+
+      Disabled events: #{inspect(unquote(disabled))}
+      Position mode: #{unquote(positions)}
       """
 
       # Inline frequently called helper functions
@@ -51,15 +77,26 @@ defmodule FnXML.MacroBlkParserGenerator do
                 new_event: 7,
                 error: 6}
 
-      # Store edition for introspection
+      # Store configuration for introspection
       @edition unquote(edition)
+      @disabled unquote(disabled)
+      @position_mode unquote(positions)
+
       def edition, do: @edition
+      def disabled, do: @disabled
+      def position_mode, do: @position_mode
 
       # ==================================================================
       # Character Guards (edition-specific, inlined at compile time)
       # ==================================================================
 
       unquote(generate_char_guards(edition))
+
+      # ==================================================================
+      # Event Helpers (with compile-time filtering)
+      # ==================================================================
+
+      unquote(generate_event_helpers(disabled, positions))
 
       # ==================================================================
       # Shared Parser Implementation
@@ -285,6 +322,139 @@ defmodule FnXML.MacroBlkParserGenerator do
   end
 
   # ==================================================================
+  # Event Helper Generation (with compile-time filtering)
+  # ==================================================================
+
+  defp generate_event_helpers(disabled, positions) do
+    quote do
+      # Generate new_event/6 (single data field)
+      unquote(generate_new_event_6(disabled, positions))
+
+      # Generate new_event/7 (two data fields)
+      unquote(generate_new_event_7(disabled, positions))
+
+      # Generate error/6
+      unquote(generate_error_6(disabled, positions))
+    end
+  end
+
+  # Generate new_event/6 clauses (event_type, data, line, ls, abs_pos)
+  defp generate_new_event_6(disabled, positions) do
+    # Generate drop clauses for disabled event types
+    drop_clauses =
+      for event_type <- disabled do
+        quote do
+          defp new_event(events, unquote(event_type), _data, _line, _ls, _abs_pos) do
+            events
+          end
+        end
+      end
+
+    # Generate default clause based on position mode
+    default_clause =
+      case positions do
+        :full ->
+          quote do
+            defp new_event(events, event_type, data, line, ls, abs_pos) do
+              [{event_type, data, line, ls, abs_pos} | events]
+            end
+          end
+
+        :line_only ->
+          quote do
+            defp new_event(events, event_type, data, line, _ls, _abs_pos) do
+              [{event_type, data, line} | events]
+            end
+          end
+
+        :none ->
+          quote do
+            defp new_event(events, event_type, data, _line, _ls, _abs_pos) do
+              [{event_type, data} | events]
+            end
+          end
+      end
+
+    [drop_clauses, default_clause]
+  end
+
+  # Generate new_event/7 clauses (event_type, data1, data2, line, ls, abs_pos)
+  defp generate_new_event_7(disabled, positions) do
+    # Generate drop clauses for disabled event types
+    drop_clauses =
+      for event_type <- disabled do
+        quote do
+          defp new_event(events, unquote(event_type), _data1, _data2, _line, _ls, _abs_pos) do
+            events
+          end
+        end
+      end
+
+    # Generate default clause based on position mode
+    default_clause =
+      case positions do
+        :full ->
+          quote do
+            defp new_event(events, event_type, data1, data2, line, ls, abs_pos) do
+              [{event_type, data1, data2, line, ls, abs_pos} | events]
+            end
+          end
+
+        :line_only ->
+          quote do
+            defp new_event(events, event_type, data1, data2, line, _ls, _abs_pos) do
+              [{event_type, data1, data2, line} | events]
+            end
+          end
+
+        :none ->
+          quote do
+            defp new_event(events, event_type, data1, data2, _line, _ls, _abs_pos) do
+              [{event_type, data1, data2} | events]
+            end
+          end
+      end
+
+    [drop_clauses, default_clause]
+  end
+
+  # Generate error/6 clauses (error_type, message, line, ls, abs_pos)
+  defp generate_error_6(disabled, positions) do
+    # Check if :error is disabled (though this would be unusual)
+    if :error in disabled do
+      quote do
+        defp error(events, _error_type, _message, _line, _ls, _abs_pos) do
+          events
+        end
+      end
+    else
+      # Generate error clause based on position mode
+      case positions do
+        :full ->
+          quote do
+            defp error(events, error_type, message, line, ls, abs_pos) do
+              [{:error, error_type, message, line, ls, abs_pos} | events]
+            end
+          end
+
+        :line_only ->
+          quote do
+            defp error(events, error_type, message, line, _ls, _abs_pos) do
+              [{:error, error_type, message, line} | events]
+            end
+          end
+
+        :none ->
+          quote do
+            defp error(events, error_type, message, _line, _ls, _abs_pos) do
+              [{:error, error_type, message} | events]
+            end
+          end
+      end
+    end
+  end
+
+  # ==================================================================
   # Shared Parser Code (injected into both editions)
   # ==================================================================
 
@@ -311,20 +481,8 @@ defmodule FnXML.MacroBlkParserGenerator do
         buf_pos - (abs_pos - el_abs_pos)
       end
 
-      # Event creation helper - 1 data field
-      defp new_event(events, event_type, data, line, ls, abs_pos) do
-        [{event_type, data, line, ls, abs_pos} | events]
-      end
-
-      # Event creation helper - 2 data fields
-      defp new_event(events, event_type, data1, data2, line, ls, abs_pos) do
-        [{event_type, data1, data2, line, ls, abs_pos} | events]
-      end
-
-      # Error creation helper
-      defp error(events, error_type, message, line, ls, abs_pos) do
-        [{:error, error_type, message, line, ls, abs_pos} | events]
-      end
+      # Note: new_event/6, new_event/7, and error/6 are generated by
+      # generate_event_helpers/2 based on disabled events and position mode
 
       # ============================================================================
       # Public API
@@ -612,6 +770,26 @@ defmodule FnXML.MacroBlkParserGenerator do
         parse_text(events, rest, xml, buf_pos, abs_pos, line, ls, el_line, el_ls, el_abs_pos)
       end
 
+      # Match < before general character matching
+      defp parse_text(
+             events,
+             <<"<", _::binary>> = rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos
+           ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
+        text = binary_part(xml, start, buf_pos - start)
+
+        new_event(events, :characters, text, el_line, el_ls, el_abs_pos)
+        |> parse_element(rest, xml, buf_pos, abs_pos, line, ls)
+      end
+
       # ASCII fast path for valid XML chars (excludes <, ], control chars; newline/tab handled above)
       defp parse_text(
              events,
@@ -668,25 +846,6 @@ defmodule FnXML.MacroBlkParserGenerator do
           el_ls,
           el_abs_pos
         )
-      end
-
-      defp parse_text(
-             events,
-             <<"<", _::binary>> = rest,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos
-           ) do
-        start = buf_start(buf_pos, abs_pos, el_abs_pos)
-        text = binary_part(xml, start, buf_pos - start)
-
-        new_event(events, :characters, text, el_line, el_ls, el_abs_pos)
-        |> parse_element(rest, xml, buf_pos, abs_pos, line, ls)
       end
 
       defp parse_text(
@@ -1567,9 +1726,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          el_line,
-          el_ls,
-          el_abs_pos,
+          line,
+          ls,
+          abs_pos,
           elem_start
         )
       end
@@ -2008,9 +2167,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          el_line,
-          el_ls,
-          el_abs_pos,
+          line,
+          ls,
+          abs_pos + 1,
           attr_name,
           q,
           elem_start
@@ -4199,9 +4358,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos,
           line,
           ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
+          line,
+          ls,
+          abs_pos,
           [],
           elem_start
         )
@@ -4593,9 +4752,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
+          line,
+          ls,
+          abs_pos + 1,
           prolog_attrs,
           attr_name,
           q,
@@ -5087,9 +5246,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos,
           line,
           ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
+          line,
+          ls,
+          abs_pos,
           prolog_attrs,
           elem_start
         )
