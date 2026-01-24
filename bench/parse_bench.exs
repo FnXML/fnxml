@@ -30,6 +30,36 @@ defmodule NullHandler do
   def handle_event(:comment, _comment, state), do: {:ok, state}
 end
 
+# Define parser variants for benchmarking
+
+# Edition 5 variants
+defmodule MacroBlk.Compliant.Ed5 do
+  use FnXML.MacroBlkParserGenerator, edition: 5
+end
+
+defmodule MacroBlk.Reduced.Ed5 do
+  use FnXML.MacroBlkParserGenerator, edition: 5, disable: [:space, :comment]
+end
+
+defmodule MacroBlk.Structural.Ed5 do
+  use FnXML.MacroBlkParserGenerator, edition: 5,
+    disable: [:space, :comment, :cdata, :prolog, :characters]
+end
+
+# Edition 4 variants
+defmodule MacroBlk.Compliant.Ed4 do
+  use FnXML.MacroBlkParserGenerator, edition: 4
+end
+
+defmodule MacroBlk.Reduced.Ed4 do
+  use FnXML.MacroBlkParserGenerator, edition: 4, disable: [:space, :comment]
+end
+
+defmodule MacroBlk.Structural.Ed4 do
+  use FnXML.MacroBlkParserGenerator, edition: 4,
+    disable: [:space, :comment, :cdata, :prolog, :characters]
+end
+
 defmodule ParseBench do
   @small_path "bench/data/small.xml"
   @medium_path "bench/data/medium.xml"
@@ -52,38 +82,41 @@ defmodule ParseBench do
     IO.puts("")
 
     IO.puts("Parsers:")
-    IO.puts("  macro_blk_ed5:        MacroBlkParser Edition 5 (default, permissive Unicode)")
-    IO.puts("  macro_blk_ed5_stream: MacroBlkParser Edition 5 with 64KB chunked streaming")
-    IO.puts("  macro_blk_ed4:        MacroBlkParser Edition 4 (strict character validation)")
-    IO.puts("  macro_blk_ed4_stream: MacroBlkParser Edition 4 with 64KB chunked streaming")
-    IO.puts("  ex_blk_parser:        ExBlkParser (legacy)")
-    IO.puts("  fast_ex_blk:          FastExBlkParser (legacy)")
+    IO.puts("  Edition 5 (permissive Unicode):")
+    IO.puts("    macro_blk_compliant_ed5:  All events (default)")
+    IO.puts("    macro_blk_reduced_ed5:    No space/comment events")
+    IO.puts("    macro_blk_structural_ed5: Only start/end elements")
+    IO.puts("  Edition 4 (strict character validation):")
+    IO.puts("    macro_blk_compliant_ed4:  All events (default)")
+    IO.puts("    macro_blk_reduced_ed4:    No space/comment events")
+    IO.puts("    macro_blk_structural_ed4: Only start/end elements")
+    IO.puts("  Legacy:")
+    IO.puts("    ex_blk_parser:            ExBlkParser")
+    IO.puts("    fast_ex_blk:              FastExBlkParser")
     IO.puts("")
 
     Benchee.run(
       %{
-        # MacroBlkParser - Edition 5 (default, more permissive Unicode)
-        "macro_blk_ed5" => fn {xml, _path} ->
-          [xml]
-          |> FnXML.MacroBlkParser.Edition5.stream()
-          |> Enum.to_list()
+        # MacroBlkParser - Edition 5 variants
+        "macro_blk_compliant_ed5" => fn {xml, _path} ->
+          [xml] |> MacroBlk.Compliant.Ed5.stream() |> Enum.to_list()
         end,
-        "macro_blk_ed5_stream" => fn {_xml, path} ->
-          File.stream!(path, [], 65536)
-          |> FnXML.MacroBlkParser.Edition5.stream()
-          |> Enum.to_list()
+        "macro_blk_reduced_ed5" => fn {xml, _path} ->
+          [xml] |> MacroBlk.Reduced.Ed5.stream() |> Enum.to_list()
+        end,
+        "macro_blk_structural_ed5" => fn {xml, _path} ->
+          [xml] |> MacroBlk.Structural.Ed5.stream() |> Enum.to_list()
         end,
 
-        # MacroBlkParser - Edition 4 (stricter character validation)
-        "macro_blk_ed4" => fn {xml, _path} ->
-          [xml]
-          |> FnXML.MacroBlkParser.Edition4.stream()
-          |> Enum.to_list()
+        # MacroBlkParser - Edition 4 variants
+        "macro_blk_compliant_ed4" => fn {xml, _path} ->
+          [xml] |> MacroBlk.Compliant.Ed4.stream() |> Enum.to_list()
         end,
-        "macro_blk_ed4_stream" => fn {_xml, path} ->
-          File.stream!(path, [], 65536)
-          |> FnXML.MacroBlkParser.Edition4.stream()
-          |> Enum.to_list()
+        "macro_blk_reduced_ed4" => fn {xml, _path} ->
+          [xml] |> MacroBlk.Reduced.Ed4.stream() |> Enum.to_list()
+        end,
+        "macro_blk_structural_ed4" => fn {xml, _path} ->
+          [xml] |> MacroBlk.Structural.Ed4.stream() |> Enum.to_list()
         end,
 
         # Legacy parsers
@@ -138,38 +171,41 @@ defmodule ParseBench do
     IO.puts("File: medium.xml (#{byte_size(@medium)} bytes)\n")
 
     IO.puts("Parsers:")
-    IO.puts("  macro_blk_ed5:        MacroBlkParser Edition 5 (default, permissive Unicode)")
-    IO.puts("  macro_blk_ed5_stream: MacroBlkParser Edition 5 with 64KB chunked streaming")
-    IO.puts("  macro_blk_ed4:        MacroBlkParser Edition 4 (strict character validation)")
-    IO.puts("  macro_blk_ed4_stream: MacroBlkParser Edition 4 with 64KB chunked streaming")
-    IO.puts("  ex_blk_parser:        ExBlkParser (legacy)")
-    IO.puts("  fast_ex_blk:          FastExBlkParser (legacy)")
+    IO.puts("  Edition 5 (permissive Unicode):")
+    IO.puts("    macro_blk_compliant_ed5:  All events (default)")
+    IO.puts("    macro_blk_reduced_ed5:    No space/comment events")
+    IO.puts("    macro_blk_structural_ed5: Only start/end elements")
+    IO.puts("  Edition 4 (strict character validation):")
+    IO.puts("    macro_blk_compliant_ed4:  All events (default)")
+    IO.puts("    macro_blk_reduced_ed4:    No space/comment events")
+    IO.puts("    macro_blk_structural_ed4: Only start/end elements")
+    IO.puts("  Legacy:")
+    IO.puts("    ex_blk_parser:            ExBlkParser")
+    IO.puts("    fast_ex_blk:              FastExBlkParser")
     IO.puts("")
 
     Benchee.run(
       %{
-        # MacroBlkParser - Edition 5 (default, more permissive Unicode)
-        "macro_blk_ed5" => fn ->
-          [@medium]
-          |> FnXML.MacroBlkParser.Edition5.stream()
-          |> Enum.to_list()
+        # MacroBlkParser - Edition 5 variants
+        "macro_blk_compliant_ed5" => fn ->
+          [@medium] |> MacroBlk.Compliant.Ed5.stream() |> Enum.to_list()
         end,
-        "macro_blk_ed5_stream" => fn ->
-          File.stream!(@medium_path, [], 65536)
-          |> FnXML.MacroBlkParser.Edition5.stream()
-          |> Enum.to_list()
+        "macro_blk_reduced_ed5" => fn ->
+          [@medium] |> MacroBlk.Reduced.Ed5.stream() |> Enum.to_list()
+        end,
+        "macro_blk_structural_ed5" => fn ->
+          [@medium] |> MacroBlk.Structural.Ed5.stream() |> Enum.to_list()
         end,
 
-        # MacroBlkParser - Edition 4 (stricter character validation)
-        "macro_blk_ed4" => fn ->
-          [@medium]
-          |> FnXML.MacroBlkParser.Edition4.stream()
-          |> Enum.to_list()
+        # MacroBlkParser - Edition 4 variants
+        "macro_blk_compliant_ed4" => fn ->
+          [@medium] |> MacroBlk.Compliant.Ed4.stream() |> Enum.to_list()
         end,
-        "macro_blk_ed4_stream" => fn ->
-          File.stream!(@medium_path, [], 65536)
-          |> FnXML.MacroBlkParser.Edition4.stream()
-          |> Enum.to_list()
+        "macro_blk_reduced_ed4" => fn ->
+          [@medium] |> MacroBlk.Reduced.Ed4.stream() |> Enum.to_list()
+        end,
+        "macro_blk_structural_ed4" => fn ->
+          [@medium] |> MacroBlk.Structural.Ed4.stream() |> Enum.to_list()
         end,
 
         # Legacy parsers

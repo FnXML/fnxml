@@ -22,60 +22,34 @@ defmodule NullHandler do
   def handle_event(:comment, _comment, state), do: {:ok, state}
 end
 
-# Define configurable parsers inline using the macro
+# Define parser variants for benchmarking
+
 # Edition 5 variants
-defmodule Bench.CompliantEd5 do
-  @moduledoc "All features enabled - Edition 5"
-  use FnXML.MacroBlkParserGenerator, edition: 5, disable: []
+defmodule MacroBlk.Compliant.Ed5 do
+  use FnXML.MacroBlkParserGenerator, edition: 5
 end
 
-defmodule Bench.FastEd5 do
-  @moduledoc "No position, no whitespace - Edition 5"
-  use FnXML.MacroBlkParserGenerator, edition: 5, disable: [:space, :position]
+defmodule MacroBlk.Reduced.Ed5 do
+  use FnXML.MacroBlkParserGenerator, edition: 5, disable: [:space, :comment]
 end
 
-defmodule Bench.MinimalEd5 do
-  @moduledoc "Only elements and text - Edition 5"
-  use FnXML.MacroBlkParserGenerator,
-    edition: 5,
-    disable: [:space, :position, :comment, :cdata, :processing_instruction, :prolog, :dtd]
+defmodule MacroBlk.Structural.Ed5 do
+  use FnXML.MacroBlkParserGenerator, edition: 5,
+    disable: [:space, :comment, :cdata, :prolog, :characters]
 end
 
 # Edition 4 variants
-defmodule Bench.CompliantEd4 do
-  @moduledoc "All features enabled - Edition 4"
-  use FnXML.MacroBlkParserGenerator, edition: 4, disable: []
+defmodule MacroBlk.Compliant.Ed4 do
+  use FnXML.MacroBlkParserGenerator, edition: 4
 end
 
-defmodule Bench.FastEd4 do
-  @moduledoc "No position, no whitespace - Edition 4"
-  use FnXML.MacroBlkParserGenerator, edition: 4, disable: [:space, :position]
+defmodule MacroBlk.Reduced.Ed4 do
+  use FnXML.MacroBlkParserGenerator, edition: 4, disable: [:space, :comment]
 end
 
-defmodule Bench.MinimalEd4 do
-  @moduledoc "Only elements and text - Edition 4"
-  use FnXML.MacroBlkParserGenerator,
-    edition: 4,
-    disable: [:space, :position, :comment, :cdata, :processing_instruction, :prolog, :dtd]
-end
-
-# Aliases for backward compatibility
-defmodule Bench.Compliant do
-  @moduledoc "Alias for CompliantEd5"
-  defdelegate parse(xml), to: Bench.CompliantEd5
-  defdelegate stream(enum), to: Bench.CompliantEd5
-end
-
-defmodule Bench.Fast do
-  @moduledoc "Alias for FastEd5"
-  defdelegate parse(xml), to: Bench.FastEd5
-  defdelegate stream(enum), to: Bench.FastEd5
-end
-
-defmodule Bench.Minimal do
-  @moduledoc "Alias for MinimalEd5"
-  defdelegate parse(xml), to: Bench.MinimalEd5
-  defdelegate stream(enum), to: Bench.MinimalEd5
+defmodule MacroBlk.Structural.Ed4 do
+  use FnXML.MacroBlkParserGenerator, edition: 4,
+    disable: [:space, :comment, :cdata, :prolog, :characters]
 end
 
 defmodule AllParsersBench do
@@ -92,7 +66,23 @@ defmodule AllParsersBench do
     print_file_info()
     print_parser_info()
 
-    IO.puts("\n--- MEDIUM FILE BENCHMARK ---\n")
+    IO.puts("Parsers compared:")
+    IO.puts("  External:")
+    IO.puts("    - saxy: Highly optimized SAX parser")
+    IO.puts("    - erlsom: Erlang XML library")
+    IO.puts("    - xmerl: Erlang stdlib DOM parser")
+    IO.puts("  FnXML Edition 5 (permissive Unicode):")
+    IO.puts("    - macro_blk_compliant_ed5:  All events")
+    IO.puts("    - macro_blk_reduced_ed5:    No space/comment")
+    IO.puts("    - macro_blk_structural_ed5: Only start/end elements")
+    IO.puts("  FnXML Edition 4 (strict validation):")
+    IO.puts("    - macro_blk_compliant_ed4:  All events")
+    IO.puts("    - macro_blk_reduced_ed4:    No space/comment")
+    IO.puts("    - macro_blk_structural_ed4: Only start/end elements")
+    IO.puts("  FnXML Legacy:")
+    IO.puts("    - ex_blk_parser: ExBlkParser")
+    IO.puts("    - fast_ex_blk: FastExBlkParser")
+    IO.puts("")
 
     Benchee.run(
       %{
@@ -101,15 +91,27 @@ defmodule AllParsersBench do
         "erlsom" => fn -> :erlsom.simple_form(@medium) end,
         "xmerl" => fn -> :xmerl_scan.string(String.to_charlist(@medium)) end,
 
-        # FnXML MacroBlkParser - Edition 5
-        "compliant_ed5" => fn -> Bench.CompliantEd5.parse(@medium) end,
-        "fast_ed5" => fn -> Bench.FastEd5.parse(@medium) end,
-        "minimal_ed5" => fn -> Bench.MinimalEd5.parse(@medium) end,
+        # FnXML MacroBlkParser - Edition 5 variants
+        "macro_blk_compliant_ed5" => fn ->
+          [@medium] |> MacroBlk.Compliant.Ed5.stream() |> Stream.run()
+        end,
+        "macro_blk_reduced_ed5" => fn ->
+          [@medium] |> MacroBlk.Reduced.Ed5.stream() |> Stream.run()
+        end,
+        "macro_blk_structural_ed5" => fn ->
+          [@medium] |> MacroBlk.Structural.Ed5.stream() |> Stream.run()
+        end,
 
-        # FnXML MacroBlkParser - Edition 4
-        "compliant_ed4" => fn -> Bench.CompliantEd4.parse(@medium) end,
-        "fast_ed4" => fn -> Bench.FastEd4.parse(@medium) end,
-        "minimal_ed4" => fn -> Bench.MinimalEd4.parse(@medium) end,
+        # FnXML MacroBlkParser - Edition 4 variants
+        "macro_blk_compliant_ed4" => fn ->
+          [@medium] |> MacroBlk.Compliant.Ed4.stream() |> Stream.run()
+        end,
+        "macro_blk_reduced_ed4" => fn ->
+          [@medium] |> MacroBlk.Reduced.Ed4.stream() |> Stream.run()
+        end,
+        "macro_blk_structural_ed4" => fn ->
+          [@medium] |> MacroBlk.Structural.Ed4.stream() |> Stream.run()
+        end,
 
         # FnXML legacy parsers
         "ex_blk_parser" => fn -> FnXML.ExBlkParser.parse(@medium) end,
@@ -198,14 +200,14 @@ defmodule AllParsersBench do
         "saxy" => fn -> Saxy.parse_string(@small, NullHandler, nil) end,
         "erlsom" => fn -> :erlsom.simple_form(@small) end,
         "xmerl" => fn -> :xmerl_scan.string(String.to_charlist(@small)) end,
-        "compliant_ed5" => fn -> Bench.CompliantEd5.parse(@small) end,
-        "fast_ed5" => fn -> Bench.FastEd5.parse(@small) end,
-        "minimal_ed5" => fn -> Bench.MinimalEd5.parse(@small) end,
-        "compliant_ed4" => fn -> Bench.CompliantEd4.parse(@small) end,
-        "fast_ed4" => fn -> Bench.FastEd4.parse(@small) end,
-        "minimal_ed4" => fn -> Bench.MinimalEd4.parse(@small) end,
-        "ex_blk_parser" => fn -> FnXML.ExBlkParser.parse(@small) end,
-        "fast_ex_blk" => fn -> FnXML.FastExBlkParser.parse(@small) end
+        "macro_blk_compliant_ed5" => fn -> [@small] |> MacroBlk.Compliant.Ed5.stream() |> Stream.run() end,
+        "macro_blk_reduced_ed5" => fn -> [@small] |> MacroBlk.Reduced.Ed5.stream() |> Stream.run() end,
+        "macro_blk_structural_ed5" => fn -> [@small] |> MacroBlk.Structural.Ed5.stream() |> Stream.run() end,
+        "macro_blk_compliant_ed4" => fn -> [@small] |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
+        "macro_blk_reduced_ed4" => fn -> [@small] |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
+        "macro_blk_structural_ed4" => fn -> [@small] |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
+        "ex_blk_parser" => fn -> [@small] |> FnXML.ExBlkParser.stream() |> Stream.run() end,
+        "fast_ex_blk" => fn -> [@small] |> FnXML.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 1,
       time: 3,
@@ -220,14 +222,14 @@ defmodule AllParsersBench do
         "saxy" => fn -> Saxy.parse_string(@medium, NullHandler, nil) end,
         "erlsom" => fn -> :erlsom.simple_form(@medium) end,
         "xmerl" => fn -> :xmerl_scan.string(String.to_charlist(@medium)) end,
-        "compliant_ed5" => fn -> Bench.CompliantEd5.parse(@medium) end,
-        "fast_ed5" => fn -> Bench.FastEd5.parse(@medium) end,
-        "minimal_ed5" => fn -> Bench.MinimalEd5.parse(@medium) end,
-        "compliant_ed4" => fn -> Bench.CompliantEd4.parse(@medium) end,
-        "fast_ed4" => fn -> Bench.FastEd4.parse(@medium) end,
-        "minimal_ed4" => fn -> Bench.MinimalEd4.parse(@medium) end,
-        "ex_blk_parser" => fn -> FnXML.ExBlkParser.parse(@medium) end,
-        "fast_ex_blk" => fn -> FnXML.FastExBlkParser.parse(@medium) end
+        "macro_blk_compliant_ed5" => fn -> [@medium] |> MacroBlk.Compliant.Ed5.stream() |> Stream.run() end,
+        "macro_blk_reduced_ed5" => fn -> [@medium] |> MacroBlk.Reduced.Ed5.stream() |> Stream.run() end,
+        "macro_blk_structural_ed5" => fn -> [@medium] |> MacroBlk.Structural.Ed5.stream() |> Stream.run() end,
+        "macro_blk_compliant_ed4" => fn -> [@medium] |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
+        "macro_blk_reduced_ed4" => fn -> [@medium] |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
+        "macro_blk_structural_ed4" => fn -> [@medium] |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
+        "ex_blk_parser" => fn -> [@medium] |> FnXML.ExBlkParser.stream() |> Stream.run() end,
+        "fast_ex_blk" => fn -> [@medium] |> FnXML.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 1,
       time: 3,
@@ -242,14 +244,14 @@ defmodule AllParsersBench do
         "saxy" => fn -> Saxy.parse_string(@large, NullHandler, nil) end,
         "erlsom" => fn -> :erlsom.simple_form(@large) end,
         "xmerl" => fn -> :xmerl_scan.string(String.to_charlist(@large)) end,
-        "compliant_ed5" => fn -> Bench.CompliantEd5.parse(@large) end,
-        "fast_ed5" => fn -> Bench.FastEd5.parse(@large) end,
-        "minimal_ed5" => fn -> Bench.MinimalEd5.parse(@large) end,
-        "compliant_ed4" => fn -> Bench.CompliantEd4.parse(@large) end,
-        "fast_ed4" => fn -> Bench.FastEd4.parse(@large) end,
-        "minimal_ed4" => fn -> Bench.MinimalEd4.parse(@large) end,
-        "ex_blk_parser" => fn -> FnXML.ExBlkParser.parse(@large) end,
-        "fast_ex_blk" => fn -> FnXML.FastExBlkParser.parse(@large) end
+        "macro_blk_compliant_ed5" => fn -> [@large] |> MacroBlk.Compliant.Ed5.stream() |> Stream.run() end,
+        "macro_blk_reduced_ed5" => fn -> [@large] |> MacroBlk.Reduced.Ed5.stream() |> Stream.run() end,
+        "macro_blk_structural_ed5" => fn -> [@large] |> MacroBlk.Structural.Ed5.stream() |> Stream.run() end,
+        "macro_blk_compliant_ed4" => fn -> [@large] |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
+        "macro_blk_reduced_ed4" => fn -> [@large] |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
+        "macro_blk_structural_ed4" => fn -> [@large] |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
+        "ex_blk_parser" => fn -> [@large] |> FnXML.ExBlkParser.stream() |> Stream.run() end,
+        "fast_ex_blk" => fn -> [@large] |> FnXML.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 1,
       time: 3,
@@ -258,34 +260,25 @@ defmodule AllParsersBench do
     )
   end
 
-  def run_fnxml_only do
+  def run_ed5_only do
     IO.puts("\n" <> String.duplicate("=", 70))
-    IO.puts("FNXML PARSER COMPARISON")
-    IO.puts("MacroBlkParser configurations only")
+    IO.puts("MACRO_BLK_PARSER EDITION 5 VARIANTS BENCHMARK")
+    IO.puts("All Edition 5 variants on medium file")
     IO.puts(String.duplicate("=", 70) <> "\n")
 
-    print_file_info()
-
-    IO.puts("\nParser configurations:")
-    IO.puts("  compliant - All features (position, whitespace, all events)")
-    IO.puts("  fast      - No position, no whitespace events")
-    IO.puts("  minimal   - Only elements and text content")
-    IO.puts("  _ed5      - Edition 5 (permissive Unicode)")
-    IO.puts("  _ed4      - Edition 4 (strict character validation)")
+    IO.puts("File: medium.xml (#{byte_size(@medium)} bytes)")
     IO.puts("")
-
-    IO.puts("\n--- MEDIUM FILE ---\n")
+    IO.puts("Variants:")
+    IO.puts("  compliant:  All events (default)")
+    IO.puts("  reduced:    No space/comment events")
+    IO.puts("  structural: Only start/end elements")
+    IO.puts("")
 
     Benchee.run(
       %{
-        # Edition 5
-        "compliant_ed5" => fn -> Bench.CompliantEd5.parse(@medium) end,
-        "fast_ed5" => fn -> Bench.FastEd5.parse(@medium) end,
-        "minimal_ed5" => fn -> Bench.MinimalEd5.parse(@medium) end,
-        # Edition 4
-        "compliant_ed4" => fn -> Bench.CompliantEd4.parse(@medium) end,
-        "fast_ed4" => fn -> Bench.FastEd4.parse(@medium) end,
-        "minimal_ed4" => fn -> Bench.MinimalEd4.parse(@medium) end
+        "compliant" => fn -> [@medium] |> MacroBlk.Compliant.Ed5.stream() |> Stream.run() end,
+        "reduced" => fn -> [@medium] |> MacroBlk.Reduced.Ed5.stream() |> Stream.run() end,
+        "structural" => fn -> [@medium] |> MacroBlk.Structural.Ed5.stream() |> Stream.run() end
       },
       warmup: 2,
       time: 5,
@@ -293,58 +286,10 @@ defmodule AllParsersBench do
       formatters: [Benchee.Formatters.Console]
     )
   end
-
-  defp print_file_info do
-    IO.puts("File sizes:")
-    IO.puts("  small.xml:  #{byte_size(@small)} bytes")
-    IO.puts("  medium.xml: #{byte_size(@medium)} bytes")
-    IO.puts("  large.xml:  #{byte_size(@large)} bytes")
-  end
-
-  defp print_parser_info do
-    IO.puts("")
-    IO.puts("Parsers compared:")
-    IO.puts("  External:")
-    IO.puts("    - saxy:           Highly optimized SAX parser")
-    IO.puts("    - erlsom:         Erlang XML library")
-    IO.puts("    - xmerl:          Erlang stdlib DOM parser")
-    IO.puts("  FnXML MacroBlkParser - Edition 5 (permissive Unicode):")
-    IO.puts("    - compliant_ed5:  All features enabled (position, whitespace, all events)")
-    IO.puts("    - fast_ed5:       No position tracking, no whitespace events")
-    IO.puts("    - minimal_ed5:    Only elements and text (maximum performance)")
-    IO.puts("  FnXML MacroBlkParser - Edition 4 (strict character validation):")
-    IO.puts("    - compliant_ed4:  All features enabled (position, whitespace, all events)")
-    IO.puts("    - fast_ed4:       No position tracking, no whitespace events")
-    IO.puts("    - minimal_ed4:    Only elements and text (maximum performance)")
-    IO.puts("  FnXML Legacy:")
-    IO.puts("    - ex_blk_parser:  ExBlkParser")
-    IO.puts("    - fast_ex_blk:    FastExBlkParser")
-  end
-
-  defp chunk_string(string, chunk_size) do
-    string
-    |> :binary.bin_to_list()
-    |> Enum.chunk_every(chunk_size)
-    |> Enum.map(&:binary.list_to_bin/1)
-  end
 end
 
 case System.argv() do
   ["--by-size"] -> AllParsersBench.run_by_size()
-  ["--streaming"] -> AllParsersBench.run_streaming()
-  ["--fnxml"] -> AllParsersBench.run_fnxml_only()
-  ["--help"] ->
-    IO.puts("""
-    Comprehensive Parser Benchmarks
-
-    Usage: mix run bench/all_parsers_bench.exs [option]
-
-    Options:
-      (none)       Run benchmark with medium file (all parsers)
-      --by-size    Run benchmarks with small, medium, and large files
-      --streaming  Run streaming benchmarks with chunked input
-      --fnxml      Run FnXML parsers only (macro configurations)
-      --help       Show this help message
-    """)
+  ["--ed5"] -> AllParsersBench.run_ed5_only()
   _ -> AllParsersBench.run()
 end
