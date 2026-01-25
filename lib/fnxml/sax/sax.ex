@@ -285,31 +285,22 @@ defmodule FnXML.SAX do
   # Dispatch events to handler callbacks
 
   # With namespace resolution - element names are {uri, local}
-  defp dispatch_event({:start_element, {uri, local}, attrs, _loc}, handler, state, true) do
-    qname = if uri, do: "#{local}", else: local
-    handler.start_element(uri, local, qname, attrs, state)
-  end
-
   defp dispatch_event({:end_element, {uri, local}}, handler, state, true) do
     qname = if uri, do: "#{local}", else: local
     handler.end_element(uri, local, qname, state)
   end
 
-  defp dispatch_event({:end_element, {uri, local}, _loc}, handler, state, true) do
-    qname = if uri, do: "#{local}", else: local
-    handler.end_element(uri, local, qname, state)
-  end
-
   # Without namespace resolution - element names are strings
-  # 4-tuple: {:start_element, tag, attrs, loc}
-  defp dispatch_event({:start_element, tag, attrs, _loc}, handler, state, false)
+  # 6-tuple from parser: {:start_element, tag, attrs, line, ls, pos}
+  defp dispatch_event({:start_element, tag, attrs, _line, _ls, _pos}, handler, state, false)
        when is_binary(tag) do
     {_prefix, local} = parse_qname(tag)
     handler.start_element(nil, local, tag, attrs, state)
   end
 
-  # 3-tuple: {:end_element, tag, loc}
-  defp dispatch_event({:end_element, tag, _loc}, handler, state, false) when is_binary(tag) do
+  # 5-tuple from parser: {:end_element, tag, line, ls, pos}
+  defp dispatch_event({:end_element, tag, _line, _ls, _pos}, handler, state, false)
+       when is_binary(tag) do
     {_prefix, local} = parse_qname(tag)
     handler.end_element(nil, local, tag, state)
   end
@@ -320,27 +311,13 @@ defmodule FnXML.SAX do
     handler.end_element(nil, local, tag, state)
   end
 
-  # Text content - 3-tuple: {:characters, content, loc}
-  defp dispatch_event({:characters, content, _loc}, handler, state, _ns) do
-    handler.characters(content, state)
-  end
-
-  # Text content - 3-tuple normalized
-  defp dispatch_event({:characters, content, _loc}, handler, state, _ns) do
+  # Text content - 5-tuple from parser: {:characters, content, line, ls, pos}
+  defp dispatch_event({:characters, content, _line, _ls, _pos}, handler, state, _ns) do
     handler.characters(content, state)
   end
 
   # Comments (optional callback) - 5-tuple from parser
   defp dispatch_event({:comment, content, _line, _ls, _pos}, handler, state, _ns) do
-    if function_exported?(handler, :comment, 2) do
-      handler.comment(content, state)
-    else
-      {:ok, state}
-    end
-  end
-
-  # Comments - 3-tuple normalized
-  defp dispatch_event({:comment, content, _loc}, handler, state, _ns) do
     if function_exported?(handler, :comment, 2) do
       handler.comment(content, state)
     else
@@ -362,15 +339,6 @@ defmodule FnXML.SAX do
     end
   end
 
-  # Processing instructions - 4-tuple normalized
-  defp dispatch_event({:processing_instruction, target, data, _loc}, handler, state, _ns) do
-    if function_exported?(handler, :processing_instruction, 3) do
-      handler.processing_instruction(target, data, state)
-    else
-      {:ok, state}
-    end
-  end
-
   # Errors (optional callback) - 6-tuple from parser
   defp dispatch_event({:error, type, msg, line, ls, pos}, handler, state, _ns) do
     if function_exported?(handler, :error, 3) do
@@ -380,26 +348,17 @@ defmodule FnXML.SAX do
     end
   end
 
-  # Errors - 3-tuple normalized
-  defp dispatch_event({:error, reason, loc}, handler, state, _ns) do
-    if function_exported?(handler, :error, 3) do
-      handler.error(reason, loc, state)
-    else
-      {:error, {reason, loc}}
-    end
-  end
-
   # Skip document markers and other events
   defp dispatch_event({:start_document, _}, _handler, state, _ns), do: {:ok, state}
   defp dispatch_event({:end_document, _}, _handler, state, _ns), do: {:ok, state}
-  # 4-tuple: {:prolog, name, attrs, loc}
-  defp dispatch_event({:prolog, _, _, _}, _handler, state, _ns), do: {:ok, state}
-  # 3-tuple: {:dtd, content, loc}
-  defp dispatch_event({:dtd, _, _}, _handler, state, _ns), do: {:ok, state}
+  # 6-tuple from parser: {:prolog, name, attrs, line, ls, pos}
+  defp dispatch_event({:prolog, _, _, _, _, _}, _handler, state, _ns), do: {:ok, state}
+  # 5-tuple from parser: {:dtd, content, line, ls, pos}
+  defp dispatch_event({:dtd, _, _, _, _}, _handler, state, _ns), do: {:ok, state}
 
-  # CDATA - 3-tuple: {:cdata, content, loc}
-  defp dispatch_event({:cdata, content, loc}, handler, state, ns) do
-    dispatch_event({:characters, content, loc}, handler, state, ns)
+  # CDATA - 5-tuple from parser: {:cdata, content, line, ls, pos}
+  defp dispatch_event({:cdata, content, line, ls, pos}, handler, state, ns) do
+    dispatch_event({:characters, content, line, ls, pos}, handler, state, ns)
   end
 
   defp dispatch_event(_, _handler, state, _ns), do: {:ok, state}

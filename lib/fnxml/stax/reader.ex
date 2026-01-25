@@ -295,10 +295,22 @@ defmodule FnXML.StAX.Reader do
   Valid for START_ELEMENT and END_ELEMENT events.
   """
   @spec local_name(t()) :: String.t() | nil
+  # 6-tuple from parser with expanded name
+  def local_name(%__MODULE__{current: {:start_element, {_uri, local}, _, _, _, _}}), do: local
+  # 6-tuple from parser with string tag
+  def local_name(%__MODULE__{current: {:start_element, tag, _, _, _, _}}) when is_binary(tag),
+    do: parse_local(tag)
+
   # 4-tuple with expanded name
   def local_name(%__MODULE__{current: {:start_element, {_uri, local}, _, _}}), do: local
   # 4-tuple with string tag
   def local_name(%__MODULE__{current: {:start_element, tag, _, _}}) when is_binary(tag),
+    do: parse_local(tag)
+
+  # 5-tuple from parser with expanded name
+  def local_name(%__MODULE__{current: {:end_element, {_uri, local}, _, _, _}}), do: local
+  # 5-tuple from parser with string tag
+  def local_name(%__MODULE__{current: {:end_element, tag, _, _, _}}) when is_binary(tag),
     do: parse_local(tag)
 
   # 3-tuple with expanded name
@@ -321,8 +333,12 @@ defmodule FnXML.StAX.Reader do
   Valid for START_ELEMENT and END_ELEMENT events.
   """
   @spec namespace_uri(t()) :: String.t() | nil
+  # 6-tuple from parser
+  def namespace_uri(%__MODULE__{current: {:start_element, {uri, _local}, _, _, _, _}}), do: uri
   # 4-tuple
   def namespace_uri(%__MODULE__{current: {:start_element, {uri, _local}, _, _}}), do: uri
+  # 5-tuple from parser
+  def namespace_uri(%__MODULE__{current: {:end_element, {uri, _local}, _, _, _}}), do: uri
   # 3-tuple
   def namespace_uri(%__MODULE__{current: {:end_element, {uri, _local}, _}}), do: uri
   # 2-tuple legacy (no position)
@@ -335,8 +351,16 @@ defmodule FnXML.StAX.Reader do
   Valid for START_ELEMENT and END_ELEMENT events.
   """
   @spec prefix(t()) :: String.t() | nil
+  # 6-tuple from parser
+  def prefix(%__MODULE__{current: {:start_element, tag, _, _, _, _}}) when is_binary(tag),
+    do: parse_prefix(tag)
+
   # 4-tuple
   def prefix(%__MODULE__{current: {:start_element, tag, _, _}}) when is_binary(tag),
+    do: parse_prefix(tag)
+
+  # 5-tuple from parser
+  def prefix(%__MODULE__{current: {:end_element, tag, _, _, _}}) when is_binary(tag),
     do: parse_prefix(tag)
 
   # 3-tuple
@@ -353,10 +377,22 @@ defmodule FnXML.StAX.Reader do
   Valid for START_ELEMENT and END_ELEMENT events.
   """
   @spec name(t()) :: {String.t() | nil, String.t()} | nil
+  # 6-tuple from parser with expanded name
+  def name(%__MODULE__{current: {:start_element, {uri, local}, _, _, _, _}}), do: {uri, local}
+  # 6-tuple from parser with string tag
+  def name(%__MODULE__{current: {:start_element, tag, _, _, _, _}}) when is_binary(tag),
+    do: {nil, parse_local(tag)}
+
   # 4-tuple with expanded name
   def name(%__MODULE__{current: {:start_element, {uri, local}, _, _}}), do: {uri, local}
   # 4-tuple with string tag
   def name(%__MODULE__{current: {:start_element, tag, _, _}}) when is_binary(tag),
+    do: {nil, parse_local(tag)}
+
+  # 5-tuple from parser with expanded name
+  def name(%__MODULE__{current: {:end_element, {uri, local}, _, _, _}}), do: {uri, local}
+  # 5-tuple from parser with string tag
+  def name(%__MODULE__{current: {:end_element, tag, _, _, _}}) when is_binary(tag),
     do: {nil, parse_local(tag)}
 
   # 3-tuple with expanded name
@@ -379,6 +415,11 @@ defmodule FnXML.StAX.Reader do
   Valid for CHARACTERS, COMMENT, CDATA, and DTD events.
   """
   @spec text(t()) :: String.t() | nil
+  # 5-tuple from parser format
+  def text(%__MODULE__{current: {:characters, content, _, _, _}}), do: content
+  def text(%__MODULE__{current: {:comment, content, _, _, _}}), do: content
+  def text(%__MODULE__{current: {:cdata, content, _, _, _}}), do: content
+  def text(%__MODULE__{current: {:dtd, content, _, _, _}}), do: content
   # 3-tuple format
   def text(%__MODULE__{current: {:characters, content, _}}), do: content
   def text(%__MODULE__{current: {:comment, content, _}}), do: content
@@ -424,9 +465,14 @@ defmodule FnXML.StAX.Reader do
   Check if current text is all whitespace.
   """
   @spec whitespace?(t()) :: boolean()
+  # 5-tuple from parser format
+  def whitespace?(%__MODULE__{current: {:characters, content, _, _, _}}) do
+    String.trim(content) == ""
+  end
+
   # 3-tuple format
   def whitespace?(%__MODULE__{current: {:characters, content, _}}) do
-    String.match?(content, ~r/^\s*$/)
+    String.trim(content) == ""
   end
 
   def whitespace?(_), do: false
@@ -437,6 +483,10 @@ defmodule FnXML.StAX.Reader do
   Valid for START_ELEMENT events.
   """
   @spec attribute_count(t()) :: non_neg_integer()
+  # 6-tuple from parser format
+  def attribute_count(%__MODULE__{current: {:start_element, _, attrs, _, _, _}}),
+    do: length(attrs)
+
   # 4-tuple format
   def attribute_count(%__MODULE__{current: {:start_element, _, attrs, _}}), do: length(attrs)
   def attribute_count(_), do: 0
@@ -445,6 +495,11 @@ defmodule FnXML.StAX.Reader do
   Get attribute name at index as `{namespace_uri, local_name}`.
   """
   @spec attribute_name(t(), non_neg_integer()) :: {String.t() | nil, String.t()} | nil
+  # 6-tuple from parser format
+  def attribute_name(%__MODULE__{current: {:start_element, _, attrs, _, _, _}}, index) do
+    get_attr_name(attrs, index)
+  end
+
   # 4-tuple format
   def attribute_name(%__MODULE__{current: {:start_element, _, attrs, _}}, index) do
     get_attr_name(attrs, index)
@@ -464,6 +519,12 @@ defmodule FnXML.StAX.Reader do
   Get attribute value at index.
   """
   @spec attribute_value(t(), non_neg_integer()) :: String.t() | nil
+  # 6-tuple from parser format
+  def attribute_value(%__MODULE__{current: {:start_element, _, attrs, _, _, _}}, index)
+      when is_integer(index) do
+    get_attr_value_by_index(attrs, index)
+  end
+
   # 4-tuple format
   def attribute_value(%__MODULE__{current: {:start_element, _, attrs, _}}, index)
       when is_integer(index) do
@@ -484,6 +545,15 @@ defmodule FnXML.StAX.Reader do
   Get attribute value by namespace URI and local name.
   """
   @spec attribute_value(t(), String.t() | nil, String.t()) :: String.t() | nil
+  # 6-tuple from parser format
+  def attribute_value(
+        %__MODULE__{current: {:start_element, _, attrs, _, _, _}},
+        ns_uri,
+        local_name
+      ) do
+    get_attr_value_by_name(attrs, ns_uri, local_name)
+  end
+
   # 4-tuple format
   def attribute_value(%__MODULE__{current: {:start_element, _, attrs, _}}, ns_uri, local_name) do
     get_attr_value_by_name(attrs, ns_uri, local_name)
@@ -539,6 +609,8 @@ defmodule FnXML.StAX.Reader do
   Get the processing instruction target.
   """
   @spec pi_target(t()) :: String.t() | nil
+  # 6-tuple from parser format
+  def pi_target(%__MODULE__{current: {:processing_instruction, target, _, _, _, _}}), do: target
   # 4-tuple format
   def pi_target(%__MODULE__{current: {:processing_instruction, target, _, _}}), do: target
   def pi_target(_), do: nil
@@ -547,33 +619,73 @@ defmodule FnXML.StAX.Reader do
   Get the processing instruction data.
   """
   @spec pi_data(t()) :: String.t() | nil
+  # 6-tuple from parser format
+  def pi_data(%__MODULE__{current: {:processing_instruction, _, data, _, _, _}}), do: data
   # 4-tuple format
   def pi_data(%__MODULE__{current: {:processing_instruction, _, data, _}}), do: data
   def pi_data(_), do: nil
 
   # Parse event to determine type and location
+  # 6-tuple from parser: {:start_element, tag, attrs, line, ls, pos}
+  defp parse_event({:start_element, _, _, line, ls, pos}, prolog),
+    do: {:start_element, {line, pos - ls}, prolog}
+
   # 4-tuple: {:start_element, tag, attrs, loc}
   defp parse_event({:start_element, _, _, loc}, prolog),
     do: {:start_element, loc_to_tuple(loc), prolog}
 
+  # 5-tuple from parser: {:end_element, tag, line, ls, pos}
+  defp parse_event({:end_element, _, line, ls, pos}, prolog),
+    do: {:end_element, {line, pos - ls}, prolog}
+
   defp parse_event({:end_element, _}, prolog), do: {:end_element, nil, prolog}
   defp parse_event({:end_element, _, loc}, prolog), do: {:end_element, loc_to_tuple(loc), prolog}
+
+  # 5-tuple from parser: {:characters, content, line, ls, pos}
+  defp parse_event({:characters, _, line, ls, pos}, prolog),
+    do: {:characters, {line, pos - ls}, prolog}
 
   # 3-tuple: {:characters, content, loc}
   defp parse_event({:characters, _, loc}, prolog), do: {:characters, loc_to_tuple(loc), prolog}
 
+  # 5-tuple from parser: {:comment, content, line, ls, pos}
+  defp parse_event({:comment, _, line, ls, pos}, prolog),
+    do: {:comment, {line, pos - ls}, prolog}
+
   # 3-tuple: {:comment, content, loc}
   defp parse_event({:comment, _, loc}, prolog), do: {:comment, loc_to_tuple(loc), prolog}
+
+  # 5-tuple from parser: {:cdata, content, line, ls, pos}
+  defp parse_event({:cdata, _, line, ls, pos}, prolog),
+    do: {:cdata, {line, pos - ls}, prolog}
 
   # 3-tuple: {:cdata, content, loc}
   defp parse_event({:cdata, _, loc}, prolog), do: {:cdata, loc_to_tuple(loc), prolog}
 
+  # 5-tuple from parser: {:dtd, content, line, ls, pos}
+  defp parse_event({:dtd, _, line, ls, pos}, prolog),
+    do: {:dtd, {line, pos - ls}, prolog}
+
   # 3-tuple: {:dtd, content, loc}
   defp parse_event({:dtd, _, loc}, prolog), do: {:dtd, loc_to_tuple(loc), prolog}
+
+  # 6-tuple from parser: {:processing_instruction, target, data, line, ls, pos}
+  defp parse_event({:processing_instruction, _, _, line, ls, pos}, prolog),
+    do: {:processing_instruction, {line, pos - ls}, prolog}
 
   # 4-tuple: {:processing_instruction, target, data, loc}
   defp parse_event({:processing_instruction, _, _, loc}, prolog),
     do: {:processing_instruction, loc_to_tuple(loc), prolog}
+
+  # 6-tuple from parser: {:prolog, name, attrs, line, ls, pos}
+  defp parse_event({:prolog, _, attrs, line, ls, pos}, _prolog) do
+    prolog_map =
+      attrs
+      |> Enum.map(fn {k, v} -> {String.to_atom(k), v} end)
+      |> Enum.into(%{})
+
+    {:start_document, {line, pos - ls}, prolog_map}
+  end
 
   # 4-tuple: {:prolog, name, attrs, loc}
   defp parse_event({:prolog, _, attrs, loc}, _prolog) do
@@ -587,6 +699,10 @@ defmodule FnXML.StAX.Reader do
 
   defp parse_event({:start_document, _}, prolog), do: {:start_document, nil, prolog}
   defp parse_event({:end_document, _}, prolog), do: {:end_document, nil, prolog}
+
+  # 6-tuple from parser: {:error, type, msg, line, ls, pos}
+  defp parse_event({:error, _, _, line, ls, pos}, prolog),
+    do: {:error, {line, pos - ls}, prolog}
 
   # 4-tuple: {:error, type, msg, loc}
   defp parse_event({:error, _, _, loc}, prolog), do: {:error, loc_to_tuple(loc), prolog}

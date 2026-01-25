@@ -65,11 +65,6 @@ defmodule FnXML.Validate do
     end)
   end
 
-  defp validate_structure({:start_element, tag, _attrs, _loc} = elem, stack, _on_error) do
-    tag_tuple = Element.tag(tag)
-    {[elem], [tag_tuple | stack]}
-  end
-
   # Handle flattened 6-tuple format: {:start_element, tag, attrs, line, ls, pos}
   defp validate_structure(
          {:start_element, tag, _attrs, _line, _ls, _pos} = elem,
@@ -85,15 +80,6 @@ defmodule FnXML.Validate do
     full_tag = if ns == "", do: tag_name, else: "#{ns}:#{tag_name}"
 
     error = Error.unexpected_close(full_tag, {0, 0})
-    handle_error(error, elem, [], on_error)
-  end
-
-  defp validate_structure({:end_element, tag, loc} = elem, [], on_error) do
-    {tag_name, ns} = Element.tag(tag)
-    full_tag = if ns == "", do: tag_name, else: "#{ns}:#{tag_name}"
-    {line, col} = loc_to_position(loc)
-
-    error = Error.unexpected_close(full_tag, {line, col})
     handle_error(error, elem, [], on_error)
   end
 
@@ -119,23 +105,6 @@ defmodule FnXML.Validate do
       actual_str = if act_ns == "", do: act_name, else: "#{act_ns}:#{act_name}"
 
       error = Error.tag_mismatch(expected_str, actual_str, {0, 0})
-      handle_error(error, elem, [expected | rest], on_error)
-    end
-  end
-
-  defp validate_structure({:end_element, tag, loc} = elem, [expected | rest], on_error) do
-    actual = Element.tag(tag)
-
-    if actual == expected do
-      {[elem], rest}
-    else
-      {exp_name, exp_ns} = expected
-      {act_name, act_ns} = actual
-      expected_str = if exp_ns == "", do: exp_name, else: "#{exp_ns}:#{exp_name}"
-      actual_str = if act_ns == "", do: act_name, else: "#{act_ns}:#{act_name}"
-      {line, col} = loc_to_position(loc)
-
-      error = Error.tag_mismatch(expected_str, actual_str, {line, col})
       handle_error(error, elem, [expected | rest], on_error)
     end
   end
@@ -227,23 +196,6 @@ defmodule FnXML.Validate do
     on_error = Keyword.get(opts, :on_error, :raise)
 
     Stream.map(stream, fn
-      # 4-tuple format (normalized)
-      {:start_element, _tag, attrs, loc} = elem ->
-        case check_duplicate_attrs(attrs) do
-          :ok ->
-            elem
-
-          {:error, dup_attr} ->
-            {line, col} = loc_to_position(loc)
-            error = Error.duplicate_attribute(dup_attr, {line, col})
-
-            case on_error do
-              :raise -> raise error
-              :emit -> {:error, error}
-              :skip -> elem
-            end
-        end
-
       # 6-tuple format (from parser)
       {:start_element, _tag, attrs, line, ls, pos} = elem ->
         case check_duplicate_attrs(attrs) do
@@ -301,17 +253,6 @@ defmodule FnXML.Validate do
     on_error = Keyword.get(opts, :on_error, :error)
 
     Stream.flat_map(stream, fn
-      # 4-tuple format (normalized)
-      {:start_element, _tag, attrs, loc} = event ->
-        case check_attr_values(attrs) do
-          :ok ->
-            [event]
-
-          {:error, attr_name, reason} ->
-            {line, col} = loc_to_position(loc)
-            handle_attr_value_error(attr_name, reason, {line, col}, on_error, event)
-        end
-
       # 6-tuple format (from parser)
       {:start_element, _tag, attrs, line, ls, pos} = event ->
         case check_attr_values(attrs) do
@@ -389,35 +330,6 @@ defmodule FnXML.Validate do
     end)
   end
 
-  # 4-tuple format (normalized)
-  defp validate_namespaces(
-         {:start_element, tag, attrs, loc} = elem,
-         [current_scope | rest_scopes],
-         on_error
-       ) do
-    # Extract xmlns declarations from attributes
-    new_decls = extract_xmlns_decls(attrs)
-    new_scope = Map.merge(current_scope, new_decls)
-
-    # Check element namespace prefix
-    {_tag_name, prefix} = Element.tag(tag)
-
-    case validate_prefix(prefix, new_scope, loc) do
-      :ok ->
-        # Check attribute namespace prefixes too
-        case validate_attr_prefixes(attrs, new_scope, loc) do
-          :ok ->
-            {[elem], [new_scope, current_scope | rest_scopes]}
-
-          {:error, error} ->
-            handle_error(error, elem, [current_scope | rest_scopes], on_error)
-        end
-
-      {:error, error} ->
-        handle_error(error, elem, [current_scope | rest_scopes], on_error)
-    end
-  end
-
   # 6-tuple format (from parser)
   defp validate_namespaces(
          {:start_element, tag, attrs, line, ls, pos} = elem,
@@ -453,11 +365,6 @@ defmodule FnXML.Validate do
     {[elem], rest}
   end
 
-  defp validate_namespaces({:end_element, _tag, _loc} = elem, [_current | rest], _on_error) do
-    # Pop namespace scope
-    {[elem], rest}
-  end
-
   # 5-tuple format (from parser)
   defp validate_namespaces(
          {:end_element, _tag, _line, _ls, _pos} = elem,
@@ -469,11 +376,6 @@ defmodule FnXML.Validate do
   end
 
   defp validate_namespaces({:end_element, _tag} = elem, [], _on_error) do
-    # Edge case: more closes than opens (will be caught by well_formed)
-    {[elem], []}
-  end
-
-  defp validate_namespaces({:end_element, _tag, _loc} = elem, [], _on_error) do
     # Edge case: more closes than opens (will be caught by well_formed)
     {[elem], []}
   end
@@ -613,42 +515,21 @@ defmodule FnXML.Validate do
     on_error = Keyword.get(opts, :on_error, :error)
 
     Stream.flat_map(stream, fn
-      {:characters, content, loc} = event ->
-        validate_chars_and_emit_or_pass(event, :text, content, loc, on_error)
-
       # Handle flattened 5-tuple format: {:characters, content, line, ls, pos}
       {:characters, content, line, ls, pos} = event ->
         validate_chars_and_emit_or_pass(event, :text, content, {line, ls, pos}, on_error)
-
-      {:start_element, tag, attrs, loc} = event ->
-        validate_attrs_chars_and_emit_or_pass(event, tag, attrs, loc, on_error)
 
       # Handle flattened 6-tuple format: {:start_element, tag, attrs, line, ls, pos}
       {:start_element, tag, attrs, line, ls, pos} = event ->
         validate_attrs_chars_and_emit_or_pass(event, tag, attrs, {line, ls, pos}, on_error)
 
-      {:cdata, content, loc} = event ->
-        validate_chars_and_emit_or_pass(event, :cdata, content, loc, on_error)
-
       # Handle flattened 5-tuple format for cdata
       {:cdata, content, line, ls, pos} = event ->
         validate_chars_and_emit_or_pass(event, :cdata, content, {line, ls, pos}, on_error)
 
-      {:comment, content, loc} = event ->
-        validate_chars_and_emit_or_pass(event, :comment, content, loc, on_error)
-
       # Handle flattened 5-tuple format for comment
       {:comment, content, line, ls, pos} = event ->
         validate_chars_and_emit_or_pass(event, :comment, content, {line, ls, pos}, on_error)
-
-      {:processing_instruction, target, content, loc} = event ->
-        case find_invalid_char(content, 0) do
-          nil ->
-            [event]
-
-          {char, offset} ->
-            handle_char_error(:proc_inst, target, content, loc, char, offset, on_error)
-        end
 
       # Handle flattened 6-tuple format for processing_instruction
       {:processing_instruction, target, content, line, ls, pos} = event ->
@@ -863,7 +744,9 @@ defmodule FnXML.Validate do
     on_error = Keyword.get(opts, :on_error, :error)
 
     Stream.flat_map(stream, fn
-      {:comment, content, loc} = event ->
+      {:comment, content, line, ls, pos} = event ->
+        loc = {line, ls, pos}
+
         cond do
           # Check for -- anywhere in content
           :binary.match(content, "--") != :nomatch ->
@@ -937,9 +820,6 @@ defmodule FnXML.Validate do
     Stream.flat_map(stream, fn
       {:processing_instruction, target, _content, line, ls, pos} = event ->
         validate_pi_target(event, target, {line, ls, pos}, on_error)
-
-      {:processing_instruction, target, _content, loc} = event ->
-        validate_pi_target(event, target, loc, on_error)
 
       event ->
         [event]
@@ -1055,16 +935,8 @@ defmodule FnXML.Validate do
   end
 
   # Start element transitions from prolog to in_root, or increments depth
-  defp validate_root_boundary({:start_element, _, _, _} = event, :prolog, _on_error) do
-    {[event], {:in_root, 1}}
-  end
-
   defp validate_root_boundary({:start_element, _, _, _, _, _} = event, :prolog, _on_error) do
     {[event], {:in_root, 1}}
-  end
-
-  defp validate_root_boundary({:start_element, _, _, _} = event, {:in_root, depth}, _on_error) do
-    {[event], {:in_root, depth + 1}}
   end
 
   defp validate_root_boundary(
@@ -1076,15 +948,6 @@ defmodule FnXML.Validate do
   end
 
   # Start element after root closed - multiple roots error
-  defp validate_root_boundary({:start_element, tag, _, loc} = _event, :after_root, on_error) do
-    handle_root_boundary_error(
-      "Multiple root elements not allowed (found <#{extract_tag_name(tag)}>)",
-      loc,
-      :after_root,
-      on_error
-    )
-  end
-
   defp validate_root_boundary(
          {:start_element, tag, _, line, ls, pos} = _event,
          :after_root,
@@ -1103,10 +966,6 @@ defmodule FnXML.Validate do
     {[event], :after_root}
   end
 
-  defp validate_root_boundary({:end_element, _, _} = event, {:in_root, 1}, _on_error) do
-    {[event], :after_root}
-  end
-
   defp validate_root_boundary({:end_element, _, _, _, _} = event, {:in_root, 1}, _on_error) do
     {[event], :after_root}
   end
@@ -1115,25 +974,11 @@ defmodule FnXML.Validate do
     {[event], {:in_root, depth - 1}}
   end
 
-  defp validate_root_boundary({:end_element, _, _} = event, {:in_root, depth}, _on_error) do
-    {[event], {:in_root, depth - 1}}
-  end
-
   defp validate_root_boundary({:end_element, _, _, _, _} = event, {:in_root, depth}, _on_error) do
     {[event], {:in_root, depth - 1}}
   end
 
   # Characters - check if whitespace-only outside root
-  defp validate_root_boundary({:characters, content, loc} = event, state, on_error)
-       when state == :prolog or state == :after_root do
-    if whitespace_only?(content) do
-      {[event], state}
-    else
-      where = if state == :prolog, do: "before root element", else: "after root element"
-      handle_root_boundary_error("Non-whitespace content #{where}", loc, state, on_error)
-    end
-  end
-
   defp validate_root_boundary({:characters, content, line, ls, pos} = event, state, on_error)
        when state == :prolog or state == :after_root do
     if whitespace_only?(content) do
@@ -1151,12 +996,6 @@ defmodule FnXML.Validate do
   end
 
   # CDATA - not allowed outside root
-  defp validate_root_boundary({:cdata, _, loc} = _event, state, on_error)
-       when state == :prolog or state == :after_root do
-    where = if state == :prolog, do: "before root element", else: "after root element"
-    handle_root_boundary_error("CDATA section #{where}", loc, state, on_error)
-  end
-
   defp validate_root_boundary({:cdata, _, line, ls, pos} = _event, state, on_error)
        when state == :prolog or state == :after_root do
     where = if state == :prolog, do: "before root element", else: "after root element"
@@ -1239,34 +1078,12 @@ defmodule FnXML.Validate do
     external_entities = Keyword.get(opts, :external_entities, MapSet.new())
 
     Stream.flat_map(stream, fn
-      {:characters, content, loc} = event ->
-        validate_entity_refs_in_text(
-          event,
-          content,
-          loc,
-          custom_entities,
-          unparsed_entities,
-          on_error
-        )
-
       {:characters, content, line, ls, pos} = event ->
         validate_entity_refs_in_text(
           event,
           content,
           {line, ls, pos},
           custom_entities,
-          unparsed_entities,
-          on_error
-        )
-
-      {:start_element, tag, attrs, loc} = event ->
-        validate_entity_refs_in_attrs(
-          event,
-          tag,
-          attrs,
-          loc,
-          custom_entities,
-          external_entities,
           unparsed_entities,
           on_error
         )
@@ -1471,9 +1288,6 @@ defmodule FnXML.Validate do
       {:prolog, "xml", attrs, line, ls, pos} = event ->
         validate_xml_declaration(event, attrs, {line, ls, pos}, on_error)
 
-      {:prolog, "xml", attrs, loc} = event ->
-        validate_xml_declaration(event, attrs, loc, on_error)
-
       event ->
         [event]
     end)
@@ -1619,14 +1433,8 @@ defmodule FnXML.Validate do
     on_error = Keyword.get(opts, :on_error, :error)
 
     Stream.flat_map(stream, fn
-      {:characters, content, loc} = event ->
-        validate_char_refs_in_text(event, content, loc, on_error)
-
       {:characters, content, line, ls, pos} = event ->
         validate_char_refs_in_text(event, content, {line, ls, pos}, on_error)
-
-      {:start_element, tag, attrs, loc} = event ->
-        validate_char_refs_in_attrs(event, tag, attrs, loc, on_error)
 
       {:start_element, tag, attrs, line, ls, pos} = event ->
         validate_char_refs_in_attrs(event, tag, attrs, {line, ls, pos}, on_error)

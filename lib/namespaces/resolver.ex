@@ -48,75 +48,37 @@ defmodule FnXML.Namespaces.Resolver do
   @spec resolve_event(term(), Context.t(), keyword()) :: {list(term()), Context.t()}
   def resolve_event(event, ctx, opts \\ [])
 
-  # Element open with 4-tuple location (normalized)
-  def resolve_event({:start_element, tag, attrs, loc}, ctx, opts) do
-    case Context.push(ctx, attrs, opts) do
-      {:ok, new_ctx, filtered_attrs} ->
-        case resolve_element_and_attrs(tag, filtered_attrs, new_ctx, opts) do
-          {:ok, expanded_tag, expanded_attrs} ->
-            {[{:start_element, expanded_tag, expanded_attrs, loc}], new_ctx}
-
-          {:error, reason} ->
-            # Emit error event but continue processing
-            {[{:ns_error, reason, tag, loc}], new_ctx}
-        end
-
-      {:error, reason} ->
-        # Context push failed (e.g., reserved prefix violation)
-        {[{:ns_error, reason, tag, loc}], ctx}
-    end
-  end
-
   # Element open with 6-tuple format (from parser)
   def resolve_event({:start_element, tag, attrs, line, ls, pos}, ctx, opts) do
-    loc = {line, ls, pos}
-
     case Context.push(ctx, attrs, opts) do
       {:ok, new_ctx, filtered_attrs} ->
         case resolve_element_and_attrs(tag, filtered_attrs, new_ctx, opts) do
           {:ok, expanded_tag, expanded_attrs} ->
-            {[{:start_element, expanded_tag, expanded_attrs, loc}], new_ctx}
+            {[{:start_element, expanded_tag, expanded_attrs, line, ls, pos}], new_ctx}
 
           {:error, reason} ->
             # Emit error event but continue processing
-            {[{:ns_error, reason, tag, loc}], new_ctx}
+            {[{:ns_error, reason, tag, line, ls, pos}], new_ctx}
         end
 
       {:error, reason} ->
         # Context push failed (e.g., reserved prefix violation)
-        {[{:ns_error, reason, tag, loc}], ctx}
-    end
-  end
-
-  # Element close with 3-tuple location (normalized)
-  def resolve_event({:end_element, tag, loc}, ctx, opts) do
-    case Context.expand_element(ctx, tag) do
-      {:ok, expanded_tag} ->
-        new_ctx = Context.pop(ctx)
-        expanded = maybe_add_prefix(expanded_tag, tag, opts)
-        {[{:end_element, expanded, loc}], new_ctx}
-
-      {:error, _reason} ->
-        # Use original tag on error
-        new_ctx = Context.pop(ctx)
-        {[{:end_element, tag, loc}], new_ctx}
+        {[{:ns_error, reason, tag, line, ls, pos}], ctx}
     end
   end
 
   # Element close with 5-tuple format (from parser)
   def resolve_event({:end_element, tag, line, ls, pos}, ctx, opts) do
-    loc = {line, ls, pos}
-
     case Context.expand_element(ctx, tag) do
       {:ok, expanded_tag} ->
         new_ctx = Context.pop(ctx)
         expanded = maybe_add_prefix(expanded_tag, tag, opts)
-        {[{:end_element, expanded, loc}], new_ctx}
+        {[{:end_element, expanded, line, ls, pos}], new_ctx}
 
       {:error, _reason} ->
         # Use original tag on error
         new_ctx = Context.pop(ctx)
-        {[{:end_element, tag, loc}], new_ctx}
+        {[{:end_element, tag, line, ls, pos}], new_ctx}
     end
   end
 
@@ -134,42 +96,27 @@ defmodule FnXML.Namespaces.Resolver do
     end
   end
 
-  # Text events pass through unchanged (3-tuple normalized)
-  def resolve_event({:characters, content, loc}, ctx, _opts) do
-    {[{:characters, content, loc}], ctx}
-  end
-
   # Text events pass through unchanged (5-tuple from parser)
   def resolve_event({:characters, content, line, ls, pos}, ctx, _opts) do
-    {[{:characters, content, {line, ls, pos}}], ctx}
+    {[{:characters, content, line, ls, pos}], ctx}
   end
 
   def resolve_event({:characters, content}, ctx, _opts) do
     {[{:characters, content}], ctx}
   end
 
-  # CDATA events pass through unchanged (3-tuple normalized)
-  def resolve_event({:cdata, content, loc}, ctx, _opts) do
-    {[{:cdata, content, loc}], ctx}
-  end
-
   # CDATA events pass through unchanged (5-tuple from parser)
   def resolve_event({:cdata, content, line, ls, pos}, ctx, _opts) do
-    {[{:cdata, content, {line, ls, pos}}], ctx}
+    {[{:cdata, content, line, ls, pos}], ctx}
   end
 
   def resolve_event({:cdata, content}, ctx, _opts) do
     {[{:cdata, content}], ctx}
   end
 
-  # Comment events pass through unchanged (3-tuple normalized)
-  def resolve_event({:comment, content, loc}, ctx, _opts) do
-    {[{:comment, content, loc}], ctx}
-  end
-
   # Comment events pass through unchanged (5-tuple from parser)
   def resolve_event({:comment, content, line, ls, pos}, ctx, _opts) do
-    {[{:comment, content, {line, ls, pos}}], ctx}
+    {[{:comment, content, line, ls, pos}], ctx}
   end
 
   def resolve_event({:comment, content}, ctx, _opts) do
@@ -194,38 +141,23 @@ defmodule FnXML.Namespaces.Resolver do
     {[{:end_document, info}], ctx}
   end
 
-  # Error events pass through unchanged (3-tuple normalized)
-  def resolve_event({:error, _, _} = event, ctx, _opts) do
-    {[event], ctx}
-  end
-
-  # Error events (6-tuple from parser) - normalize to 3-tuple
+  # Error events (6-tuple from parser) - pass through flat format
   def resolve_event({:error, type, msg, line, ls, pos}, ctx, _opts) do
-    {[{:error, {type, msg}, {line, ls, pos}}], ctx}
+    {[{:error, type, msg, line, ls, pos}], ctx}
   end
 
-  # DTD events pass through unchanged (3-tuple normalized)
-  def resolve_event({:dtd, _, _} = event, ctx, _opts) do
-    {[event], ctx}
-  end
-
-  # DTD events (5-tuple from parser) - normalize to 3-tuple
+  # DTD events (5-tuple from parser) - pass through flat format
   def resolve_event({:dtd, content, line, ls, pos}, ctx, _opts) do
-    {[{:dtd, content, {line, ls, pos}}], ctx}
+    {[{:dtd, content, line, ls, pos}], ctx}
   end
 
   def resolve_event({:dtd, _} = event, ctx, _opts) do
     {[event], ctx}
   end
 
-  # Prolog events (4-tuple normalized)
-  def resolve_event({:prolog, _name, _attrs, _loc} = event, ctx, _opts) do
-    {[event], ctx}
-  end
-
-  # Prolog events (6-tuple from parser) - normalize to 4-tuple
+  # Prolog events (6-tuple from parser) - pass through flat format
   def resolve_event({:prolog, name, attrs, line, ls, pos}, ctx, _opts) do
-    {[{:prolog, name, attrs, {line, ls, pos}}], ctx}
+    {[{:prolog, name, attrs, line, ls, pos}], ctx}
   end
 
   # Unknown events pass through

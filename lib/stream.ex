@@ -215,53 +215,9 @@ defmodule FnXML.Stream do
     {length(path), content}
   end
 
-  # 4-tuple format (normalized)
-  defp format_element({:prolog, tag, attrs, _loc}, path, _acc) do
-    attrs_str = format_attributes(attrs)
-    {length(path), "<?#{tag}#{attrs_str}?>"}
-  end
-
-  defp format_element({:start_element, tag, attrs, _loc}, path, _acc) do
-    attrs_str = format_attributes(attrs)
-    {length(path) - 1, "<#{tag}#{attrs_str}>"}
-  end
-
-  defp format_element({:processing_instruction, name, content, _loc}, path, _acc) do
-    {length(path), "<?#{name} #{content}?>"}
-  end
-
-  # 3-tuple format (normalized)
-  defp format_element({:end_element, tag, _loc}, path, _acc) do
-    {length(path) - 1, "</#{tag}>"}
-  end
-
   # 2-tuple format (no location)
   defp format_element({:end_element, tag}, path, _acc) do
     {length(path) - 1, "</#{tag}>"}
-  end
-
-  defp format_element({:characters, content, _loc}, path, _acc) do
-    if Regex.match?(~r/[<>]/, content) do
-      {length(path), "<![CDATA[#{content}]]>"}
-    else
-      {length(path), content}
-    end
-  end
-
-  defp format_element({:space, content, _loc}, path, _acc) do
-    {length(path), content}
-  end
-
-  defp format_element({:cdata, content, _loc}, path, _acc) do
-    {length(path), "<![CDATA[#{content}]]>"}
-  end
-
-  defp format_element({:comment, content, _loc}, path, _acc) do
-    {length(path), "<!--#{content}-->"}
-  end
-
-  defp format_element({:dtd, content, _loc}, path, _acc) do
-    {length(path), content}
   end
 
   @doc """
@@ -302,13 +258,6 @@ defmodule FnXML.Stream do
     fun.(element, new_stack, acc) |> next(new_stack, fun)
   end
 
-  # 4-element start_element (normalized): {:start_element, tag, attrs, loc}
-  defp process_item({:start_element, tag, _attrs, _loc} = element, {stack, acc, fun}) do
-    tag_tuple = Element.tag(tag)
-    new_stack = [tag_tuple | stack]
-    fun.(element, new_stack, acc) |> next(new_stack, fun)
-  end
-
   # 5-element end_element: {:end_element, tag, line, ls, pos}
   defp process_item({:end_element, _tag, _line, _ls, _pos} = element, {[], _, _}) do
     tag_str = Element.tag_string(element)
@@ -319,26 +268,6 @@ defmodule FnXML.Stream do
          {:end_element, tag, _line, _ls, _pos} = element,
          {[head | new_stack] = stack, acc, fun}
        ) do
-    tag_tuple = Element.tag(tag)
-
-    cond do
-      tag_tuple == head ->
-        fun.(element, stack, acc) |> next(new_stack, fun)
-
-      tag_tuple != head ->
-        error(
-          element,
-          "mis-matched close tag #{inspect(tag_tuple)}, expecting: #{Element.tag_name(head)}"
-        )
-    end
-  end
-
-  # 3-element end_element (normalized): {:end_element, tag, loc}
-  defp process_item({:end_element, tag, _loc} = element, {[], _, _}) do
-    error(element, "unexpected close tag #{tag}, missing open tag")
-  end
-
-  defp process_item({:end_element, tag, _loc} = element, {[head | new_stack] = stack, acc, fun}) do
     tag_tuple = Element.tag(tag)
 
     cond do
@@ -385,38 +314,10 @@ defmodule FnXML.Stream do
     end
   end
 
-  # 3-element characters (normalized): {:characters, content, loc}
-  defp process_item({:characters, content, _loc} = element, {[], acc, fun}) do
-    if String.match?(content, ~r/^[\s\n]*$/) do
-      acc |> next([], fun)
-    else
-      error(
-        element,
-        "Text element outside of a tag: '#{element |> inspect()}', a root element is required"
-      )
-    end
-  end
-
   # 5-element space: {:space, content, line, ls, pos}
   defp process_item({:space, _content, _line, _ls, _pos}, {[], acc, fun}) do
     # Whitespace outside root element is ignored
     acc |> next([], fun)
-  end
-
-  # 3-element space (normalized): {:space, content, loc}
-  defp process_item({:space, _content, _loc}, {[], acc, fun}) do
-    # Whitespace outside root element is ignored
-    acc |> next([], fun)
-  end
-
-  # Generic handlers for 3-element events (normalized)
-  defp process_item({id, _, _} = element, {stack, acc, fun}) when id in @valid_element_id do
-    fun.(element, stack, acc) |> next(stack, fun)
-  end
-
-  # Generic handlers for 4-element events (normalized)
-  defp process_item({id, _, _, _} = element, {stack, acc, fun}) when id in @valid_element_id do
-    fun.(element, stack, acc) |> next(stack, fun)
   end
 
   # Generic handlers for 5-element and 6-element events
@@ -565,13 +466,6 @@ defmodule FnXML.Stream do
       {:space, _content, _line, _ls, _pos}, _, acc ->
         {false, acc}
 
-      # 3-tuple normalized
-      {:characters, content, _loc}, _, acc ->
-        {not String.match?(content, ~r/^\s*$/), acc}
-
-      {:space, _content, _loc}, _, acc ->
-        {false, acc}
-
       _, _, acc ->
         {true, acc}
     end)
@@ -616,18 +510,8 @@ defmodule FnXML.Stream do
         result = if ns in ns_list, do: include, else: not include
         {result, [result | acc]}
 
-      # 4-tuple normalized or with nil loc
-      {:start_element, tag, _attrs, _loc}, _, acc ->
-        {_tag, ns} = Element.tag(tag)
-        result = if ns in ns_list, do: include, else: not include
-        {result, [result | acc]}
-
       # 5-tuple from parser
       {:end_element, _tag, _line, _ls, _pos}, _, [result | rest] ->
-        {result, rest}
-
-      # 3-tuple normalized
-      {:end_element, _tag, _loc}, _, [result | rest] ->
         {result, rest}
 
       # 2-tuple legacy

@@ -292,8 +292,6 @@ defmodule FnXML do
     Stream.reject(events, fn
       # 5-tuple format (from parser)
       {:characters, content, _line, _ls, _pos} -> String.trim(content) == ""
-      # 3-tuple format (normalized)
-      {:characters, content, _loc} -> String.trim(content) == ""
       _ -> false
     end)
   end

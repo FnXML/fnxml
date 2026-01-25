@@ -29,9 +29,32 @@ defmodule FnXML.MacroBlkParserGenerator do
 
   ## Options
   - `:edition` - Required. Either `4` or `5`.
+  - `:disable` - Optional. List of event types to disable (compile-time filtering).
+                 Valid values: `:space`, `:comment`, `:cdata`, `:prolog`, `:characters`,
+                              `:start_element`, `:end_element`, `:error`
+  - `:positions` - Optional. How to include position data in events.
+                  - `:full` (default) - Include line, ls, abs_pos
+                  - `:line_only` - Include only line number
+                  - `:none` - No position data
+
+  ## Examples
+
+      # Full featured parser (default)
+      use FnXML.MacroBlkParserGenerator, edition: 5
+
+      # Minimal parser - no whitespace, comments, or positions
+      use FnXML.MacroBlkParserGenerator, edition: 5,
+        disable: [:space, :comment],
+        positions: :none
+
+      # Structure only - no text content
+      use FnXML.MacroBlkParserGenerator, edition: 5,
+        disable: [:characters, :space, :comment, :cdata]
   """
   defmacro __using__(opts) do
     edition = Keyword.fetch!(opts, :edition)
+    disabled = Keyword.get(opts, :disable, [])
+    positions = Keyword.get(opts, :positions, :full)
 
     quote do
       @moduledoc """
@@ -39,20 +62,41 @@ defmodule FnXML.MacroBlkParserGenerator do
 
       Auto-generated with edition-specific character validation inlined
       for maximum performance. No runtime edition dispatch.
+
+      Disabled events: #{inspect(unquote(disabled))}
+      Position mode: #{unquote(positions)}
       """
 
       # Inline frequently called helper functions
-      @compile {:inline, utf8_size: 1, complete: 4, incomplete: 5}
+      @compile {:inline,
+                utf8_size: 1,
+                complete: 4,
+                incomplete: 5,
+                buf_start: 3,
+                new_event: 6,
+                new_event: 7,
+                error: 6}
 
-      # Store edition for introspection
+      # Store configuration for introspection
       @edition unquote(edition)
+      @disabled unquote(disabled)
+      @position_mode unquote(positions)
+
       def edition, do: @edition
+      def disabled, do: @disabled
+      def position_mode, do: @position_mode
 
       # ==================================================================
       # Character Guards (edition-specific, inlined at compile time)
       # ==================================================================
 
       unquote(generate_char_guards(edition))
+
+      # ==================================================================
+      # Event Helpers (with compile-time filtering)
+      # ==================================================================
+
+      unquote(generate_event_helpers(disabled, positions))
 
       # ==================================================================
       # Shared Parser Implementation
@@ -75,6 +119,9 @@ defmodule FnXML.MacroBlkParserGenerator do
                        c in 0x20..0xD7FF or c in 0xE000..0xFFFD or
                        c in 0x10000..0x10FFFF
 
+      defguardp is_name_start_ascii(c)
+                when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?:
+
       # Edition 5 NameStartChar
       # NameStartChar ::= ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6] | [#xD8-#xF6] |
       #                   [#xF8-#x2FF] | [#x370-#x37D] | [#x37F-#x1FFF] |
@@ -82,13 +129,16 @@ defmodule FnXML.MacroBlkParserGenerator do
       #                   [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] |
       #                   [#x10000-#xEFFFF]
       defguardp is_name_start(c)
-                when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?: or
+                when is_name_start_ascii(c) or
                        c in 0x00C0..0x00D6 or c in 0x00D8..0x00F6 or
                        c in 0x00F8..0x02FF or c in 0x0370..0x037D or
                        c in 0x037F..0x1FFF or c in 0x200C..0x200D or
                        c in 0x2070..0x218F or c in 0x2C00..0x2FEF or
                        c in 0x3001..0xD7FF or c in 0xF900..0xFDCF or
                        c in 0xFDF0..0xFFFD or c in 0x10000..0xEFFFF
+
+      defguardp is_name_char_ascii(c)
+                when is_name_start_ascii(c) or c == ?- or c == ?. or c in ?0..?9
 
       # Edition 5 NameChar
       # NameChar ::= NameStartChar | "-" | "." | [0-9] | #xB7 |
@@ -111,6 +161,9 @@ defmodule FnXML.MacroBlkParserGenerator do
                        c in 0x20..0xD7FF or c in 0xE000..0xFFFD or
                        c in 0x10000..0x10FFFF
 
+      defguardp is_name_start_ascii(c)
+                when c in ?a..?z or c in ?A..?Z or c == ?_ or c == ?:
+
       # Edition 4 NameStartChar = Letter | '_' | ':'
       # Letter = BaseChar | Ideographic
       # BaseChar and Ideographic from Appendix B
@@ -119,8 +172,7 @@ defmodule FnXML.MacroBlkParserGenerator do
                 # BaseChar 1-byte
                 # BaseChar 2-byte (from Appendix B)
                 # Ideographic
-                when c == ?_ or c == ?: or
-                       c in ?A..?Z or c in ?a..?z or
+                when is_name_start_ascii(c) or
                        c in 0xC0..0xD6 or c in 0xD8..0xF6 or c in 0xF8..0xFF or
                        c in 0x0100..0x0131 or c in 0x0134..0x013E or c in 0x0141..0x0148 or
                        c in 0x014A..0x017E or
@@ -207,6 +259,9 @@ defmodule FnXML.MacroBlkParserGenerator do
                        c in 0xAC00..0xD7A3 or
                        c in 0x4E00..0x9FA5 or c == 0x3007 or c in 0x3021..0x3029
 
+      defguardp is_name_char_ascii(c)
+                when is_name_start_ascii(c) or c == ?- or c == ?. or c in ?0..?9 or c == 0xB7
+
       # Edition 4 NameChar = Letter | Digit | '.' | '-' | '_' | ':' | CombiningChar | Extender
       defguardp is_name_char(c)
                 # Additional NameChar characters
@@ -267,6 +322,164 @@ defmodule FnXML.MacroBlkParserGenerator do
   end
 
   # ==================================================================
+  # Event Helper Generation (with compile-time filtering)
+  # ==================================================================
+
+  defp generate_event_helpers(disabled, positions) do
+    quote do
+      # Generate new_event/6 (single data field)
+      unquote(generate_new_event_6(disabled, positions))
+
+      # Generate new_event/7 (two data fields)
+      unquote(generate_new_event_7(disabled, positions))
+
+      # Generate error/6
+      unquote(generate_error_6(disabled, positions))
+    end
+  end
+
+  # Map event types to their parameter count (data fields)
+  # Single data parameter events use new_event/6
+  @single_param_events [:end_element, :characters, :space, :comment, :cdata, :dtd]
+
+  # Two data parameter events use new_event/7
+  @double_param_events [:start_element, :prolog, :processing_instruction, :error]
+
+  # Generate new_event/6 clauses (event_type, data, line, ls, abs_pos)
+  defp generate_new_event_6(disabled, positions) do
+    # Only generate drop clauses for disabled single-param events
+    disabled_single = Enum.filter(disabled, &(&1 in @single_param_events))
+
+    drop_clauses =
+      for event_type <- disabled_single do
+        quote do
+          defp new_event(events, unquote(event_type), _data, _line, _ls, _abs_pos) do
+            events
+          end
+        end
+      end
+
+    # Determine if we need a default clause for new_event/6
+    # Only generate if there are enabled single-param events
+    enabled_single = @single_param_events -- disabled
+
+    default_clause =
+      if enabled_single != [] do
+        case positions do
+          :full ->
+            quote do
+              defp new_event(events, event_type, data, line, ls, abs_pos) do
+                [{event_type, data, line, ls, abs_pos} | events]
+              end
+            end
+
+          :line_only ->
+            quote do
+              defp new_event(events, event_type, data, line, _ls, _abs_pos) do
+                [{event_type, data, line} | events]
+              end
+            end
+
+          :none ->
+            quote do
+              defp new_event(events, event_type, data, _line, _ls, _abs_pos) do
+                [{event_type, data} | events]
+              end
+            end
+        end
+      else
+        []
+      end
+
+    [drop_clauses, default_clause]
+  end
+
+  # Generate new_event/7 clauses (event_type, data1, data2, line, ls, abs_pos)
+  defp generate_new_event_7(disabled, positions) do
+    # Only generate drop clauses for disabled double-param events
+    disabled_double = Enum.filter(disabled, &(&1 in @double_param_events))
+
+    drop_clauses =
+      for event_type <- disabled_double do
+        quote do
+          defp new_event(events, unquote(event_type), _data1, _data2, _line, _ls, _abs_pos) do
+            events
+          end
+        end
+      end
+
+    # Determine if we need a default clause for new_event/7
+    # Only generate if there are enabled double-param events
+    enabled_double = @double_param_events -- disabled
+
+    default_clause =
+      if enabled_double != [] do
+        case positions do
+          :full ->
+            quote do
+              defp new_event(events, event_type, data1, data2, line, ls, abs_pos) do
+                [{event_type, data1, data2, line, ls, abs_pos} | events]
+              end
+            end
+
+          :line_only ->
+            quote do
+              defp new_event(events, event_type, data1, data2, line, _ls, _abs_pos) do
+                [{event_type, data1, data2, line} | events]
+              end
+            end
+
+          :none ->
+            quote do
+              defp new_event(events, event_type, data1, data2, _line, _ls, _abs_pos) do
+                [{event_type, data1, data2} | events]
+              end
+            end
+        end
+      else
+        []
+      end
+
+    [drop_clauses, default_clause]
+  end
+
+  # Generate error/6 clauses (error_type, message, line, ls, abs_pos)
+  defp generate_error_6(disabled, positions) do
+    # Check if :error is disabled (though this would be unusual)
+    if :error in disabled do
+      quote do
+        defp error(events, _error_type, _message, _line, _ls, _abs_pos) do
+          events
+        end
+      end
+    else
+      # Generate error clause based on position mode
+      case positions do
+        :full ->
+          quote do
+            defp error(events, error_type, message, line, ls, abs_pos) do
+              [{:error, error_type, message, line, ls, abs_pos} | events]
+            end
+          end
+
+        :line_only ->
+          quote do
+            defp error(events, error_type, message, line, _ls, _abs_pos) do
+              [{:error, error_type, message, line} | events]
+            end
+          end
+
+        :none ->
+          quote do
+            defp error(events, error_type, message, _line, _ls, _abs_pos) do
+              [{:error, error_type, message} | events]
+            end
+          end
+      end
+    end
+  end
+
+  # ==================================================================
   # Shared Parser Code (injected into both editions)
   # ==================================================================
 
@@ -280,13 +493,21 @@ defmodule FnXML.MacroBlkParserGenerator do
 
       # Return format helper - complete (no leftover)
       defp complete(events, line, ls, abs_pos) do
-        {:lists.reverse(events), nil, {line, ls, abs_pos}}
+        {:lists.reverse(events), nil, line, ls, abs_pos}
       end
 
       # Return format helper - incomplete (has leftover starting at elem_start)
       defp incomplete(events, elem_start, line, ls, abs_pos) do
-        {:lists.reverse(events), elem_start, {line, ls, abs_pos}}
+        {:lists.reverse(events), elem_start, line, ls, abs_pos}
       end
+
+      # Calculate buffer start position from current and element positions
+      defp buf_start(buf_pos, abs_pos, el_abs_pos) do
+        buf_pos - (abs_pos - el_abs_pos)
+      end
+
+      # Note: new_event/6, new_event/7, and error/6 are generated by
+      # generate_event_helpers/2 based on disabled events and position mode
 
       # ============================================================================
       # Public API
@@ -315,21 +536,18 @@ defmodule FnXML.MacroBlkParserGenerator do
       @doc """
       Parse a single block of XML.
       """
-      def parse_block(block, _prev_block, _prev_pos, line, ls, abs_pos) do
-        if abs_pos == 0 do
-          case block do
-            <<0xFE, 0xFF, _::binary>> ->
-              {[{:error, :utf16, nil, line, ls, abs_pos}], nil, {line, ls, abs_pos}}
+      def parse_block(block, prev_block, prev_pos, line, ls, abs_pos)
 
-            <<0xFF, 0xFE, _::binary>> ->
-              {[{:error, :utf16, nil, line, ls, abs_pos}], nil, {line, ls, abs_pos}}
+      def parse_block(<<0xFE, 0xFF, _::binary>>, _, _, line, ls, abs_pos) do
+        {[{:error, :utf16, nil, line, ls, abs_pos}], nil, line, ls, abs_pos}
+      end
 
-            _ ->
-              parse_content(block, block, 0, abs_pos, line, ls, [])
-          end
-        else
-          parse_content(block, block, 0, abs_pos, line, ls, [])
-        end
+      def parse_block(<<0xFF, 0xFE, _::binary>>, _, _, line, ls, abs_pos) do
+        {[{:error, :utf16, nil, line, ls, abs_pos}], nil, line, ls, abs_pos}
+      end
+
+      def parse_block(block, _, _, line, ls, abs_pos) do
+        parse_content([], block, block, 0, abs_pos, line, ls)
       end
 
       # ============================================================================
@@ -369,7 +587,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       end
 
       defp handle_chunk(rest, chunk, line, ls, abs_pos) do
-        {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+        {events, leftover_pos, new_line, new_ls, new_abs_pos} =
           parse_block(chunk, nil, 0, line, ls, abs_pos)
 
         if leftover_pos do
@@ -385,7 +603,7 @@ defmodule FnXML.MacroBlkParserGenerator do
           {pos, 1} ->
             mini = leftover <> binary_part(chunk, 0, pos + 1)
 
-            {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+            {events, leftover_pos, new_line, new_ls, new_abs_pos} =
               parse_block(mini, nil, 0, line, ls, abs_pos)
 
             if leftover_pos do
@@ -426,7 +644,7 @@ defmodule FnXML.MacroBlkParserGenerator do
           {pos, 1} ->
             mini = leftover <> binary_part(chunk, search_start, pos - search_start + 1)
 
-            {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+            {events, leftover_pos, new_line, new_ls, new_abs_pos} =
               parse_block(mini, nil, 0, line, ls, abs_pos)
 
             all_events = acc_events ++ events
@@ -460,7 +678,7 @@ defmodule FnXML.MacroBlkParserGenerator do
         if chunk_remaining > 0 do
           rest_chunk = binary_part(chunk, start_pos, chunk_remaining)
 
-          {events, leftover_pos, {new_line, new_ls, new_abs_pos}} =
+          {events, leftover_pos, new_line, new_ls, new_abs_pos} =
             parse_block(rest_chunk, nil, 0, line, ls, abs_pos)
 
           all_events = acc_events ++ events
@@ -480,282 +698,276 @@ defmodule FnXML.MacroBlkParserGenerator do
       # Content parsing - entry point
       # ============================================================================
 
-      defp parse_content(<<>>, _xml, __buf_pos, abs_pos, line, ls, events) do
+      defp parse_content(events, <<>>, _xml, __buf_pos, abs_pos, line, ls) do
         complete(events, line, ls, abs_pos)
       end
 
-      defp parse_content(<<"<?xml ", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_prolog(
-          rest,
-          xml,
-          buf_pos + 6,
-          abs_pos + 6,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos,
-          events
-        )
+      defp parse_content(events, <<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls) do
+        parse_element(events, rest, xml, buf_pos, abs_pos, line, ls)
       end
 
-      defp parse_content(<<"<?xml\t", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_prolog(
-          rest,
-          xml,
-          buf_pos + 6,
-          abs_pos + 6,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos,
-          events
-        )
+      defp parse_content(events, <<c, _::binary>> = rest, xml, buf_pos, abs_pos, line, ls)
+           when c in [?\s, ?\t, ?\n] do
+        parse_ws(events, rest, xml, buf_pos, abs_pos, line, ls, line, ls, abs_pos)
       end
 
-      defp parse_content(<<"<?xml\n", rest::binary>>, xml, buf_pos, abs_pos, line, _ls, events) do
-        parse_prolog(
-          rest,
-          xml,
-          buf_pos + 6,
-          abs_pos + 6,
-          line + 1,
-          abs_pos + 6,
-          {line, abs_pos + 6 - 6, abs_pos + 1},
-          buf_pos,
-          events
-        )
-      end
-
-      # At document start: <?xml followed by non-whitespace is malformed XMLDecl
-      # The XML spec requires whitespace after "<?xml" (S in VersionInfo)
-      defp parse_content(<<"<?xml", c, _::binary>>, _xml, _buf_pos, 0 = abs_pos, line, ls, events)
-           when c not in [?\s, ?\t, ?\n, ?\r, ?\?] do
-        events = [
-          {:error, :malformed_xml_decl, "Missing whitespace after '<?xml' in XML declaration",
-           line, ls, abs_pos}
-          | events
-        ]
-
-        complete(events, line, ls, abs_pos + 5)
-      end
-
-      defp parse_content(<<"<", _::binary>> = rest, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_element(rest, xml, buf_pos, abs_pos, line, ls, events)
-      end
-
-      defp parse_content(rest, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_text(
-          rest,
-          xml,
-          buf_pos,
-          abs_pos,
-          line,
-          ls,
-          {line, ls, abs_pos},
-          buf_pos,
-          true,
-          events
-        )
+      defp parse_content(events, rest, xml, buf_pos, abs_pos, line, ls) do
+        parse_text(events, rest, xml, buf_pos, abs_pos, line, ls, line, ls, abs_pos)
       end
 
       # ============================================================================
       # Text parsing
       # ============================================================================
 
-      defp parse_text(<<>>, xml, buf_pos, abs_pos, line, ls, loc, start, all_ws, events) do
-        events =
-          if buf_pos > start do
-            text = binary_part(xml, start, buf_pos - start)
-            {l, lls, lp} = loc
-
-            if all_ws do
-              [{:space, text, l, lls, lp} | events]
-            else
-              [{:characters, text, l, lls, lp} | events]
-            end
-          else
-            events
-          end
-
-        complete(events, line, ls, abs_pos)
+      defp parse_ws(
+             events,
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos
+           )
+           when c in [?\s, ?\t] do
+        parse_ws(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos
+        )
       end
 
-      defp parse_text(
+      defp parse_ws(
+             events,
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos
+           ) do
+        pos = abs_pos + 1
+        parse_ws(events, rest, xml, buf_pos + 1, pos, line + 1, pos, el_line, el_ls, el_abs_pos)
+      end
+
+      defp parse_ws(
+             events,
              <<"<", _::binary>> = rest,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             all_ws,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos
            ) do
-        events =
-          if buf_pos > start do
-            text = binary_part(xml, start, buf_pos - start)
-            {l, lls, lp} = loc
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
+        text = binary_part(xml, start, buf_pos - start)
 
-            if all_ws do
-              [{:space, text, l, lls, lp} | events]
-            else
-              [{:characters, text, l, lls, lp} | events]
-            end
-          else
-            events
-          end
-
-        parse_element(rest, xml, buf_pos, abs_pos, line, ls, events)
+        new_event(events, :space, text, el_line, el_ls, el_abs_pos)
+        |> parse_element(rest, xml, buf_pos, abs_pos, line, ls)
       end
 
-      defp parse_text(
-             <<?\n, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             _ls,
-             loc,
-             start,
-             all_ws,
-             events
-           ) do
-        parse_text(
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line + 1,
-          abs_pos + 1,
-          loc,
-          start,
-          all_ws,
-          events
-        )
+      defp parse_ws(events, <<>>, xml, buf_pos, abs_pos, line, ls, el_line, el_ls, el_abs_pos) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
+        text = binary_part(xml, start, buf_pos - start)
+
+        events
+        |> new_event(:space, text, el_line, el_ls, el_abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
+      # transition to characters if we find a non-space
+      defp parse_ws(events, rest, xml, buf_pos, abs_pos, line, ls, el_line, el_ls, el_abs_pos) do
+        parse_text(events, rest, xml, buf_pos, abs_pos, line, ls, el_line, el_ls, el_abs_pos)
+      end
+
+      # Match < before general character matching
       defp parse_text(
-             <<c, rest::binary>>,
+             events,
+             <<"<", _::binary>> = rest,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             all_ws,
-             events
-           )
-           when c in [?\s, ?\t] do
-        parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, all_ws, events)
-      end
-
-      defp parse_text(
-             <<"]]>", rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             loc,
-             start,
-             all_ws,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos
            ) do
-        events =
-          if buf_pos > start do
-            text = binary_part(xml, start, buf_pos - start)
-            {l, lls, lp} = loc
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
+        text = binary_part(xml, start, buf_pos - start)
 
-            if all_ws do
-              [{:space, text, l, lls, lp} | events]
-            else
-              [{:characters, text, l, lls, lp} | events]
-            end
-          else
-            events
-          end
-
-        events = [
-          {:error, :text_cdata_end, "']]>' not allowed in text content", line, ls, abs_pos}
-          | events
-        ]
-
-        parse_text(
-          rest,
-          xml,
-          buf_pos + 3,
-          abs_pos + 3,
-          line,
-          ls,
-          {line, ls, abs_pos + 3},
-          buf_pos + 3,
-          true,
-          events
-        )
+        new_event(events, :characters, text, el_line, el_ls, el_abs_pos)
+        |> parse_element(rest, xml, buf_pos, abs_pos, line, ls)
       end
 
       # ASCII fast path for valid XML chars (excludes <, ], control chars; newline/tab handled above)
       defp parse_text(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             _all_ws,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos
            )
            when c in 0x20..0x3B or c == 0x3D or c in 0x3F..0x5C or c in 0x5E..0x7F or c == 0x0D do
-        parse_text(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, false, events)
+        parse_text(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos
+        )
       end
 
       # Non-ASCII UTF-8: validate with is_xml_char guard
       defp parse_text(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             _all_ws,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos
            )
            when is_xml_char(c) do
         size = utf8_size(c)
-        parse_text(rest, xml, buf_pos + size, abs_pos + size, line, ls, loc, start, false, events)
+
+        parse_text(
+          events,
+          rest,
+          xml,
+          buf_pos + size,
+          abs_pos + size,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos
+        )
+      end
+
+      defp parse_text(
+             events,
+             <<?\n, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos
+           ) do
+        pos = abs_pos + 1
+        parse_text(events, rest, xml, buf_pos + 1, pos, line + 1, pos, el_line, el_ls, el_abs_pos)
+      end
+
+      defp parse_text(events, <<>>, xml, buf_pos, abs_pos, line, ls, el_line, el_ls, el_abs_pos) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
+        text = binary_part(xml, start, buf_pos - start)
+
+        events
+        |> new_event(:characters, text, el_line, el_ls, el_abs_pos)
+        |> complete(line, ls, abs_pos)
+      end
+
+      # the string ]]> is not allowed in text
+      defp parse_text(
+             events,
+             <<"]", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos
+           ) do
+        case rest do
+          <<"]>", rest2::binary>> ->
+            start = buf_start(buf_pos, abs_pos, el_abs_pos)
+            text = binary_part(xml, start, buf_pos - start)
+
+            new_event(events, :characters, text, el_line, el_ls, el_abs_pos)
+            |> error(:text_cdata_end, "']]>' not allowed in text content", line, ls, abs_pos)
+            |> parse_text(rest2, xml, buf_pos + 3, abs_pos + 3, line, ls, line, ls, abs_pos + 3)
+
+          <<"]">> ->
+            start = buf_start(buf_pos, abs_pos, el_abs_pos)
+            text = binary_part(xml, start, buf_pos - start)
+            incomplete(events, buf_pos, line, ls, abs_pos)
+
+          _ ->
+            parse_text(
+              events,
+              rest,
+              xml,
+              buf_pos + 1,
+              abs_pos + 1,
+              line,
+              ls,
+              el_line,
+              el_ls,
+              el_abs_pos
+            )
+        end
       end
 
       # Invalid XML character - emit error and stop
       defp parse_text(
+             events,
              <<c::utf8, _rest::binary>>,
              _xml,
              _buf_pos,
              abs_pos,
              line,
              ls,
-             _loc,
-             _start,
-             _all_ws,
-             events
+             _el_line,
+             _el_ls,
+             _el_abs_pos
            ) do
-        events = [
-          {:error, :invalid_char,
-           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in text content",
-           line, ls, abs_pos}
-          | events
-        ]
-
-        complete(events, line, ls, abs_pos)
+        error(
+          events,
+          :invalid_char,
+          "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in text content",
+          line,
+          ls,
+          abs_pos
+        )
+        |> complete(line, ls, abs_pos)
       end
 
       # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
       defp parse_text(
+             events,
              <<byte, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -763,203 +975,311 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
-             _all_ws,
-             events
+             _start
            )
            when byte >= 0x80 do
-        events = [
-          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in text content", line, ls,
-           abs_pos}
-          | events
-        ]
-
-        complete(events, line, ls, abs_pos)
+        error(
+          events,
+          :invalid_utf8,
+          "Invalid UTF-8 byte sequence in text content",
+          line,
+          ls,
+          abs_pos
+        )
+        |> complete(line, ls, abs_pos)
       end
 
       # ============================================================================
       # Element dispatch
       # ============================================================================
 
-      defp parse_element(<<"<!--", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_comment(
-          rest,
-          xml,
-          buf_pos + 4,
-          abs_pos + 4,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 4,
-          false,
-          buf_pos,
-          events
-        )
-      end
-
-      defp parse_element(<<"<![CDATA[", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_cdata(
-          rest,
-          xml,
-          buf_pos + 9,
-          abs_pos + 9,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 9,
-          buf_pos,
-          events
-        )
-      end
-
-      defp parse_element(<<"<!DOCTYPE", rest::binary>>, xml, buf_pos, abs_pos, line, ls, events) do
-        parse_doctype(
-          rest,
-          xml,
-          buf_pos + 9,
-          abs_pos + 9,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 2,
-          1,
-          nil,
-          buf_pos,
-          events
-        )
-      end
-
       defp parse_element(
-             <<"</", rest2::binary>> = <<"</", c::utf8, _::binary>>,
+             events,
+             <<"<", rest2::binary>> = <<"<", c, _::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
-             ls,
-             events
+             ls
            )
-           when is_name_start(c) do
-        parse_close_tag_name(
-          rest2,
-          xml,
-          buf_pos + 2,
-          abs_pos + 2,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 2,
-          buf_pos,
-          events
-        )
-      end
-
-      defp parse_element(<<"</", _::binary>>, _xml, _buf_pos, abs_pos, line, ls, events) do
-        events = [
-          {:error, :invalid_close_tag, "Close tag must start with a valid name character", line,
-           ls, abs_pos + 2}
-          | events
-        ]
-
-        complete(events, line, ls, abs_pos + 2)
-      end
-
-      defp parse_element(
-             <<"<?", rest2::binary>> = <<"<?", c::utf8, _::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             events
-           )
-           when is_name_start(c) do
-        parse_pi_name(
-          rest2,
-          xml,
-          buf_pos + 2,
-          abs_pos + 2,
-          line,
-          ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 2,
-          buf_pos,
-          events
-        )
-      end
-
-      defp parse_element(<<"<?", _::binary>>, _xml, _buf_pos, abs_pos, line, ls, events) do
-        events = [
-          {:error, :invalid_pi_target, "PI target must start with a valid name character", line,
-           ls, abs_pos + 2}
-          | events
-        ]
-
-        complete(events, line, ls, abs_pos + 2)
-      end
-
-      defp parse_element(
-             <<"<", rest2::binary>> = <<"<", c::utf8, _::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             events
-           )
-           when is_name_start(c) do
+           when is_name_start_ascii(c) do
         parse_open_tag_name(
+          events,
           rest2,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          {line, ls, abs_pos + 1},
-          buf_pos + 1,
-          buf_pos,
-          events
+          line,
+          ls,
+          abs_pos + 1,
+          buf_pos
         )
       end
 
-      defp parse_element(<<"<">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(
+             events,
+             <<"<", rest2::binary>> = <<"<", c::utf8, _::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls
+           )
+           when is_name_start(c) do
+        parse_open_tag_name(
+          events,
+          rest2,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          line,
+          ls,
+          abs_pos + 1,
+          buf_pos
+        )
+      end
+
+      defp parse_element(
+             events,
+             <<"</", rest2::binary>> = <<"</", c::utf8, _::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls
+           )
+           when is_name_start(c) do
+        parse_close_tag_name(
+          events,
+          rest2,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          line,
+          ls,
+          abs_pos + 1,
+          buf_pos
+        )
+      end
+
+      defp parse_element(events, <<"</", _::binary>>, _xml, _buf_pos, abs_pos, line, ls) do
+        error(
+          events,
+          :invalid_close_tag,
+          "Close tag must start with a valid name character",
+          line,
+          ls,
+          abs_pos + 2
+        )
+        |> complete(line, ls, abs_pos + 2)
+      end
+
+      defp parse_element(events, <<"<!--", rest::binary>>, xml, buf_pos, abs_pos, line, ls) do
+        parse_comment(
+          events,
+          rest,
+          xml,
+          buf_pos + 4,
+          abs_pos + 4,
+          line,
+          ls,
+          line,
+          ls,
+          abs_pos + 1,
+          false,
+          buf_pos
+        )
+      end
+
+      defp parse_element(events, <<"<![CDATA[", rest::binary>>, xml, buf_pos, abs_pos, line, ls) do
+        parse_cdata(
+          events,
+          rest,
+          xml,
+          buf_pos + 9,
+          abs_pos + 9,
+          line,
+          ls,
+          line,
+          ls,
+          abs_pos + 1,
+          buf_pos
+        )
+      end
+
+      defp parse_element(events, <<"<!DOCTYPE", rest::binary>>, xml, buf_pos, abs_pos, line, ls) do
+        parse_doctype(
+          events,
+          rest,
+          xml,
+          buf_pos + 9,
+          abs_pos + 9,
+          line,
+          ls,
+          line,
+          ls,
+          abs_pos + 1,
+          buf_pos + 2,
+          1,
+          nil,
+          buf_pos
+        )
+      end
+
+      # XML declaration - only valid at document start (abs_pos == 0)
+      defp parse_element(
+             events,
+             <<"<?xml", ws, rest::binary>>,
+             xml,
+             buf_pos,
+             0 = abs_pos,
+             line,
+             ls
+           )
+           when ws in [?\s, ?\t] do
+        parse_prolog(
+          events,
+          rest,
+          xml,
+          buf_pos + 6,
+          abs_pos + 6,
+          line,
+          ls,
+          line,
+          ls,
+          abs_pos + 1,
+          buf_pos
+        )
+      end
+
+      defp parse_element(
+             events,
+             <<"<?xml\n", rest::binary>>,
+             xml,
+             buf_pos,
+             0 = abs_pos,
+             line,
+             _ls
+           ) do
+        parse_prolog(
+          events,
+          rest,
+          xml,
+          buf_pos + 6,
+          abs_pos + 6,
+          line + 1,
+          abs_pos + 6,
+          line,
+          0,
+          abs_pos + 1,
+          buf_pos
+        )
+      end
+
+      # Malformed XML declaration at document start - missing whitespace after <?xml
+      defp parse_element(
+             events,
+             <<"<?xml", c, _::binary>>,
+             _xml,
+             _buf_pos,
+             0 = abs_pos,
+             line,
+             ls
+           )
+           when c not in [?\s, ?\t, ?\n, ?\?] do
+        error(
+          events,
+          :malformed_xml_decl,
+          "Missing whitespace after '<?xml' in XML declaration",
+          line,
+          ls,
+          abs_pos
+        )
+        |> complete(line, ls, abs_pos + 5)
+      end
+
+      defp parse_element(
+             events,
+             <<"<?", rest2::binary>> = <<"<?", c::utf8, _::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls
+           )
+           when is_name_start(c) do
+        parse_pi_name(
+          events,
+          rest2,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          line,
+          ls,
+          abs_pos + 1,
+          buf_pos
+        )
+      end
+
+      defp parse_element(events, <<"<?", _::binary>>, _xml, _buf_pos, abs_pos, line, ls) do
+        error(
+          events,
+          :invalid_pi_target,
+          "PI target must start with a valid name character",
+          line,
+          ls,
+          abs_pos + 2
+        )
+        |> complete(line, ls, abs_pos + 2)
+      end
+
+      defp parse_element(events, <<"<">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<!">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<!">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<!-">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<!-">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<![">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<![">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<![C">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<![C">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<![CD">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<![CD">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<![CDA">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<![CDA">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<![CDAT">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<![CDAT">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(<<"<![CDATA">>, _xml, buf_pos, abs_pos, line, ls, events) do
+      defp parse_element(events, <<"<![CDATA">>, _xml, buf_pos, abs_pos, line, ls) do
         incomplete(events, buf_pos, line, ls, abs_pos)
       end
 
-      defp parse_element(_, _xml, _buf_pos, abs_pos, line, ls, events) do
-        events = [{:error, :invalid_element, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+      defp parse_element(events, _, _xml, _buf_pos, abs_pos, line, ls) do
+        new_events = error(events, :invalid_element, nil, line, ls, abs_pos)
+        complete(new_events, line, ls, abs_pos)
       end
 
       # ============================================================================
@@ -967,6 +1287,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       # ============================================================================
 
       defp parse_open_tag_name(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -974,85 +1295,89 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_open_tag_name(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_open_tag_name(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_open_tag_name(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when is_name_char(c) do
         size = utf8_size(c)
 
         parse_open_tag_name(
+          events,
           rest,
           xml,
           buf_pos + size,
           abs_pos + size,
           line,
           ls,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_open_tag_name(
+             events,
              rest,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         name = binary_part(xml, start, buf_pos - start)
 
         finish_open_tag(
+          events,
           rest,
           xml,
           buf_pos,
@@ -1062,9 +1387,10 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           [],
           [],
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
@@ -1073,6 +1399,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       # ============================================================================
 
       defp finish_open_tag(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -1083,13 +1410,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp finish_open_tag(
+             events,
              <<"/>", rest::binary>>,
              xml,
              buf_pos,
@@ -1099,20 +1426,26 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              _seen,
-             loc,
-             _elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             _elem_start
            ) do
-        {l, lls, lp} = loc
+        new_events =
+          new_event(
+            new_event(events, :start_element, name, attrs, el_line, el_ls, el_abs_pos),
+            :end_element,
+            name,
+            el_line,
+            el_ls,
+            el_abs_pos
+          )
 
-        events = [
-          {:end_element, name, l, lls, lp} | [{:start_element, name, attrs, l, lls, lp} | events]
-        ]
-
-        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+        parse_content(new_events, rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
       end
 
       defp finish_open_tag(
+             events,
              <<">", rest::binary>>,
              xml,
              buf_pos,
@@ -1122,16 +1455,17 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              _seen,
-             loc,
-             _elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             _elem_start
            ) do
-        {l, lls, lp} = loc
-        events = [{:start_element, name, attrs, l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+        new_events = new_event(events, :start_element, name, attrs, el_line, el_ls, el_abs_pos)
+        parse_content(new_events, rest, xml, buf_pos + 1, abs_pos + 1, line, ls)
       end
 
       defp finish_open_tag(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
@@ -1141,12 +1475,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when c in [?\s, ?\t] do
         finish_open_tag_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1156,13 +1492,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp finish_open_tag(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
@@ -1172,11 +1510,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
         finish_open_tag_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1186,13 +1526,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp finish_open_tag(
+             events,
              <<c::utf8, _::binary>>,
              _xml,
              _buf_pos,
@@ -1203,15 +1545,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             _elem_start,
-             events
+             _elem_start
            )
            when is_name_start(c) do
-        events = [{:error, :missing_whitespace_before_attr, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        new_events = error(events, :missing_whitespace_before_attr, nil, line, ls, abs_pos)
+        complete(new_events, line, ls, abs_pos)
       end
 
       defp finish_open_tag(
+             events,
              <<"/">>,
              _xml,
              _buf_pos,
@@ -1222,13 +1564,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp finish_open_tag(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -1239,14 +1581,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_gt_or_attr, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        new_events = error(events, :expected_gt_or_attr, nil, line, ls, abs_pos)
+        complete(new_events, line, ls, abs_pos)
       end
 
       defp finish_open_tag_ws(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -1257,13 +1599,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp finish_open_tag_ws(
+             events,
              <<"/>", rest::binary>>,
              xml,
              buf_pos,
@@ -1273,20 +1615,26 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              _seen,
-             loc,
-             _elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             _elem_start
            ) do
-        {l, lls, lp} = loc
+        events =
+          new_event(
+            new_event(events, :start_element, name, attrs, el_line, el_ls, el_abs_pos),
+            :end_element,
+            name,
+            el_line,
+            el_ls,
+            el_abs_pos
+          )
 
-        events = [
-          {:end_element, name, l, lls, lp} | [{:start_element, name, attrs, l, lls, lp} | events]
-        ]
-
-        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+        parse_content(events, rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
       end
 
       defp finish_open_tag_ws(
+             events,
              <<">", rest::binary>>,
              xml,
              buf_pos,
@@ -1296,16 +1644,18 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              _seen,
-             loc,
-             _elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             _elem_start
            ) do
-        {l, lls, lp} = loc
-        events = [{:start_element, name, attrs, l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+        events
+        |> new_event(:start_element, name, attrs, el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls)
       end
 
       defp finish_open_tag_ws(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
@@ -1315,12 +1665,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when c in [?\s, ?\t] do
         finish_open_tag_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1330,13 +1682,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp finish_open_tag_ws(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
@@ -1346,11 +1700,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
         finish_open_tag_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1360,13 +1716,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp finish_open_tag_ws(
+             events,
              <<c::utf8, _::binary>> = rest,
              xml,
              buf_pos,
@@ -1376,12 +1734,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when is_name_start(c) do
         parse_attr_name(
+          events,
           rest,
           xml,
           buf_pos,
@@ -1391,14 +1751,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
-          buf_pos,
-          elem_start,
-          events
+          line,
+          ls,
+          abs_pos,
+          elem_start
         )
       end
 
       defp finish_open_tag_ws(
+             events,
              <<"/">>,
              _xml,
              _buf_pos,
@@ -1409,13 +1770,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp finish_open_tag_ws(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -1426,11 +1787,11 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_gt_or_attr, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_gt_or_attr, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       # ============================================================================
@@ -1438,6 +1799,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       # ============================================================================
 
       defp parse_attr_name(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -1448,14 +1810,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _attrs,
              _seen,
              _loc,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_attr_name(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
@@ -1465,14 +1826,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_attr_name(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1482,14 +1843,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_attr_name(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
@@ -1499,15 +1861,16 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when is_name_char(c) do
         size = utf8_size(c)
 
         parse_attr_name(
+          events,
           rest,
           xml,
           buf_pos + size,
@@ -1517,14 +1880,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_attr_name(
+             events,
              rest,
              xml,
              buf_pos,
@@ -1534,14 +1898,16 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         attr_name = binary_part(xml, start, buf_pos - start)
 
         parse_attr_eq(
+          events,
           rest,
           xml,
           buf_pos,
@@ -1551,14 +1917,16 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_eq(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -1570,13 +1938,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _seen,
              _loc,
              _attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_attr_eq(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
@@ -1586,13 +1954,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
-             elem_start,
-             events
+             elem_start
            )
            when c in [?\s, ?\t] do
         parse_attr_eq(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1602,14 +1972,16 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_eq(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
@@ -1619,12 +1991,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_attr_eq(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1634,14 +2008,16 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_eq(
+             events,
              <<"=", rest::binary>>,
              xml,
              buf_pos,
@@ -1651,12 +2027,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_attr_quote(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1666,14 +2044,16 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_eq(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -1685,14 +2065,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              _seen,
              _loc,
              _attr_name,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_eq, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_eq, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       defp parse_attr_quote(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -1704,13 +2085,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _seen,
              _loc,
              _attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_attr_quote(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
@@ -1720,13 +2101,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
-             elem_start,
-             events
+             elem_start
            )
            when c in [?\s, ?\t] do
         parse_attr_quote(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1736,14 +2119,16 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_quote(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
@@ -1753,12 +2138,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_attr_quote(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1768,14 +2155,16 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_quote(
+             events,
              <<q, rest::binary>>,
              xml,
              buf_pos,
@@ -1785,13 +2174,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
-             elem_start,
-             events
+             elem_start
            )
            when q in [?", ?'] do
         parse_attr_value(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1801,16 +2192,17 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          line,
+          ls,
+          abs_pos + 1,
           attr_name,
           q,
-          buf_pos + 1,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_quote(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -1822,14 +2214,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              _seen,
              _loc,
              _attr_name,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_quote, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_quote, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       defp parse_attr_value(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -1842,14 +2235,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _attr_name,
              _quote,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_attr_value(
+             events,
              <<q, rest::binary>>,
              xml,
              buf_pos,
@@ -1859,25 +2251,26 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
              q,
-             start,
-             elem_start,
-             events
+             elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         value = binary_part(xml, start, buf_pos - start)
-        {l, lls, lp} = loc
 
         {new_attrs, new_seen, events} =
           if attr_name in seen do
-            events = [{:error, :attr_unique, nil, l, lls, lp} | events]
+            events = error(events, :attr_unique, nil, el_line, el_ls, el_abs_pos)
             {[{attr_name, value} | attrs], seen, events}
           else
             {[{attr_name, value} | attrs], [attr_name | seen], events}
           end
 
         finish_open_tag(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1887,13 +2280,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           new_attrs,
           new_seen,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_attr_value(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
@@ -1903,14 +2298,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
              quote,
-             start,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_attr_value(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1920,16 +2316,17 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
           quote,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_attr_value(
+             events,
              <<"<", rest::binary>>,
              xml,
              buf_pos,
@@ -1939,18 +2336,18 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
              quote,
-             start,
-             elem_start,
-             events
+             elem_start
            ) do
-        events = [
-          {:error, :attr_lt, "'<' not allowed in attribute value", line, ls, abs_pos} | events
-        ]
+        events =
+          error(events, :attr_lt, "'<' not allowed in attribute value", line, ls, abs_pos)
 
         parse_attr_value(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1960,17 +2357,18 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
           quote,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # ASCII fast path for valid XML chars (excludes <, ", ', &, control chars; newline handled above)
       defp parse_attr_value(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
@@ -1980,16 +2378,17 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
              quote,
-             start,
-             elem_start,
-             events
+             elem_start
            )
            when c in 0x20..0x21 or c in 0x23..0x25 or c in 0x28..0x3B or c == 0x3D or
                   c in 0x3F..0x7F or c == 0x09 or c == 0x0D do
         parse_attr_value(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -1999,17 +2398,18 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
           quote,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # Non-ASCII UTF-8: validate with is_xml_char guard
       defp parse_attr_value(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
@@ -2019,17 +2419,18 @@ defmodule FnXML.MacroBlkParserGenerator do
              name,
              attrs,
              seen,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              attr_name,
              quote,
-             start,
-             elem_start,
-             events
+             elem_start
            )
            when is_xml_char(c) do
         size = utf8_size(c)
 
         parse_attr_value(
+          events,
           rest,
           xml,
           buf_pos + size,
@@ -2039,17 +2440,18 @@ defmodule FnXML.MacroBlkParserGenerator do
           name,
           attrs,
           seen,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           attr_name,
           quote,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # Invalid XML character - emit error and stop
       defp parse_attr_value(
+             events,
              <<c::utf8, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -2062,22 +2464,24 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _attr_name,
              _quote,
-             _start,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [
-          {:error, :invalid_char,
-           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in attribute value",
-           line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_char,
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in attribute value",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
 
       # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
       defp parse_attr_value(
+             events,
              <<byte, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -2090,16 +2494,18 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _attr_name,
              _quote,
-             _start,
-             _elem_start,
-             events
+             _elem_start
            )
            when byte >= 0x80 do
-        events = [
-          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in attribute value", line, ls,
-           abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_utf8,
+            "Invalid UTF-8 byte sequence in attribute value",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
@@ -2109,6 +2515,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       # ============================================================================
 
       defp parse_close_tag_name(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -2116,87 +2523,105 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_close_tag_name(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_close_tag_name(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_close_tag_name(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when is_name_char(c) do
         size = utf8_size(c)
 
         parse_close_tag_name(
+          events,
           rest,
           xml,
           buf_pos + size,
           abs_pos + size,
           line,
           ls,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_close_tag_name(
+             events,
              rest,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         name = binary_part(xml, start, buf_pos - start)
-        parse_close_tag_end(rest, xml, buf_pos, abs_pos, line, ls, name, loc, elem_start, events)
+
+        parse_close_tag_end(
+          events,
+          rest,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          name,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
+        )
       end
 
       defp parse_close_tag_end(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -2205,13 +2630,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _name,
              _loc,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_close_tag_end(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
@@ -2219,12 +2644,14 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              name,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when c in [?\s, ?\t] do
         parse_close_tag_end(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -2232,13 +2659,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           line,
           ls,
           name,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_close_tag_end(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
@@ -2246,11 +2675,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              _ls,
              name,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
         parse_close_tag_end(
+          events,
           rest,
           xml,
           buf_pos + 1,
@@ -2258,13 +2689,15 @@ defmodule FnXML.MacroBlkParserGenerator do
           line + 1,
           abs_pos + 1,
           name,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_close_tag_end(
+             events,
              <<">", rest::binary>>,
              xml,
              buf_pos,
@@ -2272,16 +2705,18 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              name,
-             loc,
-             _elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             _elem_start
            ) do
-        {l, lls, lp} = loc
-        events = [{:end_element, name, l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+        events
+        |> new_event(:end_element, name, el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls)
       end
 
       defp parse_close_tag_end(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -2290,11 +2725,11 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _name,
              _loc,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_gt, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_gt, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       # ============================================================================
@@ -2302,6 +2737,7 @@ defmodule FnXML.MacroBlkParserGenerator do
       # ============================================================================
 
       defp parse_comment(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -2309,90 +2745,96 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
              _has_double_dash,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_comment(
+             events,
              <<"-->", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              has_double_dash,
-             _elem_start,
-             events
+             _elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         comment = binary_part(xml, start, buf_pos - start)
-        {l, lls, lp} = loc
-        events = [{:comment, comment, l, lls, lp} | events]
 
-        events =
+        events
+        |> new_event(:comment, comment, el_line, el_ls, el_abs_pos)
+        |> then(fn events ->
           if has_double_dash do
-            [{:error, :comment, nil, l, lls, lp} | events]
+            error(events, :comment, nil, el_line, el_ls, el_abs_pos)
           else
             events
           end
-
-        parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls, events)
+        end)
+        |> parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls)
       end
 
       defp parse_comment(
+             events,
              <<"--->", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              _has_double_dash,
-             _elem_start,
-             events
+             _elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         comment = binary_part(xml, start, buf_pos - start + 1)
-        {l, lls, lp} = loc
-        events = [{:comment, comment, l, lls, lp} | events]
-        events = [{:error, :comment, nil, l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 4, abs_pos + 4, line, ls, events)
+
+        events
+        |> new_event(:comment, comment, el_line, el_ls, el_abs_pos)
+        |> error(:comment, nil, el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 4, abs_pos + 4, line, ls)
       end
 
       defp parse_comment(
+             events,
              <<"--", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              _has_double_dash,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_comment(
+          events,
           rest,
           xml,
           buf_pos + 2,
           abs_pos + 2,
           line,
           ls,
-          loc,
-          start,
+          el_line,
+          el_ls,
+          el_abs_pos,
           true,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_comment(
+             events,
              <<"-">>,
              _xml,
              _buf_pos,
@@ -2402,133 +2844,141 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _start,
              _has_double_dash,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_comment(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              has_double_dash,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_comment(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
-          start,
+          el_line,
+          el_ls,
+          el_abs_pos,
           has_double_dash,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # ASCII fast path for valid XML chars (excludes -, control chars; newline handled above)
       defp parse_comment(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              has_double_dash,
-             elem_start,
-             events
+             elem_start
            )
            when c in 0x20..0x2C or c in 0x2E..0x7F or c == 0x09 or c == 0x0D do
         parse_comment(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
-          start,
+          el_line,
+          el_ls,
+          el_abs_pos,
           has_double_dash,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # Handle single dash followed by non-dash (valid in comment)
       defp parse_comment(
+             events,
              <<"-", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              has_double_dash,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_comment(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
-          start,
+          el_line,
+          el_ls,
+          el_abs_pos,
           has_double_dash,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # Non-ASCII UTF-8: validate with is_xml_char guard
       defp parse_comment(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              has_double_dash,
-             elem_start,
-             events
+             elem_start
            )
            when is_xml_char(c) do
         size = utf8_size(c)
 
         parse_comment(
+          events,
           rest,
           xml,
           buf_pos + size,
           abs_pos + size,
           line,
           ls,
-          loc,
-          start,
+          el_line,
+          el_ls,
+          el_abs_pos,
           has_double_dash,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # Invalid XML character - emit error and stop
       defp parse_comment(
+             events,
              <<c::utf8, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -2536,23 +2986,25 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
              _has_double_dash,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [
-          {:error, :invalid_char,
-           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in comment",
-           line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_char,
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in comment",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
 
       # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
       defp parse_comment(
+             events,
              <<byte, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -2560,16 +3012,19 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
              _has_double_dash,
-             _elem_start,
-             events
+             _elem_start
            )
            when byte >= 0x80 do
-        events = [
-          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in comment", line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_utf8,
+            "Invalid UTF-8 byte sequence in comment",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
@@ -2578,29 +3033,33 @@ defmodule FnXML.MacroBlkParserGenerator do
       # CDATA
       # ============================================================================
 
-      defp parse_cdata(<<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, _start, elem_start, events) do
+      defp parse_cdata(events, <<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, elem_start) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_cdata(
+             events,
              <<"]]>", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             _elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             _elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         cdata = binary_part(xml, start, buf_pos - start)
-        {l, lls, lp} = loc
-        events = [{:cdata, cdata, l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls, events)
+
+        events
+        |> new_event(:cdata, cdata, el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls)
       end
 
       defp parse_cdata(
+             events,
              <<"]]">>,
              _xml,
              _buf_pos,
@@ -2608,14 +3067,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_cdata(
+             events,
              <<"]">>,
              _xml,
              _buf_pos,
@@ -2623,104 +3081,133 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_cdata(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
         parse_cdata(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       # ASCII fast path for valid XML chars (excludes ], control chars; newline handled above)
       defp parse_cdata(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when c in 0x20..0x5C or c in 0x5E..0x7F or c == 0x09 or c == 0x0D do
-        parse_cdata(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, elem_start, events)
+        parse_cdata(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
+        )
       end
 
       # Handle single ] (valid in CDATA until ]]>)
       defp parse_cdata(
+             events,
              <<"]", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
-        parse_cdata(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, start, elem_start, events)
+        parse_cdata(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
+        )
       end
 
       # Non-ASCII UTF-8: validate with is_xml_char guard
       defp parse_cdata(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             start,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when is_xml_char(c) do
         size = utf8_size(c)
 
         parse_cdata(
+          events,
           rest,
           xml,
           buf_pos + size,
           abs_pos + size,
           line,
           ls,
-          loc,
-          start,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       # Invalid XML character - emit error and stop
       defp parse_cdata(
+             events,
              <<c::utf8, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -2728,22 +3215,24 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [
-          {:error, :invalid_char,
-           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in CDATA",
-           line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_char,
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in CDATA",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
 
       # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
       defp parse_cdata(
+             events,
              <<byte, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -2751,15 +3240,11 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
-             _elem_start,
-             events
+             _elem_start
            )
            when byte >= 0x80 do
-        events = [
-          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in CDATA", line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(events, :invalid_utf8, "Invalid UTF-8 byte sequence in CDATA", line, ls, abs_pos)
 
         complete(events, line, ls, abs_pos)
       end
@@ -2792,7 +3277,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              1,
              nil,
@@ -2800,9 +3287,10 @@ defmodule FnXML.MacroBlkParserGenerator do
              events
            ) do
         content = binary_part(xml, start, buf_pos - start)
-        {l, lls, lp} = loc
-        events = [{:dtd, content, l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, events)
+
+        events
+        |> new_event(:dtd, content, el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls)
       end
 
       defp parse_doctype(
@@ -2812,7 +3300,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              nil,
@@ -2826,7 +3316,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth - 1,
           nil,
@@ -2842,7 +3334,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              quote,
@@ -2856,7 +3350,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           quote,
@@ -2874,7 +3370,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              nil,
@@ -2888,7 +3386,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 4,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           elem_start,
@@ -2903,7 +3403,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              nil,
@@ -2917,7 +3419,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth + 1,
           nil,
@@ -2933,7 +3437,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              quote,
@@ -2947,7 +3453,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           quote,
@@ -2963,7 +3471,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              nil,
@@ -2977,7 +3487,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           ?",
@@ -2993,7 +3505,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              ?",
@@ -3007,7 +3521,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           nil,
@@ -3023,7 +3539,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              nil,
@@ -3037,7 +3555,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           ?',
@@ -3053,7 +3573,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              ?',
@@ -3067,7 +3589,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           nil,
@@ -3083,7 +3607,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              quote,
@@ -3097,7 +3623,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           quote,
@@ -3113,7 +3641,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              quote,
@@ -3129,7 +3659,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           quote,
@@ -3145,7 +3677,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              quote,
@@ -3162,7 +3696,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + size,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           quote,
@@ -3185,12 +3721,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              _elem_start,
              events
            ) do
-        events = [
-          {:error, :invalid_char,
-           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in DOCTYPE",
-           line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_char,
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in DOCTYPE",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
@@ -3224,7 +3763,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              elem_start,
@@ -3237,7 +3778,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 3,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           nil,
@@ -3254,7 +3797,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              elem_start,
@@ -3267,7 +3812,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           elem_start,
@@ -3283,7 +3830,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              elem_start,
@@ -3296,7 +3845,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           elem_start,
@@ -3312,7 +3863,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              start,
              dtd_depth,
              elem_start,
@@ -3327,7 +3880,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + size,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           start,
           dtd_depth,
           elem_start,
@@ -3347,7 +3902,6 @@ defmodule FnXML.MacroBlkParserGenerator do
              line,
              ls,
              _loc,
-             _start,
              elem_start,
              events
            ) do
@@ -3361,13 +3915,13 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              elem_start,
              events
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_pi_name(
           rest,
           xml,
@@ -3375,8 +3929,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
-          start,
+          el_line,
+          el_ls,
+          el_abs_pos,
           elem_start,
           events
         )
@@ -3389,8 +3944,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
-             start,
+             el_line,
+             el_ls,
+             el_abs_pos,
              elem_start,
              events
            )
@@ -3404,39 +3960,58 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + size,
           line,
           ls,
-          loc,
-          start,
+          el_line,
+          el_ls,
+          el_abs_pos,
           elem_start,
           events
         )
       end
 
-      defp parse_pi_name(rest, xml, buf_pos, abs_pos, line, ls, loc, start, elem_start, events) do
+      defp parse_pi_name(
+             events,
+             rest,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
+           ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         target = binary_part(xml, start, buf_pos - start)
 
         # Check for reserved "xml" target (case-insensitive)
         # Per XML spec: "The target names 'XML', 'xml', and so on are reserved"
         if String.downcase(target) == "xml" do
-          events = [
-            {:error, :reserved_pi_target, "PI target 'xml' is reserved", line, ls,
-             abs_pos - byte_size(target)}
-            | events
-          ]
+          events =
+            error(
+              events,
+              :reserved_pi_target,
+              "PI target 'xml' is reserved",
+              line,
+              ls,
+              abs_pos - byte_size(target)
+            )
 
           complete(events, line, ls, abs_pos)
         else
           parse_pi_content(
+            events,
             rest,
             xml,
             buf_pos,
             abs_pos,
             line,
             ls,
-            loc,
+            el_line,
+            el_ls,
+            el_abs_pos,
             target,
-            buf_pos,
-            elem_start,
-            events
+            elem_start
           )
         end
       end
@@ -3450,7 +4025,6 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _target,
-             _start,
              elem_start,
              events
            ) do
@@ -3464,16 +4038,19 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              target,
-             start,
              _elem_start,
              events
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         content = binary_part(xml, start, buf_pos - start)
-        {l, lls, lp} = loc
-        events = [{:processing_instruction, target, content, l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+
+        events
+        |> new_event(:processing_instruction, target, content, el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
       end
 
       defp parse_pi_content(
@@ -3485,7 +4062,6 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _target,
-             _start,
              elem_start,
              events
            ) do
@@ -3499,9 +4075,10 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              target,
-             start,
              elem_start,
              events
            ) do
@@ -3512,9 +4089,10 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           target,
-          start,
           elem_start,
           events
         )
@@ -3528,9 +4106,10 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              target,
-             start,
              elem_start,
              events
            )
@@ -3542,9 +4121,10 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           target,
-          start,
           elem_start,
           events
         )
@@ -3558,7 +4138,9 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              target,
              start,
              elem_start,
@@ -3571,7 +4153,9 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           target,
           start,
           elem_start,
@@ -3587,9 +4171,10 @@ defmodule FnXML.MacroBlkParserGenerator do
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              target,
-             start,
              elem_start,
              events
            )
@@ -3603,9 +4188,10 @@ defmodule FnXML.MacroBlkParserGenerator do
           abs_pos + size,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           target,
-          start,
           elem_start,
           events
         )
@@ -3621,16 +4207,18 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _target,
-             _start,
              _elem_start,
              events
            ) do
-        events = [
-          {:error, :invalid_char,
-           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in processing instruction",
-           line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_char,
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in processing instruction",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
@@ -3645,16 +4233,19 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _target,
-             _start,
              _elem_start,
              events
            )
            when byte >= 0x80 do
-        events = [
-          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in processing instruction", line,
-           ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_utf8,
+            "Invalid UTF-8 byte sequence in processing instruction",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
@@ -3663,102 +4254,163 @@ defmodule FnXML.MacroBlkParserGenerator do
       # Prolog
       # ============================================================================
 
-      defp parse_prolog(<<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, elem_start, events) do
+      defp parse_prolog(
+             events,
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
+             elem_start
+           ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog(
+             events,
              <<"?>", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             _elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             _elem_start
            ) do
-        {l, lls, lp} = loc
-        events = [{:prolog, "xml", [], l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+        events
+        |> new_event(:prolog, "xml", [], el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
       end
 
-      defp parse_prolog(<<"?">>, _xml, _buf_pos, abs_pos, line, ls, _loc, elem_start, events) do
+      defp parse_prolog(
+             events,
+             <<"?">>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
+             elem_start
+           ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when c in [?\s, ?\t] do
-        parse_prolog(rest, xml, buf_pos + 1, abs_pos + 1, line, ls, loc, elem_start, events)
+        parse_prolog(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
+        )
       end
 
       defp parse_prolog(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            ) do
         parse_prolog(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
-          elem_start,
-          events
+          el_line,
+          el_ls,
+          el_abs_pos,
+          elem_start
         )
       end
 
       defp parse_prolog(
+             events,
              <<c::utf8, _::binary>> = rest,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
-             elem_start,
-             events
+             el_line,
+             el_ls,
+             el_abs_pos,
+             elem_start
            )
            when is_name_start(c) do
         parse_prolog_attr_name(
+          events,
           rest,
           xml,
           buf_pos,
           abs_pos,
           line,
           ls,
-          loc,
+          line,
+          ls,
+          abs_pos,
           [],
-          buf_pos,
-          elem_start,
-          events
+          elem_start
         )
       end
 
-      defp parse_prolog(_, _xml, _buf_pos, abs_pos, line, ls, _loc, _elem_start, events) do
-        events = [{:error, :expected_pi_end_or_attr, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+      defp parse_prolog(
+             events,
+             _,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
+             _elem_start
+           ) do
+        events
+        |> error(:expected_pi_end_or_attr, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       defp parse_prolog_attr_name(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -3767,123 +4419,130 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _prolog_attrs,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog_attr_name(
+             events,
              <<"?>", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             _start,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        {l, lls, lp} = loc
-        events = [{:prolog, "xml", Enum.reverse(prolog_attrs), l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+        events
+        |> new_event(:prolog, "xml", Enum.reverse(prolog_attrs), el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
       end
 
       defp parse_prolog_attr_name(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             start,
-             elem_start,
-             events
+             elem_start
            )
-           when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_ or c == ?- or c == ?. or
-                  c == ?: do
+           when is_name_char_ascii(c) do
         parse_prolog_attr_name(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_name(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             start,
-             elem_start,
-             events
+             elem_start
            )
            when is_name_char(c) do
         size = utf8_size(c)
 
         parse_prolog_attr_name(
+          events,
           rest,
           xml,
           buf_pos + size,
           abs_pos + size,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_name(
+             events,
              rest,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             start,
-             elem_start,
-             events
+             elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         attr_name = binary_part(xml, start, buf_pos - start)
 
         parse_prolog_attr_eq(
+          events,
           rest,
           xml,
           buf_pos,
           abs_pos,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_eq(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -3893,98 +4552,110 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _prolog_attrs,
              _attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog_attr_eq(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
-             elem_start,
-             events
+             elem_start
            )
            when c in [?\s, ?\t] do
         parse_prolog_attr_eq(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_eq(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_prolog_attr_eq(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_eq(
+             events,
              <<"=", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_prolog_attr_quote(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_eq(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -3994,14 +4665,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _prolog_attrs,
              _attr_name,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_eq, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_eq, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       defp parse_prolog_attr_quote(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -4011,101 +4683,112 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _prolog_attrs,
              _attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog_attr_quote(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
-             elem_start,
-             events
+             elem_start
            )
            when c in [?\s, ?\t] do
         parse_prolog_attr_quote(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_quote(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_prolog_attr_quote(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_quote(
+             events,
              <<q, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
-             elem_start,
-             events
+             elem_start
            )
            when q in [?", ?'] do
         parse_prolog_attr_value(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          line,
+          ls,
+          abs_pos + 1,
           prolog_attrs,
           attr_name,
           q,
-          buf_pos + 1,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_quote(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -4115,14 +4798,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              _loc,
              _prolog_attrs,
              _attr_name,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_quote, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_quote, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       defp parse_prolog_attr_value(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -4133,149 +4817,158 @@ defmodule FnXML.MacroBlkParserGenerator do
              _prolog_attrs,
              _attr_name,
              _quote,
-             _start,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog_attr_value(
+             events,
              <<q, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
              q,
-             start,
-             elem_start,
-             events
+             elem_start
            ) do
+        start = buf_start(buf_pos, abs_pos, el_abs_pos)
         value = binary_part(xml, start, buf_pos - start)
         new_prolog_attrs = [{attr_name, value} | prolog_attrs]
 
         parse_prolog_after_attr(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           new_prolog_attrs,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_attr_value(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
              quote,
-             start,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_prolog_attr_value(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
           quote,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # ASCII fast path for valid XML chars (excludes ", ', control chars; newline handled above)
       defp parse_prolog_attr_value(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
              quote,
-             start,
-             elem_start,
-             events
+             elem_start
            )
            when c in 0x20..0x21 or c in 0x23..0x26 or c in 0x28..0x7F or c == 0x09 or c == 0x0D do
         parse_prolog_attr_value(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
           quote,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # Non-ASCII UTF-8: validate with is_xml_char guard
       defp parse_prolog_attr_value(
+             events,
              <<c::utf8, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
              attr_name,
              quote,
-             start,
-             elem_start,
-             events
+             elem_start
            )
            when is_xml_char(c) do
         size = utf8_size(c)
 
         parse_prolog_attr_value(
+          events,
           rest,
           xml,
           buf_pos + size,
           abs_pos + size,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
           attr_name,
           quote,
-          start,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       # Invalid XML character - emit error and stop
       defp parse_prolog_attr_value(
+             events,
              <<c::utf8, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -4286,22 +4979,24 @@ defmodule FnXML.MacroBlkParserGenerator do
              _prolog_attrs,
              _attr_name,
              _quote,
-             _start,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [
-          {:error, :invalid_char,
-           "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in prolog attribute value",
-           line, ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_char,
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in prolog attribute value",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
 
       # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
       defp parse_prolog_attr_value(
+             events,
              <<byte, _rest::binary>>,
              _xml,
              _buf_pos,
@@ -4312,21 +5007,24 @@ defmodule FnXML.MacroBlkParserGenerator do
              _prolog_attrs,
              _attr_name,
              _quote,
-             _start,
-             _elem_start,
-             events
+             _elem_start
            )
            when byte >= 0x80 do
-        events = [
-          {:error, :invalid_utf8, "Invalid UTF-8 byte sequence in prolog attribute value", line,
-           ls, abs_pos}
-          | events
-        ]
+        events =
+          error(
+            events,
+            :invalid_utf8,
+            "Invalid UTF-8 byte sequence in prolog attribute value",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
 
       defp parse_prolog_after_attr(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -4335,83 +5033,93 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _prolog_attrs,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog_after_attr(
+             events,
              <<"?>", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        {l, lls, lp} = loc
-        events = [{:prolog, "xml", Enum.reverse(prolog_attrs), l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+        events
+        |> new_event(:prolog, "xml", Enum.reverse(prolog_attrs), el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
       end
 
       defp parse_prolog_after_attr(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             elem_start,
-             events
+             elem_start
            )
            when c in [?\s, ?\t] do
         parse_prolog_after_attr_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_after_attr(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_prolog_after_attr_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_after_attr(
+             events,
              <<c::utf8, _::binary>>,
              _xml,
              _buf_pos,
@@ -4420,15 +5128,16 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _prolog_attrs,
-             _elem_start,
-             events
+             _elem_start
            )
            when is_name_start(c) do
-        events = [{:error, :missing_whitespace_before_attr, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:missing_whitespace_before_attr, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       defp parse_prolog_after_attr(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -4437,14 +5146,15 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _prolog_attrs,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_pi_end_or_attr, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_pi_end_or_attr, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
       defp parse_prolog_after_attr_ws(
+             events,
              <<>>,
              _xml,
              _buf_pos,
@@ -4453,111 +5163,124 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _prolog_attrs,
-             elem_start,
-             events
+             elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
       defp parse_prolog_after_attr_ws(
+             events,
              <<"?>", rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        {l, lls, lp} = loc
-        events = [{:prolog, "xml", Enum.reverse(prolog_attrs), l, lls, lp} | events]
-        parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls, events)
+        events
+        |> new_event(:prolog, "xml", Enum.reverse(prolog_attrs), el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
       end
 
       defp parse_prolog_after_attr_ws(
+             events,
              <<c, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             elem_start,
-             events
+             elem_start
            )
            when c in [?\s, ?\t] do
         parse_prolog_after_attr_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line,
           ls,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_after_attr_ws(
+             events,
              <<?\n, rest::binary>>,
              xml,
              buf_pos,
              abs_pos,
              line,
              _ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             elem_start,
-             events
+             elem_start
            ) do
         parse_prolog_after_attr_ws(
+          events,
           rest,
           xml,
           buf_pos + 1,
           abs_pos + 1,
           line + 1,
           abs_pos + 1,
-          loc,
+          el_line,
+          el_ls,
+          el_abs_pos,
           prolog_attrs,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_after_attr_ws(
+             events,
              <<c::utf8, _::binary>> = rest,
              xml,
              buf_pos,
              abs_pos,
              line,
              ls,
-             loc,
+             el_line,
+             el_ls,
+             el_abs_pos,
              prolog_attrs,
-             elem_start,
-             events
+             elem_start
            )
            when is_name_start(c) do
         parse_prolog_attr_name(
+          events,
           rest,
           xml,
           buf_pos,
           abs_pos,
           line,
           ls,
-          loc,
+          line,
+          ls,
+          abs_pos,
           prolog_attrs,
-          buf_pos,
-          elem_start,
-          events
+          elem_start
         )
       end
 
       defp parse_prolog_after_attr_ws(
+             events,
              _,
              _xml,
              _buf_pos,
@@ -4566,11 +5289,11 @@ defmodule FnXML.MacroBlkParserGenerator do
              ls,
              _loc,
              _prolog_attrs,
-             _elem_start,
-             events
+             _elem_start
            ) do
-        events = [{:error, :expected_pi_end_or_attr, nil, line, ls, abs_pos} | events]
-        complete(events, line, ls, abs_pos)
+        events
+        |> error(:expected_pi_end_or_attr, nil, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
     end
   end

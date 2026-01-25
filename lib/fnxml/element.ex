@@ -21,22 +21,13 @@ defmodule FnXML.Element do
   - `{:processing_instruction, name, content, line, ls, pos}` - Processing instruction
   - `{:error, type, msg, line, ls, pos}` - Parse error
 
-  ## Normalized Format (for programmatic generation)
+  ## Legacy Format (minimal)
 
-  Events with optional packed location tuple or nil:
+  For backwards compatibility, some functions also accept events without position data:
 
-  - `{:start_element, tag, attrs, loc}` - Opening tag (loc is `nil` or `{line, ls, pos}`)
-  - `{:end_element, tag, loc}` - Closing tag
-  - `{:characters, content, loc}` - Text content
-  - `{:space, content, loc}` - Whitespace content
-  - `{:comment, content, loc}` - Comment
-  - `{:cdata, content, loc}` - CDATA section
-  - `{:dtd, content, loc}` - DOCTYPE declaration
-  - `{:prolog, "xml", attrs, loc}` - XML prolog
-  - `{:processing_instruction, name, content, loc}` - Processing instruction
+  - `{:end_element, tag}` - Closing tag without position
 
-  The normalized format is useful when generating XML events programmatically.
-  When loc is `nil`, position functions return `{0, 0}`.
+  When no position is available, position functions return `{0, 0}`.
   """
 
   def id_list(),
@@ -80,10 +71,6 @@ defmodule FnXML.Element do
   # 6-tuple format (from parser)
   def tag({:start_element, tag, _attrs, _line, _ls, _pos}), do: tag(tag)
   def tag({:end_element, tag, _line, _ls, _pos}), do: tag(tag)
-  # 4-tuple format (normalized)
-  def tag({:start_element, tag, _attrs, _loc}), do: tag(tag)
-  # 3-tuple format (normalized)
-  def tag({:end_element, tag, _loc}), do: tag(tag)
   # 2-tuple format (no location)
   def tag({:end_element, tag}), do: tag(tag)
 
@@ -118,10 +105,6 @@ defmodule FnXML.Element do
   # 6-tuple format (from parser)
   def tag_string({:start_element, tag, _attrs, _line, _ls, _pos}), do: tag
   def tag_string({:end_element, tag, _line, _ls, _pos}), do: tag
-  # 4-tuple format (normalized)
-  def tag_string({:start_element, tag, _attrs, _loc}), do: tag
-  # 3-tuple format (normalized)
-  def tag_string({:end_element, tag, _loc}), do: tag
   # 2-tuple format (no location)
   def tag_string({:end_element, tag}), do: tag
 
@@ -193,28 +176,8 @@ defmodule FnXML.Element do
   def position({:prolog, _tag, _attrs, line, ls, pos}), do: {line, pos - ls}
   def position({:processing_instruction, _name, _content, line, ls, pos}), do: {line, pos - ls}
   def position({:error, _type, _msg, line, ls, pos}), do: {line, pos - ls}
-  # 4-tuple format (normalized)
-  def position({:start_element, _tag, _attrs, nil}), do: {0, 0}
-  def position({:start_element, _tag, _attrs, {line, ls, pos}}), do: {line, pos - ls}
-  def position({:prolog, _tag, _attrs, nil}), do: {0, 0}
-  def position({:prolog, _tag, _attrs, {line, ls, pos}}), do: {line, pos - ls}
-  def position({:processing_instruction, _name, _content, nil}), do: {0, 0}
-  def position({:processing_instruction, _name, _content, {line, ls, pos}}), do: {line, pos - ls}
-  # 3-tuple format (normalized)
-  def position({:end_element, _tag, nil}), do: {0, 0}
-  def position({:end_element, _tag, {line, ls, pos}}), do: {line, pos - ls}
   # 2-tuple format (no location)
   def position({:end_element, _tag}), do: {0, 0}
-  def position({:characters, _content, nil}), do: {0, 0}
-  def position({:characters, _content, {line, ls, pos}}), do: {line, pos - ls}
-  def position({:space, _content, nil}), do: {0, 0}
-  def position({:space, _content, {line, ls, pos}}), do: {line, pos - ls}
-  def position({:comment, _content, nil}), do: {0, 0}
-  def position({:comment, _content, {line, ls, pos}}), do: {line, pos - ls}
-  def position({:cdata, _content, nil}), do: {0, 0}
-  def position({:cdata, _content, {line, ls, pos}}), do: {line, pos - ls}
-  def position({:dtd, _content, nil}), do: {0, 0}
-  def position({:dtd, _content, {line, ls, pos}}), do: {line, pos - ls}
 
   @doc """
   Given an element, return the raw location tuple `{line, line_start, byte_offset}`.
@@ -237,17 +200,6 @@ defmodule FnXML.Element do
   def loc({:prolog, _tag, _attrs, line, ls, pos}), do: {line, ls, pos}
   def loc({:processing_instruction, _name, _content, line, ls, pos}), do: {line, ls, pos}
   def loc({:error, _type, _msg, line, ls, pos}), do: {line, ls, pos}
-  # 4-tuple format (normalized)
-  def loc({:start_element, _tag, _attrs, loc}), do: loc
-  def loc({:prolog, _tag, _attrs, loc}), do: loc
-  def loc({:processing_instruction, _name, _content, loc}), do: loc
-  # 3-tuple format (normalized)
-  def loc({:end_element, _tag, loc}), do: loc
   # 2-tuple format (no location)
   def loc({:end_element, _tag}), do: nil
-  def loc({:characters, _content, loc}), do: loc
-  def loc({:space, _content, loc}), do: loc
-  def loc({:comment, _content, loc}), do: loc
-  def loc({:cdata, _content, loc}), do: loc
-  def loc({:dtd, _content, loc}), do: loc
 end
