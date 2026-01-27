@@ -124,9 +124,10 @@ defmodule FnXML.Parser do
   end
 
   @doc """
-  Stream XML from a string or enumerable, parsing in chunks.
+  Parse XML from a string or stream.
 
-  Returns a lazy stream of XML events.
+  Returns a lazy stream of XML events. Automatically detects whether
+  the input is a binary string or an enumerable (like File.stream!/1).
 
   ## Options
 
@@ -136,30 +137,36 @@ defmodule FnXML.Parser do
   ## Examples
 
       # Parse a string
-      FnXML.Parser.stream("<root><child/></root>")
-      |> Enum.to_list()
+      "<root><child/></root>"
+      |> FnXML.Parser.parse()
+      |> FnXML.API.DOM.build()
 
       # Parse a file stream
       File.stream!("data.xml", [], 65536)
-      |> FnXML.Parser.stream()
-      |> Enum.to_list()
+      |> FnXML.Parser.parse()
+      |> FnXML.API.SAX.dispatch(MyHandler, %{})
+
+      # With validation pipeline
+      File.stream!("large.xml")
+      |> FnXML.Parser.parse()
+      |> FnXML.Validate.well_formed()
+      |> FnXML.Namespaces.resolve()
+      |> FnXML.API.DOM.build()
 
       # Use fast parser for better performance
-      FnXML.Parser.stream(xml, parser: :fast)
-      |> Enum.to_list()
+      FnXML.Parser.parse(xml, parser: :fast)
 
       # Use Edition 4 parser
-      FnXML.Parser.stream(xml, edition: 4)
-      |> Enum.to_list()
+      FnXML.Parser.parse(xml, edition: 4)
   """
-  def stream(source, opts \\ [])
+  def parse(source, opts \\ [])
 
-  def stream(source, opts) when is_binary(source) do
+  def parse(source, opts) when is_binary(source) do
     delegate_stream = select_parser_stream([source], opts)
     wrap_with_document_events(delegate_stream)
   end
 
-  def stream(source, opts) do
+  def parse(source, opts) do
     delegate_stream = select_parser_stream(source, opts)
     wrap_with_document_events(delegate_stream)
   end
@@ -188,29 +195,12 @@ defmodule FnXML.Parser do
   end
 
   @doc """
-  Parse XML and return all events as a list.
+  Alias for `parse/2` for backward compatibility.
 
-  This is a convenience function that calls `stream/2` and collects
-  all events into a list.
-
-  ## Options
-
-  - `:parser` - Parser to use: `:default`, `:fast`, or `:legacy` (default: `:default`)
-  - `:edition` - XML 1.0 edition (4 or 5, default: 5)
-
-  ## Examples
-
-      events = FnXML.Parser.parse("<root><child>text</child></root>")
-      # => [{:start_document, nil}, {:start_element, "root", [], 1, 0, 1}, ...]
-
-      # Fast parsing
-      events = FnXML.Parser.parse(xml, parser: :fast)
-
-      # Edition 4 parsing
-      events = FnXML.Parser.parse(xml, edition: 4)
+  Use `parse/2` directly in new code.
   """
-  def parse(source, opts \\ []) do
-    stream(source, opts) |> Enum.to_list()
+  def stream(source, opts \\ []) do
+    parse(source, opts)
   end
 
   @doc """

@@ -1,60 +1,23 @@
 defmodule FnXML.API.DOM.Builder do
   @moduledoc """
-  Build DOM trees from XML strings or event streams.
+  Build DOM trees from event streams.
 
   This module converts FnXML parser events into `FnXML.API.DOM.Document`
   and `FnXML.API.DOM.Element` structures.
 
   ## Examples
 
-      # Pipeline style (recommended) - use FnXML.API.DOM.build/1
-      doc = FnXML.parse_stream("<root><child/></root>")
+      # Pipeline style (use FnXML.API.DOM.build/1)
+      doc = FnXML.Parser.parse("<root><child/></root>")
             |> FnXML.API.DOM.build()
-
-      # Quick parse (convenience)
-      doc = FnXML.API.DOM.parse("<root><child/></root>")
 
   ## Internal
 
-  This module provides the implementation for `FnXML.API.DOM.build/1,2`
-  and `FnXML.API.DOM.parse/1,2`. Use those functions instead of calling
-  this module directly.
+  This module provides the implementation for `FnXML.API.DOM.build/1,2`.
+  Use that function instead of calling this module directly.
   """
 
   alias FnXML.API.DOM.{Document, Element}
-
-  @doc """
-  Parse XML string to DOM Document.
-
-  ## Options
-
-  - `:include_comments` - Include comment nodes (default: false)
-  - `:include_prolog` - Parse XML declaration (default: true)
-
-  ## Examples
-
-      iex> doc = FnXML.API.DOM.Builder.parse("<root attr='val'/>")
-      iex> doc.root.tag
-      "root"
-      iex> FnXML.API.DOM.Element.get_attribute(doc.root, "attr")
-      "val"
-  """
-  @spec parse(String.t(), keyword()) :: Document.t()
-  def parse(xml, opts \\ []) when is_binary(xml) do
-    FnXML.Parser.parse(xml)
-    |> from_stream(opts)
-  end
-
-  @doc """
-  Parse XML string to DOM Document, raising on error.
-  """
-  @spec parse!(String.t(), keyword()) :: Document.t()
-  def parse!(xml, opts \\ []) when is_binary(xml) do
-    case parse(xml, opts) do
-      %Document{} = doc -> doc
-      other -> raise "Failed to parse XML: #{inspect(other)}"
-    end
-  end
 
   @doc """
   Build DOM from an FnXML event stream.

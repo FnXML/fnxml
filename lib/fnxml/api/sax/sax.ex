@@ -45,12 +45,12 @@ defmodule FnXML.API.SAX do
       end
 
       # Pipeline style (recommended)
-      {:ok, result} = FnXML.parse_stream("<root><child>text</child></root>")
-                      |> FnXML.SAX.run(MyHandler, %{})
+      {:ok, result} = FnXML.Parser.parse("<root><child>text</child></root>")
+                      |> FnXML.API.SAX.dispatch(MyHandler, %{})
       # result.elements => ["child", "root"]
 
       # Quick parse (convenience)
-      {:ok, result} = FnXML.SAX.parse("<root><child>text</child></root>", MyHandler, %{})
+      {:ok, result} = FnXML.API.SAX.parse("<root><child>text</child></root>", MyHandler, %{})
 
   ## Using the Default Handler
 
@@ -65,7 +65,7 @@ defmodule FnXML.API.SAX do
         end
       end
 
-      {:ok, %{count: 3}} = FnXML.SAX.parse("<a><b/><c/></a>", CountHandler, %{count: 0})
+      {:ok, %{count: 3}} = FnXML.API.SAX.parse("<a><b/><c/></a>", CountHandler, %{count: 0})
 
   ## Return Values
 
@@ -83,7 +83,7 @@ defmodule FnXML.API.SAX do
       start_element("http://example.org", "child", "ex:child", attrs, state)
 
       # Without namespaces
-      FnXML.SAX.parse(xml, Handler, state, namespaces: false)
+      FnXML.API.SAX.parse(xml, Handler, state, namespaces: false)
       # start_element(nil, "ex:child", "ex:child", attrs, state)
   """
 
@@ -191,7 +191,7 @@ defmodule FnXML.API.SAX do
   ]
 
   @doc """
-  Run SAX handler on an event stream.
+  Dispatch SAX events from a parser stream to a handler.
 
   This is the primary way to use SAX with FnXML's pipeline style,
   taking a pre-parsed event stream as input.
@@ -203,21 +203,22 @@ defmodule FnXML.API.SAX do
   ## Examples
 
       # Pipeline style (recommended)
-      {:ok, state} = FnXML.parse_stream("<root><item/></root>")
-                     |> FnXML.SAX.run(MyHandler, %{})
+      {:ok, state} = FnXML.Parser.parse("<root><item/></root>")
+                     |> FnXML.API.SAX.dispatch(MyHandler, %{})
 
-      # With validation
-      {:ok, state} = FnXML.parse_stream(xml)
+      # With validation and transforms
+      {:ok, state} = File.stream!("data.xml")
+                     |> FnXML.Parser.stream()
                      |> FnXML.Validate.well_formed()
-                     |> FnXML.SAX.run(MyHandler, %{count: 0})
+                     |> FnXML.API.SAX.dispatch(MyHandler, %{count: 0})
 
       # Without namespace resolution
-      {:ok, state} = FnXML.parse_stream(xml)
-                     |> FnXML.SAX.run(MyHandler, %{}, namespaces: false)
+      {:ok, state} = FnXML.Parser.parse(xml)
+                     |> FnXML.API.SAX.dispatch(MyHandler, %{}, namespaces: false)
   """
-  @spec run(Enumerable.t(), module(), term(), keyword()) ::
+  @spec dispatch(Enumerable.t(), module(), term(), keyword()) ::
           {:ok, term()} | {:error, term()}
-  def run(stream, handler, initial_state, opts \\ []) do
+  def dispatch(stream, handler, initial_state, opts \\ []) do
     resolve_namespaces = Keyword.get(opts, :namespaces, true)
 
     stream =
@@ -235,29 +236,6 @@ defmodule FnXML.API.SAX do
       {:error, _} = error ->
         error
     end
-  end
-
-  @doc """
-  Parse XML with the given handler module.
-
-  This is a convenience function that parses and runs in one step.
-  For pipeline style, use `FnXML.parse_stream/1` piped to `run/3,4`.
-
-  ## Options
-
-  - `:namespaces` - Enable namespace resolution (default: true)
-
-  ## Examples
-
-      {:ok, state} = FnXML.SAX.parse("<root/>", MyHandler, %{})
-
-      {:error, reason} = FnXML.SAX.parse("<invalid", MyHandler, %{})
-  """
-  @spec parse(String.t(), module(), term(), keyword()) ::
-          {:ok, term()} | {:error, term()}
-  def parse(xml, handler, initial_state, opts \\ []) when is_binary(xml) do
-    FnXML.Parser.parse(xml)
-    |> run(handler, initial_state, opts)
   end
 
   defp process_events(stream, handler, initial_state, resolve_namespaces) do

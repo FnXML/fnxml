@@ -347,7 +347,7 @@ defmodule FnXML.StAXTest do
     end
 
     test "factory functions" do
-      assert %Reader{} = StAX.create_reader("<root/>")
+      assert %Reader{} = FnXML.Parser.parse("<root/>") |> StAX.reader()
       assert %Writer{} = StAX.create_writer()
     end
   end

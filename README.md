@@ -34,19 +34,22 @@ The parser uses CPS (continuation-passing style) recursive descent for efficient
 ## Quick Start
 
 ```elixir
-# Parse XML to DOM tree
-doc = FnXML.API.DOM.parse("<root><child id=\"1\">Hello</child></root>")
+# Parse XML to DOM tree (pipeline style)
+doc = FnXML.Parser.parse("<root><child id=\"1\">Hello</child></root>")
+      |> FnXML.API.DOM.build()
 doc.root.tag  # => "root"
 
-# SAX callback-based parsing
+# SAX callback-based parsing (pipeline style)
 defmodule CountHandler do
   use FnXML.API.SAX.Handler
   def start_element(_uri, _local, _qname, _attrs, count), do: {:ok, count + 1}
 end
-{:ok, 2} = FnXML.API.SAX.parse("<root><child/></root>", CountHandler, 0)
+{:ok, 2} = FnXML.Parser.parse("<root><child/></root>")
+           |> FnXML.API.SAX.dispatch(CountHandler, 0)
 
-# StAX pull-based parsing
-reader = FnXML.API.StAX.Reader.new("<root attr=\"val\"/>")
+# StAX pull-based parsing (pipeline style)
+reader = FnXML.Parser.parse("<root attr=\"val\"/>")
+         |> FnXML.API.StAX.Reader.new()
 reader = FnXML.API.StAX.Reader.next(reader)
 FnXML.API.StAX.Reader.local_name(reader)  # => "root"
 FnXML.API.StAX.Reader.attribute_value(reader, nil, "attr")  # => "val"
@@ -67,8 +70,16 @@ end
 Build an in-memory tree representation. Best for small-to-medium documents where you need random access.
 
 ```elixir
-# Parse
-doc = FnXML.API.DOM.parse("<root><child id=\"1\">text</child></root>")
+# Parse with pipeline
+doc = FnXML.Parser.parse("<root><child id=\"1\">text</child></root>")
+      |> FnXML.API.DOM.build()
+
+# With validation/transformation pipeline
+doc = File.stream!("large.xml")
+      |> FnXML.Parser.parse()
+      |> FnXML.Validate.well_formed()
+      |> FnXML.Namespaces.resolve()
+      |> FnXML.API.DOM.build()
 
 # Navigate
 doc.root.tag                                    # => "root"
@@ -108,7 +119,15 @@ defmodule MyHandler do
   end
 end
 
-{:ok, result} = FnXML.API.SAX.parse(xml, MyHandler, [])
+# Pipeline style (recommended)
+{:ok, result} = FnXML.Parser.parse(xml)
+                |> FnXML.API.SAX.dispatch(MyHandler, [])
+
+# With validation/transforms
+{:ok, result} = File.stream!("large.xml")
+                |> FnXML.Parser.parse()
+                |> FnXML.Validate.well_formed()
+                |> FnXML.API.SAX.dispatch(MyHandler, [])
 ```
 
 **Callbacks:** `start_document/1`, `end_document/1`, `start_element/5`, `end_element/4`, `characters/2`
@@ -120,7 +139,15 @@ end
 Pull-based cursor navigation. Best for large documents with complex processing logic.
 
 ```elixir
-reader = FnXML.API.StAX.Reader.new(xml)
+# Pipeline style (recommended)
+reader = FnXML.Parser.parse(xml)
+         |> FnXML.API.StAX.Reader.new()
+
+# With validation/transforms
+reader = File.stream!("large.xml")
+         |> FnXML.Parser.parse()
+         |> FnXML.Validate.well_formed()
+         |> FnXML.API.StAX.Reader.new()
 
 # Pull events one at a time (lazy - O(1) memory)
 reader = FnXML.API.StAX.Reader.next(reader)
@@ -155,18 +182,20 @@ xml = FnXML.API.StAX.Writer.new()
 Direct access to the event stream for custom processing.
 
 ```elixir
-# Parse to event stream (auto-selects NIF or Elixir)
-FnXML.Parser.parse("<root><child/></root>")
-# => [{:start_document, nil}, {:start_element, "root", [], {1, 0, 1}}, ...]
+# Parse XML string to event stream
+"<root><child/></root>"
+|> FnXML.Parser.parse()
+|> Enum.to_list()
+# => [{:start_document, nil}, {:start_element, "root", [], 1, 0, 1}, ...]
 
-# Stream from file (64KB chunks, lazy evaluation)
+# Parse file stream (64KB chunks, lazy evaluation)
 File.stream!("large.xml", [], 65536)
-|> FnXML.Parser.stream()
+|> FnXML.Parser.parse()
 |> Enum.to_list()
 
 # Force specific parser backend
-FnXML.Parser.stream(xml, parser: :nif)     # Force Zig NIF
-FnXML.Parser.stream(xml, parser: :elixir)  # Force pure Elixir
+FnXML.Parser.parse(xml, parser: :fast)     # Fast parser (no position tracking)
+FnXML.Parser.parse(xml, parser: :legacy)   # Legacy parser
 
 # Direct access to legacy block parsers
 events = FnXML.Legacy.ExBlkParser.parse("<root/>")

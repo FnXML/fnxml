@@ -15,21 +15,32 @@ defmodule FnXML.API.StAX.Reader do
 
   ## Usage
 
-      reader = FnXML.StAX.Reader.new("<root attr='val'><child>text</child></root>")
+      # From parser stream (recommended)
+      reader = FnXML.Parser.parse("<root attr='val'><child>text</child></root>")
+               |> FnXML.API.StAX.Reader.new()
+
+      # With validation pipeline
+      reader = File.stream!("data.xml")
+               |> FnXML.Parser.stream()
+               |> FnXML.Validate.well_formed()
+               |> FnXML.API.StAX.Reader.new()
+
+      # Quick create from string (convenience)
+      reader = FnXML.API.StAX.Reader.new("<root attr='val'><child>text</child></root>")
 
       # Advance to first event
-      reader = FnXML.StAX.Reader.next(reader)
-      FnXML.StAX.Reader.event_type(reader)     # => :start_element
-      FnXML.StAX.Reader.local_name(reader)     # => "root"
-      FnXML.StAX.Reader.attribute_value(reader, 0)  # => "val"
+      reader = FnXML.API.StAX.Reader.next(reader)
+      FnXML.API.StAX.Reader.event_type(reader)     # => :start_element
+      FnXML.API.StAX.Reader.local_name(reader)     # => "root"
+      FnXML.API.StAX.Reader.attribute_value(reader, 0)  # => "val"
 
       # Continue advancing
-      reader = FnXML.StAX.Reader.next(reader)
-      FnXML.StAX.Reader.local_name(reader)     # => "child"
+      reader = FnXML.API.StAX.Reader.next(reader)
+      FnXML.API.StAX.Reader.local_name(reader)     # => "child"
 
-      reader = FnXML.StAX.Reader.next(reader)
-      FnXML.StAX.Reader.event_type(reader)     # => :characters
-      FnXML.StAX.Reader.text(reader)           # => "text"
+      reader = FnXML.API.StAX.Reader.next(reader)
+      FnXML.API.StAX.Reader.event_type(reader)     # => :characters
+      FnXML.API.StAX.Reader.text(reader)           # => "text"
 
   ## Valid Methods by Event Type
 
@@ -44,11 +55,11 @@ defmodule FnXML.API.StAX.Reader do
 
   ## Iteration Pattern
 
-      reader = FnXML.StAX.Reader.new(xml)
+      reader = FnXML.Parser.parse(xml) |> FnXML.API.StAX.Reader.new()
 
       defp process(reader) do
-        if FnXML.StAX.Reader.has_next?(reader) do
-          reader = FnXML.StAX.Reader.next(reader)
+        if FnXML.API.StAX.Reader.has_next?(reader) do
+          reader = FnXML.API.StAX.Reader.next(reader)
           # Process current event...
           process(reader)
         else
@@ -79,7 +90,11 @@ defmodule FnXML.API.StAX.Reader do
         }
 
   @doc """
-  Create a new StAX reader for the given XML source.
+  Create a new StAX reader for the given source.
+
+  ## Parameters
+
+  - `source` - Either an XML string (binary) or an event stream from `FnXML.Parser.parse/1`
 
   ## Options
 
@@ -87,9 +102,18 @@ defmodule FnXML.API.StAX.Reader do
 
   ## Examples
 
-      reader = FnXML.StAX.Reader.new("<root/>")
+      # From parser stream (recommended)
+      reader = FnXML.Parser.parse("<root/>")
+               |> FnXML.API.StAX.Reader.new()
 
-      reader = FnXML.StAX.Reader.new(event_stream)
+      # With transforms/validators
+      reader = FnXML.Parser.parse(xml)
+               |> FnXML.Validate.well_formed()
+               |> FnXML.Namespaces.resolve()
+               |> FnXML.API.StAX.Reader.new()
+
+      # From string (convenience)
+      reader = FnXML.API.StAX.Reader.new("<root/>")
   """
   @spec new(String.t() | Enumerable.t(), keyword()) :: t()
   def new(source, opts \\ [])

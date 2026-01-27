@@ -28,7 +28,7 @@ defmodule FnXML.API.StAX do
   query the current event.
 
       # Pipeline style (recommended)
-      reader = FnXML.parse_stream("<root><child>text</child></root>")
+      reader = FnXML.Parser.parse("<root><child>text</child></root>")
                |> FnXML.API.StAX.reader()
 
       reader = FnXML.API.StAX.Reader.next(reader)  # Advance to first event
@@ -167,36 +167,20 @@ defmodule FnXML.API.StAX do
   ## Examples
 
       # Pipeline style (recommended)
-      reader = FnXML.parse_stream("<root><child>text</child></root>")
+      reader = FnXML.Parser.parse("<root><child>text</child></root>")
                |> FnXML.API.StAX.reader()
 
       reader = FnXML.API.StAX.Reader.next(reader)
       FnXML.API.StAX.Reader.local_name(reader)  # => "root"
 
       # With validation
-      reader = FnXML.parse_stream(xml)
+      reader = FnXML.Parser.parse(xml)
                |> FnXML.Validate.well_formed()
                |> FnXML.API.StAX.reader()
   """
   @spec reader(Enumerable.t(), keyword()) :: FnXML.API.StAX.Reader.t()
   def reader(stream, opts \\ []) do
     FnXML.API.StAX.Reader.new(stream, opts)
-  end
-
-  @doc """
-  Create a new StAX reader for the given XML source.
-
-  This is a convenience function that parses and creates a reader in one step.
-  For pipeline style, use `FnXML.parse_stream/1` piped to `reader/1,2`.
-
-  ## Examples
-
-      reader = FnXML.API.StAX.create_reader("<root/>")
-  """
-  @spec create_reader(String.t(), keyword()) :: FnXML.API.StAX.Reader.t()
-  def create_reader(xml, opts \\ []) when is_binary(xml) do
-    FnXML.Parser.parse(xml)
-    |> reader(opts)
   end
 
   @doc """

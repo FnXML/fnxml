@@ -17,8 +17,18 @@ Concise rules for using the FnXML library correctly.
 ## DOM Rules
 
 ```elixir
-# CORRECT: Parse and access
-doc = FnXML.API.DOM.parse(xml_string)
+# CORRECT: Pipeline style (recommended)
+doc = FnXML.Parser.parse(xml_string)
+      |> FnXML.API.DOM.build()
+
+# CORRECT: With validation/transforms
+doc = File.stream!("data.xml")
+      |> FnXML.Parser.parse()
+      |> FnXML.Validate.well_formed()
+      |> FnXML.Namespaces.resolve()
+      |> FnXML.API.DOM.build()
+
+# CORRECT: Access
 doc.root.tag
 doc.root.children
 FnXML.API.DOM.Element.get_attribute(element, "attr_name")
@@ -46,11 +56,19 @@ defmodule MyHandler do
   end
 end
 
-# CORRECT: Parse with handler
-{:ok, final_state} = FnXML.API.SAX.parse(xml, MyHandler, initial_state)
+# CORRECT: Pipeline style (recommended)
+{:ok, final_state} = FnXML.Parser.parse(xml)
+                     |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
 
-# CORRECT: Parse with options
-FnXML.API.SAX.parse(xml, MyHandler, state, namespaces: true)
+# CORRECT: With validation/transforms
+{:ok, result} = File.stream!("large.xml")
+                |> FnXML.Parser.parse()
+                |> FnXML.Validate.well_formed()
+                |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
+
+# CORRECT: With options
+{:ok, result} = FnXML.Parser.parse(xml)
+                |> FnXML.API.SAX.dispatch(MyHandler, state, namespaces: true)
 ```
 
 **Callbacks (all receive state, return `{:ok, state}`):**
@@ -67,8 +85,17 @@ FnXML.API.SAX.parse(xml, MyHandler, state, namespaces: true)
 ## StAX Rules
 
 ```elixir
-# CORRECT: Create reader and pull events
-reader = FnXML.API.StAX.Reader.new(xml_string)
+# CORRECT: Pipeline style (recommended)
+reader = FnXML.Parser.parse(xml_string)
+         |> FnXML.API.StAX.Reader.new()
+
+# CORRECT: With validation/transforms
+reader = File.stream!("large.xml")
+         |> FnXML.Parser.parse()
+         |> FnXML.Validate.well_formed()
+         |> FnXML.API.StAX.Reader.new()
+
+# CORRECT: Pull events
 reader = FnXML.API.StAX.Reader.next(reader)  # Must call next() to advance
 
 # CORRECT: Check event type before accessing data
@@ -183,15 +210,18 @@ writer
 
 ```elixir
 # SAX with namespaces (default: true)
-FnXML.API.SAX.parse(xml, Handler, state, namespaces: true)
+FnXML.Parser.parse(xml)
+|> FnXML.API.SAX.dispatch(Handler, state, namespaces: true)
 # Handler receives: start_element("http://ns", "local", "prefix:local", attrs, state)
 
 # SAX without namespaces
-FnXML.API.SAX.parse(xml, Handler, state, namespaces: false)
+FnXML.Parser.parse(xml)
+|> FnXML.API.SAX.dispatch(Handler, state, namespaces: false)
 # Handler receives: start_element(nil, "prefix:local", "prefix:local", attrs, state)
 
 # StAX with namespaces
-reader = FnXML.API.StAX.Reader.new(xml, namespaces: true)
+reader = FnXML.Parser.parse(xml)
+         |> FnXML.API.StAX.Reader.new(namespaces: true)
 FnXML.API.StAX.Reader.namespace_uri(reader)  # => "http://ns"
 
 # Low-level with namespaces

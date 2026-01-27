@@ -175,7 +175,7 @@ events = FnXML.Parser.parse("<root><child>Hello</child></root>")
 ```elixir
 # Process large files in chunks (memory efficient)
 File.stream!("large.xml", [], 65536)
-|> FnXML.Parser.stream()
+|> FnXML.Parser.parse()
 |> Enum.each(fn event ->
   # Process each event as it arrives
 end)
@@ -224,8 +224,7 @@ DOM is essential when you need to:
 **Parsing and Navigation**
 
 ```elixir
-# Parse XML to DOM tree
-doc = FnXML.API.DOM.parse("""
+xml = """
 <library>
   <book id="1">
     <title>Elixir in Action</title>
@@ -236,7 +235,11 @@ doc = FnXML.API.DOM.parse("""
     <author>Chris McCord</author>
   </book>
 </library>
-""")
+"""
+
+# Parse XML to DOM tree (pipeline style)
+doc = FnXML.Parser.parse(xml)
+      |> FnXML.API.DOM.build()
 
 # Access the root element
 doc.root.tag  # => "library"
@@ -370,7 +373,9 @@ xml = """
 </library>
 """
 
-{:ok, books} = FnXML.API.SAX.parse(xml, BookHandler, %{})
+# Pipeline style (recommended)
+{:ok, books} = FnXML.Parser.parse(xml)
+               |> FnXML.API.SAX.dispatch(BookHandler, %{})
 # => [%{id: "1", title: "Book One"}, %{id: "2", title: "Book Two"}]
 ```
 
@@ -390,7 +395,8 @@ defmodule FindFirstHandler do
 end
 
 # Stops as soon as <target> is found
-{:ok, value} = FnXML.API.SAX.parse(large_xml, FindFirstHandler, nil)
+{:ok, value} = FnXML.Parser.parse(large_xml)
+               |> FnXML.API.SAX.dispatch(FindFirstHandler, nil)
 ```
 
 ---
@@ -430,13 +436,16 @@ StAX excels when you need:
 ```elixir
 alias FnXML.API.StAX.Reader
 
-# Create a reader
-reader = Reader.new("""
+xml = """
 <users>
   <user id="1" name="Alice"/>
   <user id="2" name="Bob"/>
 </users>
-""")
+"""
+
+# Create a reader (pipeline style)
+reader = FnXML.Parser.parse(xml)
+         |> Reader.new()
 
 # Pull events one at a time
 reader = Reader.next(reader)
@@ -574,7 +583,8 @@ defmodule NsHandler do
   end
 end
 
-FnXML.API.SAX.parse(xml, NsHandler, nil, namespaces: true)
+FnXML.Parser.parse(xml)
+|> FnXML.API.SAX.dispatch(NsHandler, nil, namespaces: true)
 ```
 
 **StAX with Namespaces**
@@ -1067,5 +1077,5 @@ info.key_transport_algorithm  # => :rsa_oaep
 2. **Use `:halt` for early exit**: Stop SAX when you find what you need
 3. **Use Exclusive C14N**: Smaller output than regular C14N
 4. **Use AES-GCM**: Authenticated encryption, faster than CBC
-5. **Stream when possible**: Use `FnXML.Parser.stream/2` for files
+5. **Stream when possible**: Use `FnXML.Parser.parse/2` with `File.stream!` for files
 6. **Reuse keys**: Key generation is expensive

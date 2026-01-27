@@ -207,7 +207,7 @@ defmodule FnXML.Transform.Stream.SimpleFormTest do
     end
 
     test "converts Document to SimpleForm" do
-      doc = FnXML.API.DOM.parse("<root/>")
+      doc = FnXML.Parser.parse("<root/>") |> FnXML.API.DOM.build()
       result = SimpleForm.from_dom(doc)
       assert {"root", [], []} = result
     end

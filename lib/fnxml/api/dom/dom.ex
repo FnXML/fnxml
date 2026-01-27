@@ -19,12 +19,13 @@ defmodule FnXML.API.DOM do
   ## Usage
 
       # Build DOM from parser stream (recommended)
-      doc = FnXML.parse_stream("<root><child id='1'>text</child></root>")
+      doc = FnXML.Parser.parse("<root><child id='1'>text</child></root>")
             |> FnXML.API.DOM.build()
       doc.root.tag  # => "root"
 
       # With validation/transformation pipeline
-      doc = FnXML.parse_stream(xml)
+      doc = File.stream!("data.xml")
+            |> FnXML.Parser.stream()
             |> FnXML.Validate.well_formed()
             |> FnXML.Namespaces.resolve()
             |> FnXML.API.DOM.build()
@@ -96,33 +97,6 @@ defmodule FnXML.API.DOM do
   def document_fragment_node, do: @document_fragment_node
 
   @doc """
-  Parse XML string to DOM Document.
-
-  ## Options
-
-  - `:include_comments` - Include comment nodes (default: false)
-  - `:include_prolog` - Parse XML declaration (default: true)
-
-  ## Examples
-
-      iex> doc = FnXML.API.DOM.parse("<root><child>text</child></root>")
-      iex> doc.root.tag
-      "root"
-
-      iex> doc = FnXML.API.DOM.parse("<?xml version='1.0'?><root/>")
-      iex> FnXML.API.DOM.Document.version(doc)
-      "1.0"
-  """
-  @spec parse(String.t(), keyword()) :: Document.t()
-  defdelegate parse(xml, opts \\ []), to: Builder
-
-  @doc """
-  Parse XML string to DOM Document, raising on error.
-  """
-  @spec parse!(String.t(), keyword()) :: Document.t()
-  defdelegate parse!(xml, opts \\ []), to: Builder
-
-  @doc """
   Build DOM from an FnXML event stream.
 
   This is the primary way to create a DOM from parsed XML, enabling
@@ -135,18 +109,18 @@ defmodule FnXML.API.DOM do
 
   ## Examples
 
-      iex> FnXML.parse_stream("<root>text</root>")
+      iex> FnXML.Parser.parse("<root>text</root>")
       ...> |> FnXML.API.DOM.build()
       ...> |> then(& &1.root.tag)
       "root"
 
       # With validation
-      FnXML.parse_stream(xml)
+      FnXML.Parser.parse(xml)
       |> FnXML.Validate.well_formed()
       |> FnXML.API.DOM.build()
 
       # With namespace resolution
-      FnXML.parse_stream(xml)
+      FnXML.Parser.parse(xml)
       |> FnXML.Namespaces.resolve()
       |> FnXML.API.DOM.build()
   """

@@ -8,7 +8,7 @@ defmodule FnXML.API.SAX.Handler do
   ## Usage
 
       defmodule MyHandler do
-        use FnXML.SAX.Handler
+        use FnXML.API.SAX.Handler
 
         @impl true
         def start_element(_uri, local_name, _qname, _attrs, state) do
@@ -16,7 +16,8 @@ defmodule FnXML.API.SAX.Handler do
         end
       end
 
-      {:ok, elements} = FnXML.SAX.parse("<a><b/></a>", MyHandler, [])
+      {:ok, elements} = FnXML.Parser.parse("<a><b/></a>")
+                        |> FnXML.API.SAX.dispatch(MyHandler, [])
       # elements => ["b", "a"]
 
   ## Default Behavior
@@ -38,7 +39,7 @@ defmodule FnXML.API.SAX.Handler do
   ## Example: Element Counter
 
       defmodule CounterHandler do
-        use FnXML.SAX.Handler
+        use FnXML.API.SAX.Handler
 
         @impl true
         def start_element(_uri, _local, _qname, _attrs, count) do
@@ -46,12 +47,13 @@ defmodule FnXML.API.SAX.Handler do
         end
       end
 
-      {:ok, 3} = FnXML.SAX.parse("<a><b/><c/></a>", CounterHandler, 0)
+      {:ok, 3} = FnXML.Parser.parse("<a><b/><c/></a>")
+                 |> FnXML.API.SAX.dispatch(CounterHandler, 0)
 
   ## Example: Text Collector
 
       defmodule TextCollector do
-        use FnXML.SAX.Handler
+        use FnXML.API.SAX.Handler
 
         @impl true
         def characters(text, acc) do
@@ -64,12 +66,13 @@ defmodule FnXML.API.SAX.Handler do
         end
       end
 
-      {:ok, "Hello World"} = FnXML.SAX.parse("<root>Hello <b>World</b></root>", TextCollector, [])
+      {:ok, "Hello World"} = FnXML.Parser.parse("<root>Hello <b>World</b></root>")
+                             |> FnXML.API.SAX.dispatch(TextCollector, [])
 
   ## Example: Early Termination
 
       defmodule FindFirst do
-        use FnXML.SAX.Handler
+        use FnXML.API.SAX.Handler
 
         @impl true
         def start_element(_uri, local, _qname, _attrs, state) do
@@ -81,7 +84,8 @@ defmodule FnXML.API.SAX.Handler do
         end
       end
 
-      {:ok, :found} = FnXML.SAX.parse("<root><other/><target/><more/></root>", FindFirst, nil)
+      {:ok, :found} = FnXML.Parser.parse("<root><other/><target/><more/></root>")
+                      |> FnXML.API.SAX.dispatch(FindFirst, nil)
   """
 
   @doc """

@@ -127,9 +127,8 @@ defmodule FnXML do
   @doc """
   Parse an XML string into a lazy stream of events.
 
-  Events are generated on-demand as you consume the stream, making this
-  memory-efficient for large documents. Supports early termination with
-  functions like `Enum.take/2`.
+  Alias for `FnXML.Parser.parse/1`. Use `FnXML.Parser.parse/1` directly
+  in new code, which also supports File.stream!/1 input.
 
   ## Parameters
 
@@ -151,14 +150,14 @@ defmodule FnXML do
       |> Stream.map(fn {:characters, content, _, _, _} -> content end)
       |> Enum.to_list()
 
-      # Find first matching element
-      FnXML.parse_stream(xml)
+      # Recommended: Use FnXML.Parser.parse/1 directly
+      FnXML.Parser.parse(xml)
       |> Enum.find(fn {:start_element, "target", _, _, _, _} -> true; _ -> false end)
 
   """
   @spec parse_stream(binary()) :: Enumerable.t()
   def parse_stream(xml) when is_binary(xml) do
-    FnXML.Parser.stream(xml)
+    FnXML.Parser.parse(xml)
   end
 
   @doc """
