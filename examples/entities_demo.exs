@@ -4,7 +4,7 @@
 # Demonstrates XML entity resolution in text and attributes
 
 alias FnXML.Parser
-alias FnXML.Entities
+alias FnXML.Transform.Entities
 alias FnXML.Error
 
 defmodule EntitiesDemo do

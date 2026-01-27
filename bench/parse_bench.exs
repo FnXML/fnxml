@@ -34,29 +34,29 @@ end
 
 # Edition 5 variants
 defmodule MacroBlk.Compliant.Ed5 do
-  use FnXML.MacroBlkParserGenerator, edition: 5
+  use FnXML.Parser.Generator, edition: 5
 end
 
 defmodule MacroBlk.Reduced.Ed5 do
-  use FnXML.MacroBlkParserGenerator, edition: 5, disable: [:space, :comment]
+  use FnXML.Parser.Generator, edition: 5, disable: [:space, :comment]
 end
 
 defmodule MacroBlk.Structural.Ed5 do
-  use FnXML.MacroBlkParserGenerator, edition: 5,
+  use FnXML.Parser.Generator, edition: 5,
     disable: [:space, :comment, :cdata, :prolog, :characters]
 end
 
 # Edition 4 variants
 defmodule MacroBlk.Compliant.Ed4 do
-  use FnXML.MacroBlkParserGenerator, edition: 4
+  use FnXML.Parser.Generator, edition: 4
 end
 
 defmodule MacroBlk.Reduced.Ed4 do
-  use FnXML.MacroBlkParserGenerator, edition: 4, disable: [:space, :comment]
+  use FnXML.Parser.Generator, edition: 4, disable: [:space, :comment]
 end
 
 defmodule MacroBlk.Structural.Ed4 do
-  use FnXML.MacroBlkParserGenerator, edition: 4,
+  use FnXML.Parser.Generator, edition: 4,
     disable: [:space, :comment, :cdata, :prolog, :characters]
 end
 
@@ -91,8 +91,9 @@ defmodule ParseBench do
     IO.puts("    macro_blk_reduced_ed4:    No space/comment events")
     IO.puts("    macro_blk_structural_ed4: Only start/end elements")
     IO.puts("  Legacy:")
-    IO.puts("    ex_blk_parser:            ExBlkParser")
-    IO.puts("    fast_ex_blk:              FastExBlkParser")
+    IO.puts("    fnxml_parser_orig:        FnXML.Legacy.ParserOrig (dead code candidate)")
+    IO.puts("    fnxml_ex_blk_parser:      FnXML.Legacy.ExBlkParser")
+    IO.puts("    fnxml_fnxml_fast_ex_blk:        FnXML.Legacy.FastExBlkParser")
     IO.puts("")
 
     Benchee.run(
@@ -120,14 +121,17 @@ defmodule ParseBench do
         end,
 
         # Legacy parsers
-        "ex_blk_parser" => fn {xml, _path} ->
+        "fnxml_parser_orig" => fn {xml, _path} ->
+          FnXML.Legacy.ParserOrig.parse(xml) |> Enum.to_list()
+        end,
+        "fnxml_ex_blk_parser" => fn {xml, _path} ->
           [xml]
-          |> FnXML.ExBlkParser.stream()
+          |> FnXML.Legacy.ExBlkParser.stream()
           |> Enum.to_list()
         end,
-        "fast_ex_blk" => fn {xml, _path} ->
+        "fnxml_fast_ex_blk" => fn {xml, _path} ->
           [xml]
-          |> FnXML.FastExBlkParser.stream()
+          |> FnXML.Legacy.FastExBlkParser.stream()
           |> Enum.to_list()
         end,
 
@@ -180,8 +184,9 @@ defmodule ParseBench do
     IO.puts("    macro_blk_reduced_ed4:    No space/comment events")
     IO.puts("    macro_blk_structural_ed4: Only start/end elements")
     IO.puts("  Legacy:")
-    IO.puts("    ex_blk_parser:            ExBlkParser")
-    IO.puts("    fast_ex_blk:              FastExBlkParser")
+    IO.puts("    fnxml_parser_orig:        FnXML.Legacy.ParserOrig (dead code candidate)")
+    IO.puts("    fnxml_ex_blk_parser:      FnXML.Legacy.ExBlkParser")
+    IO.puts("    fnxml_fnxml_fast_ex_blk:        FnXML.Legacy.FastExBlkParser")
     IO.puts("")
 
     Benchee.run(
@@ -209,14 +214,17 @@ defmodule ParseBench do
         end,
 
         # Legacy parsers
-        "ex_blk_parser" => fn ->
+        "fnxml_parser_orig" => fn ->
+          FnXML.Legacy.ParserOrig.parse(@medium) |> Enum.to_list()
+        end,
+        "fnxml_ex_blk_parser" => fn ->
           [@medium]
-          |> FnXML.ExBlkParser.stream()
+          |> FnXML.Legacy.ExBlkParser.stream()
           |> Enum.to_list()
         end,
-        "fast_ex_blk" => fn ->
+        "fnxml_fast_ex_blk" => fn ->
           [@medium]
-          |> FnXML.FastExBlkParser.stream()
+          |> FnXML.Legacy.FastExBlkParser.stream()
           |> Enum.to_list()
         end,
 

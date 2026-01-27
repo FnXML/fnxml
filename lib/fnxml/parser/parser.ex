@@ -5,9 +5,9 @@ defmodule FnXML.Parser do
   This module provides the main parsing API for FnXML. It supports multiple parser
   implementations:
 
-  - `:default` - Full-featured macro-based parser (`FnXML.MacroBlkParser`, Edition 5)
-  - `:fast` - Optimized parser without position tracking (`FnXML.FastExBlkParser`)
-  - `:legacy` - Legacy runtime parser (`FnXML.ExBlkParser`)
+  - `:default` - Full-featured macro-based parser (`FnXML.Parser.Edition5`)
+  - `:fast` - Optimized parser without position tracking (`FnXML.Legacy.FastExBlkParser`)
+  - `:legacy` - Legacy runtime parser (`FnXML.Legacy.ExBlkParser`)
 
   ## Options
 
@@ -16,13 +16,13 @@ defmodule FnXML.Parser do
 
   ## Usage
 
-      # Default parser (MacroBlkParser Edition 5)
+      # Default parser (Edition 5)
       events = FnXML.Parser.stream("<root/>") |> Enum.to_list()
 
       # Fast parser (no position tracking, faster)
       events = FnXML.Parser.stream(xml, parser: :fast) |> Enum.to_list()
 
-      # Legacy parser (ExBlkParser)
+      # Legacy parser (Legacy.ExBlkParser)
       events = FnXML.Parser.stream(xml, parser: :legacy) |> Enum.to_list()
 
       # Edition 4 parser
@@ -35,6 +35,10 @@ defmodule FnXML.Parser do
       events = File.stream!("large.xml", [], 65536)
                |> FnXML.Parser.stream()
                |> Enum.to_list()
+
+      # Direct access to edition-specific parsers for maximum performance
+      FnXML.Parser.Edition5.parse("<root/>")
+      FnXML.Parser.Edition4.parse("<root/>")
 
   ## Event Format
 
@@ -61,6 +65,64 @@ defmodule FnXML.Parser do
   Note: The fast parser emits `nil` for all location fields.
   """
 
+  # ===========================================================================
+  # Edition-specific parsers (generated at compile time)
+  # ===========================================================================
+
+  defmodule Edition5 do
+    @moduledoc """
+    XML 1.0 Fifth Edition parser.
+
+    Uses the permissive Edition 5 character validation rules.
+    Generated at compile time with zero runtime dispatch overhead.
+    """
+    use FnXML.Parser.Generator, edition: 5
+  end
+
+  defmodule Edition4 do
+    @moduledoc """
+    XML 1.0 Fourth Edition parser.
+
+    Uses the strict Edition 4 character validation rules from Appendix B.
+    Generated at compile time with zero runtime dispatch overhead.
+    """
+    use FnXML.Parser.Generator, edition: 4
+  end
+
+  # ===========================================================================
+  # Public API
+  # ===========================================================================
+
+  @type edition :: 4 | 5
+
+  @doc """
+  Get the parser module for the specified edition.
+
+  Returns the module that can be used for all parsing operations
+  without per-call edition dispatch.
+
+  ## Example
+
+      parser = FnXML.Parser.parser(5)
+      parser.parse("<root/>")
+      parser.stream(File.stream!("large.xml"))
+  """
+  @spec parser(edition()) :: module()
+  def parser(5), do: __MODULE__.Edition5
+  def parser(4), do: __MODULE__.Edition4
+  def parser(_), do: __MODULE__.Edition5
+
+  @doc """
+  Check if a name is valid in BOTH Edition 4 and Edition 5.
+
+  Useful for ensuring maximum interoperability when generating XML.
+  """
+  @spec interoperable_name?(String.t()) :: boolean()
+  def interoperable_name?(name) do
+    FnXML.Char.valid_name_ed4?(name)
+    # If valid in Ed4, automatically valid in Ed5 (Ed5 is superset)
+  end
+
   @doc """
   Stream XML from a string or enumerable, parsing in chunks.
 
@@ -69,6 +131,7 @@ defmodule FnXML.Parser do
   ## Options
 
   - `:parser` - Parser to use: `:default` or `:fast` (default: `:default`)
+  - `:edition` - XML 1.0 edition (4 or 5, default: 5)
 
   ## Examples
 
@@ -83,6 +146,10 @@ defmodule FnXML.Parser do
 
       # Use fast parser for better performance
       FnXML.Parser.stream(xml, parser: :fast)
+      |> Enum.to_list()
+
+      # Use Edition 4 parser
+      FnXML.Parser.stream(xml, edition: 4)
       |> Enum.to_list()
   """
   def stream(source, opts \\ [])
@@ -99,13 +166,16 @@ defmodule FnXML.Parser do
 
   defp select_parser_stream(source, opts) do
     case Keyword.get(opts, :parser, :default) do
-      :fast -> FnXML.FastExBlkParser.stream(source)
-      :legacy -> FnXML.ExBlkParser.stream(source)
+      :fast ->
+        FnXML.Legacy.FastExBlkParser.stream(source)
+
+      :legacy ->
+        FnXML.Legacy.ExBlkParser.stream(source)
+
       _ ->
-        # Use MacroBlkParser Edition 5 as default
+        # Use Edition 5 as default
         edition = Keyword.get(opts, :edition, 5)
-        parser = FnXML.MacroBlkParser.parser(edition)
-        parser.stream(source)
+        parser(edition).stream(source)
     end
   end
 
@@ -164,6 +234,6 @@ defmodule FnXML.Parser do
   - `new_state` - Updated `{line, line_start, abs_pos}` state
   """
   def parse_block(block, prev_block, prev_pos, {line, ls, abs_pos}) do
-    FnXML.ExBlkParser.parse_block(block, prev_block, prev_pos, line, ls, abs_pos)
+    FnXML.Legacy.ExBlkParser.parse_block(block, prev_block, prev_pos, line, ls, abs_pos)
   end
 end

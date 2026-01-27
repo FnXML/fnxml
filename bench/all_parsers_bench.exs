@@ -26,29 +26,29 @@ end
 
 # Edition 5 variants
 defmodule MacroBlk.Compliant.Ed5 do
-  use FnXML.MacroBlkParserGenerator, edition: 5
+  use FnXML.Parser.Generator, edition: 5
 end
 
 defmodule MacroBlk.Reduced.Ed5 do
-  use FnXML.MacroBlkParserGenerator, edition: 5, disable: [:space, :comment]
+  use FnXML.Parser.Generator, edition: 5, disable: [:space, :comment]
 end
 
 defmodule MacroBlk.Structural.Ed5 do
-  use FnXML.MacroBlkParserGenerator, edition: 5,
+  use FnXML.Parser.Generator, edition: 5,
     disable: [:space, :comment, :cdata, :prolog, :characters]
 end
 
 # Edition 4 variants
 defmodule MacroBlk.Compliant.Ed4 do
-  use FnXML.MacroBlkParserGenerator, edition: 4
+  use FnXML.Parser.Generator, edition: 4
 end
 
 defmodule MacroBlk.Reduced.Ed4 do
-  use FnXML.MacroBlkParserGenerator, edition: 4, disable: [:space, :comment]
+  use FnXML.Parser.Generator, edition: 4, disable: [:space, :comment]
 end
 
 defmodule MacroBlk.Structural.Ed4 do
-  use FnXML.MacroBlkParserGenerator, edition: 4,
+  use FnXML.Parser.Generator, edition: 4,
     disable: [:space, :comment, :cdata, :prolog, :characters]
 end
 
@@ -83,8 +83,9 @@ defmodule AllParsersBench do
     IO.puts("    - macro_blk_reduced_ed4:    No space/comment")
     IO.puts("    - macro_blk_structural_ed4: Only start/end elements")
     IO.puts("  FnXML Legacy:")
-    IO.puts("    - ex_blk_parser: ExBlkParser")
-    IO.puts("    - fast_ex_blk: FastExBlkParser")
+    IO.puts("    - fnxml_parser_orig: FnXML.Legacy.ParserOrig (dead code candidate)")
+    IO.puts("    - fnxml_ex_blk_parser: FnXML.Legacy.ExBlkParser")
+    IO.puts("    - fnxml_fnxml_fast_ex_blk: FnXML.Legacy.FastExBlkParser")
     IO.puts("")
 
     Benchee.run(
@@ -117,11 +118,14 @@ defmodule AllParsersBench do
         end,
 
         # FnXML legacy parsers
-        "ex_blk_parser" => fn ->
-          [@medium] |> FnXML.ExBlkParser.stream() |> Stream.run()
+        "fnxml_parser_orig" => fn ->
+          FnXML.Legacy.ParserOrig.parse(@medium) |> Enum.to_list()
         end,
-        "fast_ex_blk" => fn ->
-          [@medium] |> FnXML.FastExBlkParser.stream() |> Stream.run()
+        "fnxml_ex_blk_parser" => fn ->
+          [@medium] |> FnXML.Legacy.ExBlkParser.stream() |> Stream.run()
+        end,
+        "fnxml_fast_ex_blk" => fn ->
+          [@medium] |> FnXML.Legacy.FastExBlkParser.stream() |> Stream.run()
         end
       },
       warmup: 2,
@@ -149,8 +153,9 @@ defmodule AllParsersBench do
         "macro_blk_compliant_ed4" => fn -> [@small] |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
         "macro_blk_reduced_ed4" => fn -> [@small] |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
         "macro_blk_structural_ed4" => fn -> [@small] |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
-        "ex_blk_parser" => fn -> [@small] |> FnXML.ExBlkParser.stream() |> Stream.run() end,
-        "fast_ex_blk" => fn -> [@small] |> FnXML.FastExBlkParser.stream() |> Stream.run() end
+        "fnxml_parser_orig" => fn -> FnXML.Legacy.ParserOrig.parse(@small) |> Enum.to_list() end,
+        "fnxml_ex_blk_parser" => fn -> [@small] |> FnXML.Legacy.ExBlkParser.stream() |> Stream.run() end,
+        "fnxml_fast_ex_blk" => fn -> [@small] |> FnXML.Legacy.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 1,
       time: 3,
@@ -171,8 +176,9 @@ defmodule AllParsersBench do
         "macro_blk_compliant_ed4" => fn -> [@medium] |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
         "macro_blk_reduced_ed4" => fn -> [@medium] |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
         "macro_blk_structural_ed4" => fn -> [@medium] |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
-        "ex_blk_parser" => fn -> [@medium] |> FnXML.ExBlkParser.stream() |> Stream.run() end,
-        "fast_ex_blk" => fn -> [@medium] |> FnXML.FastExBlkParser.stream() |> Stream.run() end
+        "fnxml_parser_orig" => fn -> FnXML.Legacy.ParserOrig.parse(@medium) |> Enum.to_list() end,
+        "fnxml_ex_blk_parser" => fn -> [@medium] |> FnXML.Legacy.ExBlkParser.stream() |> Stream.run() end,
+        "fnxml_fast_ex_blk" => fn -> [@medium] |> FnXML.Legacy.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 1,
       time: 3,
@@ -193,8 +199,9 @@ defmodule AllParsersBench do
         "macro_blk_compliant_ed4" => fn -> [@large] |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
         "macro_blk_reduced_ed4" => fn -> [@large] |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
         "macro_blk_structural_ed4" => fn -> [@large] |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
-        "ex_blk_parser" => fn -> [@large] |> FnXML.ExBlkParser.stream() |> Stream.run() end,
-        "fast_ex_blk" => fn -> [@large] |> FnXML.FastExBlkParser.stream() |> Stream.run() end
+        "fnxml_parser_orig" => fn -> FnXML.Legacy.ParserOrig.parse(@large) |> Enum.to_list() end,
+        "fnxml_ex_blk_parser" => fn -> [@large] |> FnXML.Legacy.ExBlkParser.stream() |> Stream.run() end,
+        "fnxml_fast_ex_blk" => fn -> [@large] |> FnXML.Legacy.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 1,
       time: 3,

@@ -8,24 +8,24 @@ A functional XML library for Elixir with streaming support and three standard AP
  ┌─────────────────────────────────────────────────────────────────┐
  │                        High-Level APIs                          │
  ├─────────────────┬─────────────────────┬─────────────────────────┤
- │  FnXML.DOM      │  FnXML.SAX          │  FnXML.StAX             │
+ │  FnXML.API.DOM  │  FnXML.API.SAX      │  FnXML.API.StAX         │
  │  (Tree)         │  (Push Callbacks)   │  (Pull Cursor)          │
  │  O(n) memory    │  O(1) memory        │  O(1) memory            │
  ├─────────────────┴─────────────────────┴─────────────────────────┤
  │                    FnXML.Security                               │
  │     C14N (Canonicalization) │ Signatures │ Encryption           │
  ├─────────────────────────────────────────────────────────────────┤
- │                     FnXML.Stream                                │
+ │                     FnXML.Transform.Stream                                │
  │            Event stream transformations & formatting            │
  ├─────────────────────────────────────────────────────────────────┤
- │  FnXML.Namespaces          │  FnXML.Stream.SimpleForm           │
+ │  FnXML.Namespaces          │  FnXML.Transform.Stream.SimpleForm           │
  │  Namespace resolution      │  Saxy compatibility                │
  ├─────────────────────────────────────────────────────────────────┤
  │                      FnXML.Parser                               │
  │      Auto-selects: Zig NIF (>60KB) or ExBlkParser (<60KB)       │
  ├─────────────────────────────────────────────────────────────────┤
- │  FnXML.ExBlkParser         │  FnXML.FastExBlkParser             │
- │  Pure Elixir, streaming    │  Optimized variant                 │
+ │  FnXML.Legacy.ExBlkParser  │  FnXML.Legacy.FastExBlkParser      │
+ │  Pure Elixir, streaming    │  Optimized variant (legacy)        │
  └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -35,21 +35,21 @@ The parser uses CPS (continuation-passing style) recursive descent for efficient
 
 ```elixir
 # Parse XML to DOM tree
-doc = FnXML.DOM.parse("<root><child id=\"1\">Hello</child></root>")
+doc = FnXML.API.DOM.parse("<root><child id=\"1\">Hello</child></root>")
 doc.root.tag  # => "root"
 
 # SAX callback-based parsing
 defmodule CountHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
   def start_element(_uri, _local, _qname, _attrs, count), do: {:ok, count + 1}
 end
-{:ok, 2} = FnXML.SAX.parse("<root><child/></root>", CountHandler, 0)
+{:ok, 2} = FnXML.API.SAX.parse("<root><child/></root>", CountHandler, 0)
 
 # StAX pull-based parsing
-reader = FnXML.StAX.Reader.new("<root attr=\"val\"/>")
-reader = FnXML.StAX.Reader.next(reader)
-FnXML.StAX.Reader.local_name(reader)  # => "root"
-FnXML.StAX.Reader.attribute_value(reader, nil, "attr")  # => "val"
+reader = FnXML.API.StAX.Reader.new("<root attr=\"val\"/>")
+reader = FnXML.API.StAX.Reader.next(reader)
+FnXML.API.StAX.Reader.local_name(reader)  # => "root"
+FnXML.API.StAX.Reader.attribute_value(reader, nil, "attr")  # => "val"
 ```
 
 ## Installation
@@ -68,19 +68,19 @@ Build an in-memory tree representation. Best for small-to-medium documents where
 
 ```elixir
 # Parse
-doc = FnXML.DOM.parse("<root><child id=\"1\">text</child></root>")
+doc = FnXML.API.DOM.parse("<root><child id=\"1\">text</child></root>")
 
 # Navigate
 doc.root.tag                                    # => "root"
 doc.root.children                               # => [%Element{...}]
-FnXML.DOM.Element.get_attribute(elem, "id")     # => "1"
+FnXML.API.DOM.Element.get_attribute(elem, "id")     # => "1"
 
 # Serialize
-FnXML.DOM.to_string(doc)                        # => "<root>..."
-FnXML.DOM.to_string(doc, pretty: true)          # => formatted XML
+FnXML.API.DOM.to_string(doc)                        # => "<root>..."
+FnXML.API.DOM.to_string(doc, pretty: true)          # => formatted XML
 
 # Build programmatically
-alias FnXML.DOM.Element
+alias FnXML.API.DOM.Element
 elem = Element.new("div", [{"class", "container"}], ["Hello"])
 ```
 
@@ -90,7 +90,7 @@ Push-based event callbacks. Best for large documents where you only need specifi
 
 ```elixir
 defmodule MyHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
 
   @impl true
   def start_element(_uri, local_name, _qname, _attrs, state) do
@@ -108,7 +108,7 @@ defmodule MyHandler do
   end
 end
 
-{:ok, result} = FnXML.SAX.parse(xml, MyHandler, [])
+{:ok, result} = FnXML.API.SAX.parse(xml, MyHandler, [])
 ```
 
 **Callbacks:** `start_document/1`, `end_document/1`, `start_element/5`, `end_element/4`, `characters/2`
@@ -120,33 +120,33 @@ end
 Pull-based cursor navigation. Best for large documents with complex processing logic.
 
 ```elixir
-reader = FnXML.StAX.Reader.new(xml)
+reader = FnXML.API.StAX.Reader.new(xml)
 
 # Pull events one at a time (lazy - O(1) memory)
-reader = FnXML.StAX.Reader.next(reader)
+reader = FnXML.API.StAX.Reader.next(reader)
 
 # Query current event
-FnXML.StAX.Reader.event_type(reader)      # => :start_element
-FnXML.StAX.Reader.local_name(reader)      # => "root"
-FnXML.StAX.Reader.attribute_count(reader) # => 2
-FnXML.StAX.Reader.attribute_value(reader, nil, "id")  # => "123"
+FnXML.API.StAX.Reader.event_type(reader)      # => :start_element
+FnXML.API.StAX.Reader.local_name(reader)      # => "root"
+FnXML.API.StAX.Reader.attribute_count(reader) # => 2
+FnXML.API.StAX.Reader.attribute_value(reader, nil, "id")  # => "123"
 
 # Convenience methods
-FnXML.StAX.Reader.start_element?(reader)  # => true
-FnXML.StAX.Reader.has_next?(reader)       # => true
-{text, reader} = FnXML.StAX.Reader.element_text(reader)  # read all text in element
+FnXML.API.StAX.Reader.start_element?(reader)  # => true
+FnXML.API.StAX.Reader.has_next?(reader)       # => true
+{text, reader} = FnXML.API.StAX.Reader.element_text(reader)  # read all text in element
 ```
 
 **Writer for building XML:**
 
 ```elixir
-xml = FnXML.StAX.Writer.new()
-|> FnXML.StAX.Writer.start_document()
-|> FnXML.StAX.Writer.start_element("root")
-|> FnXML.StAX.Writer.attribute("id", "1")
-|> FnXML.StAX.Writer.characters("Hello")
-|> FnXML.StAX.Writer.end_element()
-|> FnXML.StAX.Writer.to_string()
+xml = FnXML.API.StAX.Writer.new()
+|> FnXML.API.StAX.Writer.start_document()
+|> FnXML.API.StAX.Writer.start_element("root")
+|> FnXML.API.StAX.Writer.attribute("id", "1")
+|> FnXML.API.StAX.Writer.characters("Hello")
+|> FnXML.API.StAX.Writer.end_element()
+|> FnXML.API.StAX.Writer.to_string()
 # => "<?xml version=\"1.0\"?><root id=\"1\">Hello</root>"
 ```
 
@@ -168,9 +168,9 @@ File.stream!("large.xml", [], 65536)
 FnXML.Parser.stream(xml, parser: :nif)     # Force Zig NIF
 FnXML.Parser.stream(xml, parser: :elixir)  # Force pure Elixir
 
-# Direct access to block parsers
-events = FnXML.ExBlkParser.parse("<root/>")
-events = FnXML.FastExBlkParser.parse("<root/>")
+# Direct access to legacy block parsers
+events = FnXML.Legacy.ExBlkParser.parse("<root/>")
+events = FnXML.Legacy.FastExBlkParser.parse("<root/>")
 
 # With namespace resolution
 FnXML.Parser.parse("<root xmlns=\"http://example.org\"><child/></root>")
@@ -180,7 +180,7 @@ FnXML.Parser.parse("<root xmlns=\"http://example.org\"><child/></root>")
 
 # Convert stream to XML
 events
-|> FnXML.Stream.to_xml()
+|> FnXML.Transform.Stream.to_xml()
 |> Enum.join()
 ```
 
@@ -204,14 +204,14 @@ For codebases using Saxy's SimpleForm format:
 
 ```elixir
 # Decode to SimpleForm tuple
-{"root", attrs, children} = FnXML.Stream.SimpleForm.decode("<root><child/></root>")
+{"root", attrs, children} = FnXML.Transform.Stream.SimpleForm.decode("<root><child/></root>")
 
 # Encode back to XML
-FnXML.Stream.SimpleForm.encode({"root", [], ["text"]})
+FnXML.Transform.Stream.SimpleForm.encode({"root", [], ["text"]})
 
 # Convert between SimpleForm and DOM
-elem = FnXML.Stream.SimpleForm.to_dom({"root", [{"id", "1"}], ["text"]})
-tuple = FnXML.Stream.SimpleForm.from_dom(elem)
+elem = FnXML.Transform.Stream.SimpleForm.to_dom({"root", [{"id", "1"}], ["text"]})
+tuple = FnXML.Transform.Stream.SimpleForm.from_dom(elem)
 ```
 
 ## Choosing an API

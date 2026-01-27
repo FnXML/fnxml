@@ -90,14 +90,14 @@ FnXML provides a complete XML processing stack for Elixir:
 ├─────────────────────────────────────────────────────────────────┤
 │                        High-Level APIs                           │
 ├─────────────────┬─────────────────────┬─────────────────────────┤
-│  FnXML.DOM      │  FnXML.SAX          │  FnXML.StAX             │
+│  FnXML.API.DOM  │  FnXML.API.SAX      │  FnXML.API.StAX         │
 │  Tree-based     │  Push callbacks     │  Pull cursor            │
 │  Random access  │  Memory efficient   │  Application control    │
 ├─────────────────┴─────────────────────┴─────────────────────────┤
 │                       FnXML.Security                             │
 │     C14N (Canonicalization) │ Signatures │ Encryption           │
 ├─────────────────────────────────────────────────────────────────┤
-│                        FnXML.Stream                              │
+│                        FnXML.Transform.Stream                              │
 │            Event stream transformations & formatting             │
 ├──────────────────────────────┬──────────────────────────────────┤
 │  FnXML.Namespaces            │  FnXML.DTD                       │
@@ -225,7 +225,7 @@ DOM is essential when you need to:
 
 ```elixir
 # Parse XML to DOM tree
-doc = FnXML.DOM.parse("""
+doc = FnXML.API.DOM.parse("""
 <library>
   <book id="1">
     <title>Elixir in Action</title>
@@ -246,17 +246,17 @@ first_book = hd(doc.root.children)
 first_book.tag  # => "book"
 
 # Get attributes
-FnXML.DOM.Element.get_attribute(first_book, "id")  # => "1"
+FnXML.API.DOM.Element.get_attribute(first_book, "id")  # => "1"
 
 # Get text content
 title = Enum.find(first_book.children, &(&1.tag == "title"))
-FnXML.DOM.Element.text_content(title)  # => "Elixir in Action"
+FnXML.API.DOM.Element.text_content(title)  # => "Elixir in Action"
 ```
 
 **Building Documents**
 
 ```elixir
-alias FnXML.DOM.Element
+alias FnXML.API.DOM.Element
 
 # Create elements programmatically
 book = Element.new("book", [{"id", "3"}], [
@@ -265,11 +265,11 @@ book = Element.new("book", [{"id", "3"}], [
 ])
 
 # Serialize to XML string
-FnXML.DOM.to_string(book)
+FnXML.API.DOM.to_string(book)
 # => "<book id=\"3\"><title>Real-Time Phoenix</title><author>Stephen Bussey</author></book>"
 
 # Pretty print
-FnXML.DOM.to_string(book, pretty: true)
+FnXML.API.DOM.to_string(book, pretty: true)
 ```
 
 **When to Use DOM**
@@ -317,7 +317,7 @@ SAX is crucial for:
 
 ```elixir
 defmodule BookHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
 
   # Called when an element opens
   @impl true
@@ -370,7 +370,7 @@ xml = """
 </library>
 """
 
-{:ok, books} = FnXML.SAX.parse(xml, BookHandler, %{})
+{:ok, books} = FnXML.API.SAX.parse(xml, BookHandler, %{})
 # => [%{id: "1", title: "Book One"}, %{id: "2", title: "Book Two"}]
 ```
 
@@ -378,7 +378,7 @@ xml = """
 
 ```elixir
 defmodule FindFirstHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
 
   @impl true
   def start_element(_uri, "target", _qname, attrs, _state) do
@@ -390,7 +390,7 @@ defmodule FindFirstHandler do
 end
 
 # Stops as soon as <target> is found
-{:ok, value} = FnXML.SAX.parse(large_xml, FindFirstHandler, nil)
+{:ok, value} = FnXML.API.SAX.parse(large_xml, FindFirstHandler, nil)
 ```
 
 ---
@@ -428,7 +428,7 @@ StAX excels when you need:
 **Reader: Parsing XML**
 
 ```elixir
-alias FnXML.StAX.Reader
+alias FnXML.API.StAX.Reader
 
 # Create a reader
 reader = Reader.new("""
@@ -476,7 +476,7 @@ end
 **Writer: Building XML**
 
 ```elixir
-alias FnXML.StAX.Writer
+alias FnXML.API.StAX.Writer
 
 xml = Writer.new()
 |> Writer.start_document()
@@ -563,7 +563,7 @@ events = FnXML.Parser.parse(xml)
 
 ```elixir
 defmodule NsHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
 
   @impl true
   def start_element(uri, local_name, _qname, _attrs, state) do
@@ -574,18 +574,18 @@ defmodule NsHandler do
   end
 end
 
-FnXML.SAX.parse(xml, NsHandler, nil, namespaces: true)
+FnXML.API.SAX.parse(xml, NsHandler, nil, namespaces: true)
 ```
 
 **StAX with Namespaces**
 
 ```elixir
-reader = FnXML.StAX.Reader.new(xml, namespaces: true)
-reader = FnXML.StAX.Reader.next(reader)
+reader = FnXML.API.StAX.Reader.new(xml, namespaces: true)
+reader = FnXML.API.StAX.Reader.next(reader)
 
-FnXML.StAX.Reader.namespace_uri(reader)  # => "http://default.ns"
-FnXML.StAX.Reader.local_name(reader)     # => "root"
-FnXML.StAX.Reader.prefix(reader)         # => nil (default namespace)
+FnXML.API.StAX.Reader.namespace_uri(reader)  # => "http://default.ns"
+FnXML.API.StAX.Reader.local_name(reader)     # => "root"
+FnXML.API.StAX.Reader.prefix(reader)         # => nil (default namespace)
 ```
 
 ---

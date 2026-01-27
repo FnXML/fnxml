@@ -1,8 +1,8 @@
-defmodule FnXML.Stream.SimpleFormTest do
+defmodule FnXML.Transform.Stream.SimpleFormTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Stream.SimpleForm
-  alias FnXML.DOM.Element
+  alias FnXML.Transform.Stream.SimpleForm
+  alias FnXML.API.DOM.Element
 
   describe "decode/2" do
     test "decodes simple element" do
@@ -207,7 +207,7 @@ defmodule FnXML.Stream.SimpleFormTest do
     end
 
     test "converts Document to SimpleForm" do
-      doc = FnXML.DOM.parse("<root/>")
+      doc = FnXML.API.DOM.parse("<root/>")
       result = SimpleForm.from_dom(doc)
       assert {"root", [], []} = result
     end

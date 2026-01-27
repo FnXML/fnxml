@@ -87,14 +87,18 @@ defmodule FnXML.NamespacesTest do
   describe "expand_element/2" do
     test "expands unprefixed element with default namespace" do
       ctx = Namespaces.new_context()
-      {:ok, ctx, _} = FnXML.Namespaces.Context.push(ctx, [{"xmlns", "http://example.org"}])
+
+      {:ok, ctx, _} =
+        FnXML.Namespaces.Context.push(ctx, [{"xmlns", "http://example.org"}])
 
       assert {:ok, {"http://example.org", "elem"}} = Namespaces.expand_element(ctx, "elem")
     end
 
     test "expands prefixed element" do
       ctx = Namespaces.new_context()
-      {:ok, ctx, _} = FnXML.Namespaces.Context.push(ctx, [{"xmlns:ex", "http://example.org"}])
+
+      {:ok, ctx, _} =
+        FnXML.Namespaces.Context.push(ctx, [{"xmlns:ex", "http://example.org"}])
 
       assert {:ok, {"http://example.org", "elem"}} = Namespaces.expand_element(ctx, "ex:elem")
     end
@@ -108,7 +112,9 @@ defmodule FnXML.NamespacesTest do
   describe "expand_attribute/2" do
     test "unprefixed attributes have no namespace" do
       ctx = Namespaces.new_context()
-      {:ok, ctx, _} = FnXML.Namespaces.Context.push(ctx, [{"xmlns", "http://example.org"}])
+
+      {:ok, ctx, _} =
+        FnXML.Namespaces.Context.push(ctx, [{"xmlns", "http://example.org"}])
 
       # Unprefixed attributes do NOT inherit default namespace
       assert {:ok, {nil, "attr"}} = Namespaces.expand_attribute(ctx, "attr")
@@ -116,7 +122,9 @@ defmodule FnXML.NamespacesTest do
 
     test "expands prefixed attribute" do
       ctx = Namespaces.new_context()
-      {:ok, ctx, _} = FnXML.Namespaces.Context.push(ctx, [{"xmlns:ex", "http://example.org"}])
+
+      {:ok, ctx, _} =
+        FnXML.Namespaces.Context.push(ctx, [{"xmlns:ex", "http://example.org"}])
 
       assert {:ok, {"http://example.org", "attr"}} = Namespaces.expand_attribute(ctx, "ex:attr")
     end

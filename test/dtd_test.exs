@@ -497,7 +497,7 @@ defmodule FnXML.DTDTest do
       events =
         FnXML.parse_stream(xml)
         |> DTD.resolve()
-        |> FnXML.Entities.resolve()
+        |> FnXML.Transform.Entities.resolve()
         |> Enum.to_list()
 
       text_event =

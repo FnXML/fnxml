@@ -79,7 +79,7 @@ end
 
 defmodule FnXML.Parser do
   def parse(stream, emit) do
-     {xml, next_fn} = FnXML.StreamStepper.next(stream)
+     {xml, next_fn} = FnXML.Transform.StreamStepper.next(stream)
 
      emit.({:start_document, nil})
      result = do_parse_all(xml, xml, 0, 1, 0, emit, next_fn)

@@ -72,14 +72,13 @@ defmodule FnXML do
 
       # Fully XML Spec Compliant Parsing
       stream
-      |> FnXML.Utf16.to_utf8()                  # Ensure UTF-16 will be work
-      |> FnXML.Validate.characters()            # Ensure only valid characters are present
-      |> FnXML.Normalize.line_endings_stream()  # convert /r, /r/n -> /n
-      |> FnXML.parse_stream()                   # Generate a stream of XML events
-      |> FnXML.Validate.well_formed()           # validate that open/close tags are properly matched
-      |> FnXML.Validate.attributes()            # validate that attributes are unique
-      |> FnXML.Validate.comments()              # Ensure comments don't have '--' in them
-      |> FnXML.Validate.namespaces()            # Ensure namespace prefixes are properly declared
+      |> FnXML.Transform.Utf16.to_utf8()                          # Ensure UTF-16 will work
+      |> FnXML.Transform.Normalize.line_endings_stream()  # convert /r, /r/n -> /n
+      |> FnXML.parse_stream()                           # Generate a stream of XML events (validates characters)
+      |> FnXML.Validate.well_formed()                   # validate that open/close tags are properly matched
+      |> FnXML.Validate.attributes()                    # validate that attributes are unique
+      |> FnXML.Validate.comments()                      # Ensure comments don't have '--' in them
+      |> FnXML.Validate.namespaces()                    # Ensure namespace prefixes are properly declared
   """
 
   require Logger
@@ -211,7 +210,6 @@ defmodule FnXML do
     stream =
       xml
       |> FnXML.Parser.stream()
-      |> FnXML.Validate.characters(on_error: on_error)
       |> FnXML.Validate.character_references(on_error: on_error)
       |> FnXML.Validate.xml_declaration(on_error: on_error)
       |> FnXML.Validate.processing_instructions(on_error: on_error)
@@ -220,17 +218,19 @@ defmodule FnXML do
       |> FnXML.Validate.attributes(on_error: on_error)
       |> FnXML.Validate.comments(on_error: on_error)
 
-    stream = if validate_ns? do
-      stream |> FnXML.Validate.namespaces(on_error: on_error)
-    else
-      stream
-    end
+    stream =
+      if validate_ns? do
+        stream |> FnXML.Validate.namespaces(on_error: on_error)
+      else
+        stream
+      end
 
-    stream = if halt? do
-      stream |> halt_on_error()
-    else
-      stream
-    end
+    stream =
+      if halt? do
+        stream |> halt_on_error()
+      else
+        stream
+      end
 
     events = Enum.to_list(stream)
 

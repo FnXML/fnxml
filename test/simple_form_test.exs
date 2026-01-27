@@ -1,7 +1,7 @@
 defmodule FnXML.SimpleFormTest do
   use ExUnit.Case
 
-  alias FnXML.Stream.SimpleForm
+  alias FnXML.Transform.Stream.SimpleForm
 
   # doctest SimpleForm  # Disabled due to quote escaping issues in expected outputs
 
@@ -176,11 +176,11 @@ defmodule FnXML.SimpleFormTest do
              ]
     end
 
-    test "stream can be piped to FnXML.Stream.to_xml" do
+    test "stream can be piped to FnXML.Transform.Stream.to_xml" do
       xml =
         {"root", [{"attr", "val"}], [{"child", [], ["text"]}]}
         |> SimpleForm.to_stream()
-        |> FnXML.Stream.to_xml()
+        |> FnXML.Transform.Stream.to_xml()
         |> Enum.join()
 
       assert xml == "<root attr=\"val\"><child>text</child></root>"

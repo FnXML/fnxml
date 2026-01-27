@@ -1,7 +1,7 @@
 defmodule FnXML.DOM.SerializerTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.DOM.{Serializer, Document, Element}
+  alias FnXML.API.DOM.{Serializer, Document, Element}
 
   describe "to_string/2" do
     test "serializes special child types (comment, CDATA, PI)" do

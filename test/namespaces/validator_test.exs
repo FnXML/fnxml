@@ -1,7 +1,7 @@
-defmodule FnXML.Namespaces.ValidatorTest do
+defmodule FnXML.Validate.NamespacesTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Namespaces.Validator
+  alias FnXML.Validate.Namespaces, as: Validator
 
   describe "validate/2" do
     test "valid document passes through unchanged" do

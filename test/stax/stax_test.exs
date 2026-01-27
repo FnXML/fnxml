@@ -1,8 +1,8 @@
 defmodule FnXML.StAXTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.StAX
-  alias FnXML.StAX.{Reader, Writer}
+  alias FnXML.API.StAX
+  alias FnXML.API.StAX.{Reader, Writer}
 
   describe "Reader.new/2" do
     test "creates reader from XML string" do

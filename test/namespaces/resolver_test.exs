@@ -8,7 +8,11 @@ defmodule FnXML.Namespaces.ResolverTest do
       xml = ~s(<root xmlns="http://default" xmlns:ns="http://ns"><ns:child/></root>)
       events = FnXML.Parser.parse(xml) |> Resolver.resolve() |> Enum.to_list()
 
-      assert Enum.any?(events, &match?({:start_element, {"http://default", "root"}, _, _, _, _}, &1))
+      assert Enum.any?(
+               events,
+               &match?({:start_element, {"http://default", "root"}, _, _, _, _}, &1)
+             )
+
       assert Enum.any?(events, &match?({:start_element, {"http://ns", "child"}, _, _, _, _}, &1))
     end
 
@@ -34,7 +38,8 @@ defmodule FnXML.Namespaces.ResolverTest do
       xml = ~s(<root xmlns:ns="http://ns" ns:attr="1" id="2"/>)
       events = FnXML.Parser.parse(xml) |> Resolver.resolve() |> Enum.to_list()
 
-      {:start_element, _, attrs, _, _, _} = Enum.find(events, &match?({:start_element, _, _, _, _, _}, &1))
+      {:start_element, _, attrs, _, _, _} =
+        Enum.find(events, &match?({:start_element, _, _, _, _, _}, &1))
 
       assert Enum.any?(attrs, &match?({"http://ns", "attr", "1"}, &1))
       assert Enum.any?(attrs, &match?({nil, "id", "2"}, &1))
@@ -48,7 +53,9 @@ defmodule FnXML.Namespaces.ResolverTest do
       events =
         FnXML.Parser.parse(xml) |> Resolver.resolve(strip_declarations: true) |> Enum.to_list()
 
-      {:start_element, _, attrs, _, _, _} = Enum.find(events, &match?({:start_element, _, _, _, _, _}, &1))
+      {:start_element, _, attrs, _, _, _} =
+        Enum.find(events, &match?({:start_element, _, _, _, _, _}, &1))
+
       assert length(attrs) == 1
       assert Enum.any?(attrs, &match?({nil, "id", "1"}, &1))
     end
@@ -57,9 +64,14 @@ defmodule FnXML.Namespaces.ResolverTest do
       xml = ~s(<ns:root xmlns:ns="http://ns" ns:attr="1"/>)
       events = FnXML.Parser.parse(xml) |> Resolver.resolve(include_prefix: true) |> Enum.to_list()
 
-      assert Enum.any?(events, &match?({:start_element, {"http://ns", "root", "ns"}, _, _, _, _}, &1))
+      assert Enum.any?(
+               events,
+               &match?({:start_element, {"http://ns", "root", "ns"}, _, _, _, _}, &1)
+             )
 
-      {:start_element, _, attrs, _, _, _} = Enum.find(events, &match?({:start_element, _, _, _, _, _}, &1))
+      {:start_element, _, attrs, _, _, _} =
+        Enum.find(events, &match?({:start_element, _, _, _, _, _}, &1))
+
       assert Enum.any?(attrs, &match?({"http://ns", "attr", "ns", "1"}, &1))
     end
   end

@@ -1,8 +1,8 @@
 defmodule FnXML.DOMTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.DOM
-  alias FnXML.DOM.{Document, Element}
+  alias FnXML.API.DOM
+  alias FnXML.API.DOM.{Document, Element}
 
   # ==========================================================================
   # Node Type Constants
@@ -241,7 +241,7 @@ defmodule FnXML.DOMTest do
 
   describe "Builder.parse!" do
     test "returns document for valid XML" do
-      doc = FnXML.DOM.Builder.parse!("<root/>")
+      doc = FnXML.API.DOM.Builder.parse!("<root/>")
       assert doc.root.tag == "root"
     end
   end
@@ -306,7 +306,7 @@ defmodule FnXML.DOMTest do
     test "excludes prolog when include_prolog is false" do
       doc =
         FnXML.Parser.parse("<?xml version=\"1.0\"?><root/>")
-        |> FnXML.DOM.Builder.from_stream(include_prolog: false)
+        |> FnXML.API.DOM.Builder.from_stream(include_prolog: false)
 
       assert doc.prolog == nil
     end
@@ -314,7 +314,7 @@ defmodule FnXML.DOMTest do
 
   describe "Builder with multiple root children (malformed XML)" do
     test "handles empty stream" do
-      doc = [] |> FnXML.DOM.Builder.from_stream()
+      doc = [] |> FnXML.API.DOM.Builder.from_stream()
       assert doc.root == nil
     end
   end

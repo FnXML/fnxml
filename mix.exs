@@ -1,7 +1,7 @@
 defmodule FnXML.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
 
   def cli do
     [
@@ -50,7 +50,7 @@ defmodule FnXML.MixProject do
       main: "FnXML",
       extras: ["README.md", "quick_start_guide.md", "usage-rules.md"],
       groups_for_modules: [
-        Core: [FnXML, FnXML.Parser, FnXML.Stream],
+        Core: [FnXML, FnXML.Parser, FnXML.Transform.Stream],
         "DOM API": [
           FnXML.DOM,
           FnXML.DOM.Document,
@@ -68,14 +68,14 @@ defmodule FnXML.MixProject do
           FnXML.Security.Namespaces
         ],
         Namespaces: [
-          FnXML.Namespaces,
-          FnXML.Namespaces.Context,
-          FnXML.Namespaces.QName,
-          FnXML.Namespaces.Resolver,
-          FnXML.Namespaces.Validator
+          FnXML.Transform.Namespaces,
+          FnXML.Transform.Namespaces.Context,
+          FnXML.Transform.Namespaces.QName,
+          FnXML.Transform.Namespaces.Resolver,
+          FnXML.Validate.Namespaces
         ],
         DTD: [FnXML.DTD, FnXML.DTD.Model, FnXML.DTD.Parser],
-        Utilities: [FnXML.Element, FnXML.Stream.SimpleForm]
+        Utilities: [FnXML.Element, FnXML.Transform.Stream.SimpleForm]
       ]
     ]
   end

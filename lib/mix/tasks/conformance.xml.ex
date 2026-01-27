@@ -355,7 +355,7 @@ defmodule Mix.Tasks.Conformance.Xml do
         # For XML 1.1, also normalize NEL and LS to LF
         utf8_content =
           content
-          |> FnXML.Utf16.to_utf8()
+          |> FnXML.Transform.Utf16.to_utf8()
           |> convert_iso8859_if_declared()
 
         # Detect XML version for line-end normalization
@@ -363,7 +363,7 @@ defmodule Mix.Tasks.Conformance.Xml do
 
         normalized_content =
           utf8_content
-          |> FnXML.Normalize.line_endings()
+          |> FnXML.Transform.Normalize.line_endings()
           |> maybe_normalize_xml11_line_ends(xml_version)
 
         # Check for encoding mismatch (e.g., UTF-16 declared but no BOM)
@@ -438,7 +438,7 @@ defmodule Mix.Tasks.Conformance.Xml do
         external_resolver = build_external_resolver(test.uri)
 
         # Use edition-specific parser for proper character validation
-        parser = FnXML.MacroBlkParser.parser(edition)
+        parser = FnXML.Parser.parser(edition)
 
         events =
           normalized_content
@@ -727,9 +727,9 @@ defmodule Mix.Tasks.Conformance.Xml do
         internal_pe_defs = extract_internal_pe_defs(internal_subset_content)
 
         # Fetch and parse external DTD
-        case FnXML.ExternalResolver.fetch(system_id, test_uri) do
+        case FnXML.DTD.ExternalResolver.fetch(system_id, test_uri) do
           {:ok, content} ->
-            case FnXML.ExternalResolver.parse_external_dtd(content,
+            case FnXML.DTD.ExternalResolver.parse_external_dtd(content,
                    edition: edition,
                    internal_pe_defs: internal_pe_defs
                  ) do
@@ -757,7 +757,7 @@ defmodule Mix.Tasks.Conformance.Xml do
   defp extract_internal_pe_defs(""), do: %{}
 
   defp extract_internal_pe_defs(content) do
-    FnXML.ParameterEntities.extract_definitions(content)
+    FnXML.DTD.ParameterEntities.extract_definitions(content)
   end
 
   # Extract SYSTEM identifier and internal subset from DOCTYPE event
@@ -1327,9 +1327,9 @@ defmodule Mix.Tasks.Conformance.Xml do
         end
 
       # Fetch and parse external DTD
-      case FnXML.ExternalResolver.fetch(system_id, test_uri) do
+      case FnXML.DTD.ExternalResolver.fetch(system_id, test_uri) do
         {:ok, dtd_content} ->
-          case FnXML.ExternalResolver.parse_external_dtd(dtd_content,
+          case FnXML.DTD.ExternalResolver.parse_external_dtd(dtd_content,
                  edition: edition,
                  internal_pe_defs: internal_pe_defs
                ) do
@@ -1360,7 +1360,7 @@ defmodule Mix.Tasks.Conformance.Xml do
 
         # Validate each external entity's TextDecl
         Enum.find_value(external_entities, fn {_name, system_id} ->
-          case FnXML.ExternalResolver.fetch(system_id, test_uri) do
+          case FnXML.DTD.ExternalResolver.fetch(system_id, test_uri) do
             {:ok, entity_content} ->
               case validate_text_decl(entity_content) do
                 :ok -> nil
@@ -1660,7 +1660,7 @@ defmodule Mix.Tasks.Conformance.Xml do
   # but doesn't have a BOM and is actually ASCII/UTF-8.
   defp check_encoding_mismatch(raw_content, normalized_content) do
     # Detect actual encoding from BOM
-    actual_encoding = FnXML.Utf16.detect_encoding(raw_content) |> elem(0)
+    actual_encoding = FnXML.Transform.Utf16.detect_encoding(raw_content) |> elem(0)
 
     # Extract declared encoding from XML declaration (if present)
     declared_encoding = extract_declared_encoding(normalized_content)
