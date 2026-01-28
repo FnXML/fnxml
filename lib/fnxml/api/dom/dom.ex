@@ -25,7 +25,7 @@ defmodule FnXML.API.DOM do
 
       # With validation/transformation pipeline
       doc = File.stream!("data.xml")
-            |> FnXML.Parser.stream()
+            |> FnXML.Parser.parse()
             |> FnXML.Validate.well_formed()
             |> FnXML.Namespaces.resolve()
             |> FnXML.API.DOM.build()
@@ -33,8 +33,11 @@ defmodule FnXML.API.DOM do
       # Quick parse (convenience, skips pipeline)
       doc = FnXML.API.DOM.parse("<root><child id='1'>text</child></root>")
 
-      # Serialize back to XML
-      FnXML.API.DOM.to_string(doc)  # => "<root><child id=\"1\">text</child></root>"
+      # Serialize back to XML (convert to events, then to string)
+      doc
+      |> FnXML.API.DOM.to_event()
+      |> FnXML.Stream.to_string()
+      # => "<root><child id=\"1\">text</child></root>"
 
   ## Node Types
 
@@ -52,11 +55,10 @@ defmodule FnXML.API.DOM do
   - `FnXML.API.DOM.Document` - Document struct and operations
   - `FnXML.API.DOM.Element` - Element struct and operations
   - `FnXML.API.DOM.Builder` - Build DOM from events
-  - `FnXML.API.DOM.Serializer` - Convert DOM to XML
 
   ## Comparison with SimpleForm
 
-  `FnXML.API.DOM` uses structs while `FnXML.Transform.Stream.SimpleForm` uses tuples:
+  `FnXML.API.DOM` uses structs while `FnXML.Stream.SimpleForm` uses tuples:
 
       # DOM
       %FnXML.API.DOM.Element{tag: "div", attributes: [{"id", "1"}], children: ["text"]}
@@ -68,7 +70,7 @@ defmodule FnXML.API.DOM do
   while SimpleForm is simpler and compatible with the Saxy library.
   """
 
-  alias FnXML.API.DOM.{Builder, Document, Element, Serializer}
+  alias FnXML.API.DOM.{Builder, Document, Element}
 
   # Node type constants (W3C DOM compatible)
   @element_node 1
@@ -130,48 +132,84 @@ defmodule FnXML.API.DOM do
   end
 
   @doc """
-  Serialize DOM to XML string.
-
-  ## Options
-
-  - `:pretty` - Format with indentation (default: false)
-  - `:indent` - Indentation string or spaces count (default: 2)
-  - `:xml_declaration` - Include XML declaration (default: false)
-
-  ## Examples
-
-      iex> doc = FnXML.API.DOM.parse("<root><child/></root>")
-      iex> FnXML.API.DOM.to_string(doc)
-      "<root><child/></root>"
-
-      iex> doc = FnXML.API.DOM.parse("<root><child/></root>")
-      iex> FnXML.API.DOM.to_string(doc, pretty: true)
-      "<root>\\n  <child/>\\n</root>"
-  """
-  @spec to_string(Document.t() | Element.t(), keyword()) :: String.t()
-  defdelegate to_string(node, opts \\ []), to: Serializer
-
-  @doc """
-  Convert DOM to iodata (more efficient for large documents).
-  """
-  @spec to_iodata(Document.t() | Element.t(), keyword()) :: iodata()
-  defdelegate to_iodata(node, opts \\ []), to: Serializer
-
-  @doc """
   Convert DOM to an FnXML event stream.
 
-  Useful for piping DOM through stream transformations.
+  Generates XML events from a DOM tree. Use with `FnXML.Stream` functions
+  for serialization to string or iodata.
 
   ## Examples
 
+      # Convert to event stream
       iex> FnXML.API.DOM.parse("<root>text</root>")
-      ...> |> FnXML.API.DOM.to_stream()
+      ...> |> FnXML.API.DOM.to_event()
       ...> |> Enum.to_list()
       ...> |> Enum.map(&elem(&1, 0))
       [:start_element, :characters, :end_element]
+
+      # Serialize to string
+      doc
+      |> FnXML.API.DOM.to_event()
+      |> FnXML.Stream.to_string()
+
+      # Serialize to iodata (more efficient)
+      doc
+      |> FnXML.API.DOM.to_event()
+      |> FnXML.Stream.to_iodata()
   """
-  @spec to_stream(Document.t() | Element.t()) :: Enumerable.t()
-  defdelegate to_stream(node), to: Serializer
+  @spec to_event(Document.t() | Element.t()) :: Enumerable.t()
+  def to_event(node) do
+    Stream.resource(
+      fn -> init_event_stream(node) end,
+      &emit_next_event/1,
+      fn _ -> :ok end
+    )
+  end
+
+  # Initialize stream state based on node type
+  defp init_event_stream(%Document{root: nil}), do: []
+  defp init_event_stream(%Document{root: root}), do: [root]
+  defp init_event_stream(%Element{} = elem), do: [elem]
+
+  # Stream emission - nothing left
+  defp emit_next_event([]), do: {:halt, []}
+
+  # Emit element - open tag, queue content and close
+  defp emit_next_event([%Element{} = elem | rest]) do
+    qname = Element.qualified_name(elem)
+    open = {:start_element, qname, elem.attributes, nil}
+    new_queue = elem.children ++ [{:close_tag, qname}] ++ rest
+    {[open], new_queue}
+  end
+
+  # Emit close tag marker
+  defp emit_next_event([{:close_tag, tag} | rest]) do
+    {[{:end_element, tag}], rest}
+  end
+
+  # Emit text content
+  defp emit_next_event([text | rest]) when is_binary(text) do
+    {[{:characters, text, nil}], rest}
+  end
+
+  # Emit comment
+  defp emit_next_event([{:comment, content} | rest]) do
+    {[{:comment, content, nil}], rest}
+  end
+
+  # Emit CDATA
+  defp emit_next_event([{:cdata, content} | rest]) do
+    {[{:cdata, content, nil}], rest}
+  end
+
+  # Emit processing instruction
+  defp emit_next_event([{:pi, target, data} | rest]) do
+    {[{:processing_instruction, target, data, nil}], rest}
+  end
+
+  # Skip nil values
+  defp emit_next_event([nil | rest]) do
+    emit_next_event(rest)
+  end
 
   # Convenience aliases for creating nodes
 
