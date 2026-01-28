@@ -11,7 +11,8 @@ defmodule FnXML.Security.Signature.Generator do
   5. Assemble complete Signature element
   """
 
-  alias FnXML.Security.{Algorithms, C14N, Namespaces}
+  alias FnXML.C14N
+  alias FnXML.Security.{Algorithms, Namespaces}
   alias FnXML.Security.Signature.Reference
 
   @default_opts [
