@@ -208,7 +208,7 @@ defmodule FnXML.API.SAX do
 
       # With validation and transforms
       {:ok, state} = File.stream!("data.xml")
-                     |> FnXML.Parser.stream()
+                     |> FnXML.Parser.parse()
                      |> FnXML.Validate.well_formed()
                      |> FnXML.API.SAX.dispatch(MyHandler, %{count: 0})
 

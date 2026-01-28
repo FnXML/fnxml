@@ -21,7 +21,7 @@ defmodule FnXML.API.StAX.Reader do
 
       # With validation pipeline
       reader = File.stream!("data.xml")
-               |> FnXML.Parser.stream()
+               |> FnXML.Parser.parse()
                |> FnXML.Validate.well_formed()
                |> FnXML.API.StAX.Reader.new()
 
