@@ -71,7 +71,8 @@ defmodule FnXML.Security.Signature do
   """
 
   alias FnXML.Namespaces, as: XMLNamespaces
-  alias FnXML.Security.{Algorithms, C14N, Namespaces}
+  alias FnXML.C14N
+  alias FnXML.Security.{Algorithms, Namespaces}
   alias FnXML.Security.Signature.{Generator, Verifier}
 
   # Reference alias currently unused - uncomment when needed

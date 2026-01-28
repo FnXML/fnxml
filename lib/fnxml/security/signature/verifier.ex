@@ -10,7 +10,8 @@ defmodule FnXML.Security.Signature.Verifier do
   """
 
   alias FnXML.Namespaces, as: XMLNamespaces
-  alias FnXML.Security.{Algorithms, C14N, Namespaces}
+  alias FnXML.C14N
+  alias FnXML.Security.{Algorithms, Namespaces}
   alias FnXML.Security.Signature.Reference
 
   @doc """

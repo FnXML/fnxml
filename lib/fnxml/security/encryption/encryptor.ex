@@ -12,7 +12,8 @@ defmodule FnXML.Security.Encryption.Encryptor do
   6. Replace target content with EncryptedData
   """
 
-  alias FnXML.Security.{Algorithms, C14N, Namespaces}
+  alias FnXML.C14N
+  alias FnXML.Security.{Algorithms, Namespaces}
 
   @default_opts [
     algorithm: :aes_256_gcm,
