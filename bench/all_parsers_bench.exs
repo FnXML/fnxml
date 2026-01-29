@@ -57,6 +57,29 @@ defmodule AllParsersBench do
   @medium File.read!("bench/data/medium.xml")
   @large File.read!("bench/data/large.xml")
 
+  defp print_file_info do
+    IO.puts("Test files:")
+    IO.puts("  small.xml:  #{byte_size(@small)} bytes")
+    IO.puts("  medium.xml: #{byte_size(@medium)} bytes")
+    IO.puts("  large.xml:  #{byte_size(@large)} bytes")
+    IO.puts("")
+  end
+
+  defp print_parser_info do
+    IO.puts("Parser types:")
+    IO.puts("  Edition 5: Permissive Unicode character validation")
+    IO.puts("  Edition 4: Strict character validation per XML 1.0 4th edition")
+    IO.puts("  Legacy:    Original ExBlkParser and FastExBlkParser implementations")
+    IO.puts("")
+  end
+
+  defp chunk_string(string, chunk_size) do
+    string
+    |> :binary.bin_to_list()
+    |> Enum.chunk_every(chunk_size)
+    |> Enum.map(&:binary.list_to_bin/1)
+  end
+
   def run do
     IO.puts("\n" <> String.duplicate("=", 70))
     IO.puts("COMPREHENSIVE PARSER BENCHMARKS")
@@ -114,8 +137,8 @@ defmodule AllParsersBench do
         end,
 
         # FnXML legacy parsers
-        "ex_blk_parser" => fn -> FnXML.ExBlkParser.parse(@medium) end,
-        "fast_ex_blk" => fn -> FnXML.FastExBlkParser.parse(@medium) end
+        "ex_blk_parser" => fn -> [@medium] |> FnXML.Legacy.ExBlkParser.stream() |> Stream.run() end,
+        "fast_ex_blk" => fn -> [@medium] |> FnXML.Legacy.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 2,
       time: 5,
@@ -141,18 +164,18 @@ defmodule AllParsersBench do
     Benchee.run(
       %{
         # FnXML MacroBlkParser - Edition 5
-        "compliant_ed5" => fn -> medium_chunks |> Bench.CompliantEd5.stream() |> Stream.run() end,
-        "fast_ed5" => fn -> medium_chunks |> Bench.FastEd5.stream() |> Stream.run() end,
-        "minimal_ed5" => fn -> medium_chunks |> Bench.MinimalEd5.stream() |> Stream.run() end,
+        "compliant_ed5" => fn -> medium_chunks |> MacroBlk.Compliant.Ed5.stream() |> Stream.run() end,
+        "reduced_ed5" => fn -> medium_chunks |> MacroBlk.Reduced.Ed5.stream() |> Stream.run() end,
+        "structural_ed5" => fn -> medium_chunks |> MacroBlk.Structural.Ed5.stream() |> Stream.run() end,
 
         # FnXML MacroBlkParser - Edition 4
-        "compliant_ed4" => fn -> medium_chunks |> Bench.CompliantEd4.stream() |> Stream.run() end,
-        "fast_ed4" => fn -> medium_chunks |> Bench.FastEd4.stream() |> Stream.run() end,
-        "minimal_ed4" => fn -> medium_chunks |> Bench.MinimalEd4.stream() |> Stream.run() end,
+        "compliant_ed4" => fn -> medium_chunks |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
+        "reduced_ed4" => fn -> medium_chunks |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
+        "structural_ed4" => fn -> medium_chunks |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
 
         # FnXML legacy parsers
-        "ex_blk_parser" => fn -> medium_chunks |> FnXML.ExBlkParser.stream() |> Stream.run() end,
-        "fast_ex_blk" => fn -> medium_chunks |> FnXML.FastExBlkParser.stream() |> Stream.run() end
+        "ex_blk_parser" => fn -> medium_chunks |> FnXML.Legacy.ExBlkParser.stream() |> Stream.run() end,
+        "fast_ex_blk" => fn -> medium_chunks |> FnXML.Legacy.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 2,
       time: 5,
@@ -165,18 +188,18 @@ defmodule AllParsersBench do
     Benchee.run(
       %{
         # FnXML MacroBlkParser - Edition 5
-        "compliant_ed5" => fn -> large_chunks |> Bench.CompliantEd5.stream() |> Stream.run() end,
-        "fast_ed5" => fn -> large_chunks |> Bench.FastEd5.stream() |> Stream.run() end,
-        "minimal_ed5" => fn -> large_chunks |> Bench.MinimalEd5.stream() |> Stream.run() end,
+        "compliant_ed5" => fn -> large_chunks |> MacroBlk.Compliant.Ed5.stream() |> Stream.run() end,
+        "reduced_ed5" => fn -> large_chunks |> MacroBlk.Reduced.Ed5.stream() |> Stream.run() end,
+        "structural_ed5" => fn -> large_chunks |> MacroBlk.Structural.Ed5.stream() |> Stream.run() end,
 
         # FnXML MacroBlkParser - Edition 4
-        "compliant_ed4" => fn -> large_chunks |> Bench.CompliantEd4.stream() |> Stream.run() end,
-        "fast_ed4" => fn -> large_chunks |> Bench.FastEd4.stream() |> Stream.run() end,
-        "minimal_ed4" => fn -> large_chunks |> Bench.MinimalEd4.stream() |> Stream.run() end,
+        "compliant_ed4" => fn -> large_chunks |> MacroBlk.Compliant.Ed4.stream() |> Stream.run() end,
+        "reduced_ed4" => fn -> large_chunks |> MacroBlk.Reduced.Ed4.stream() |> Stream.run() end,
+        "structural_ed4" => fn -> large_chunks |> MacroBlk.Structural.Ed4.stream() |> Stream.run() end,
 
         # FnXML legacy parsers
-        "ex_blk_parser" => fn -> large_chunks |> FnXML.ExBlkParser.stream() |> Stream.run() end,
-        "fast_ex_blk" => fn -> large_chunks |> FnXML.FastExBlkParser.stream() |> Stream.run() end
+        "ex_blk_parser" => fn -> large_chunks |> FnXML.Legacy.ExBlkParser.stream() |> Stream.run() end,
+        "fast_ex_blk" => fn -> large_chunks |> FnXML.Legacy.FastExBlkParser.stream() |> Stream.run() end
       },
       warmup: 2,
       time: 5,
