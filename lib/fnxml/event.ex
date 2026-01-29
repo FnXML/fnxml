@@ -125,6 +125,12 @@ defmodule FnXML.Event do
       xml = FnXML.Event.to_iodata(events, pretty: true, indent: "\\t")
       |> Enum.join()
 
+      # Convert to binary blocks for network/file streaming
+      FnXML.Parser.parse(large_xml)
+      |> FnXML.Event.to_iodata()
+      |> FnXML.Event.iodata_to_binary_block(8192)  # 8KB chunks
+      |> Enum.each(&send_over_network/1)
+
       # Stream large file with transformations
       File.open!("output.xml", [:write], fn file ->
         File.stream!("input.xml")

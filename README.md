@@ -33,12 +33,12 @@ The **FnXML.Event** module provides the standard API for working with XML event 
 
 ```elixir
 File.stream!("data.xml")
+|> FnXML.Event.Preprocess.Normalize.line_endings_stream() # Preprocess: normalize line endings
 |> FnXML.Parser.parse()                    # Parse XML to event stream
 |> FnXML.Event.Filter.filter_ws()          # Filter whitespace events
 |> FnXML.Event.Validate.well_formed()      # Add validation (optional)
 |> FnXML.Namespaces.resolve()              # Add namespace resolution (optional)
 |> FnXML.DTD.validate()                    # Add DTD validation (optional)
-|> FnXML.Event.Transform.Normalize.line_endings() # Normalize line endings
 |> Stream.filter(&my_filter/1)             # Your custom filters
 |> Enum.reduce(acc, &my_reducer/2)         # Process events
 ```
@@ -75,6 +75,13 @@ results = events
 │                   (Binary | File Stream)                        │
 └────────────────────────────┬────────────────────────────────────┘
                              │
+                             ▼ Preprocess (Optional)
+                ┌────────────────────────────┐
+                │ FnXML.Event.Preprocess.*   │
+                │ • Utf16.to_utf8()          │
+                │ • Normalize.line_endings() │
+                └────────────┬───────────────┘
+                             │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      FnXML.Parser                               │
@@ -104,8 +111,8 @@ results = events
 ├──────────────────┤ ├──────────────────┤ ├──────────────────┤
 │ • Filter         │ │ • Well-formed    │ │ • Resolve        │
 │ • Transform      │ │ • Attributes     │ │ • QName          │
-│ • Normalize      │ │ • Namespaces     │ │ • Context        │
-│ • SimpleForm     │ │ • Comments       │ │                  │
+│ • SimpleForm     │ │ • Namespaces     │ │ • Context        │
+│                  │ │ • Comments       │ │                  │
 └────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
          └────────────────────┼────────────────────┘
                               │
@@ -123,8 +130,9 @@ results = events
 ```
 
 **Key Concepts:**
+- **Preprocessors** - `FnXML.Event.Preprocess.*` operates on binaries before parsing (UTF-16, line endings)
 - **Event streams are the basic format** - Use Elixir's Stream and Enum modules directly
-- **FnXML.Event is the standard API** - Provides stream transformations and filters
+- **FnXML.Event is the standard API** - Provides stream transformations and filters for events
 - **DOM/SAX/StAX are alternative APIs** - For traditional XML processing patterns
 - **Component-based** - Connect only the components you need
 
@@ -434,8 +442,7 @@ FnXML.Parser.parse("<root xmlns=\"http://example.org\"><child/></root>")
 # => [{:start_element, {"http://example.org", "root"}, [...], ...}, ...]
 
 # Convert stream to XML
-iodata = events |> FnXML.Event.to_iodata()
-xml = IO.iodata_to_binary(iodata)
+xml = events |> FnXML.Event.to_iodata() |> Enum.join()
 ```
 
 **Parser Options:**
@@ -646,8 +653,10 @@ All cryptographic operations use Erlang/OTP built-in `:crypto` and `:public_key`
 ### Component-Based Design
 
 - **Modular pipeline** - Connect only the components you need
+- **Preprocessors** - UTF-16 conversion, line ending normalization (operates on binaries)
+- **Event filters** - Filter whitespace, comments, or custom event types (operates on event streams)
+- **Event transforms** - Entity resolution, SimpleForm conversion (operates on event streams)
 - **Optional validation** - Add well-formed, namespace, attribute, comment validators
-- **Optional transforms** - Add normalization, entity resolution, UTF-16 conversion
 - **Optional DTD support** - Include DTD parsing and validation only when needed
 - **Custom components** - Build your own stream transformers and filters
 

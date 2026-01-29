@@ -140,9 +140,8 @@ stream = FnXML.Parser.parse(xml_string)
 # CORRECT: With namespaces
 stream = FnXML.Parser.parse(xml_string) |> FnXML.Namespaces.resolve()
 
-# CORRECT: Convert to XML
-iodata = stream |> FnXML.Event.to_iodata()
-xml = IO.iodata_to_binary(iodata)
+# CORRECT: Convert to XML (streaming)
+xml = stream |> FnXML.Event.to_iodata() |> Enum.join()
 
 # Event tuple formats (W3C StAX-compatible):
 {:start_element, "tag", [{"attr", "val"}], {line, line_start, byte_offset}}

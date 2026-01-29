@@ -221,27 +221,35 @@ After parsing or transforming XML, you often need to convert it back to text. Fn
 Use `FnXML.Event.to_iodata/2` for everyday XML serialization:
 
 ```elixir
-# Parse and serialize back to XML
-iodata = FnXML.Parser.parse("<root><child>text</child></root>")
+# Parse and serialize back to XML (streaming)
+xml = FnXML.Parser.parse("<root><child>text</child></root>")
 |> FnXML.Event.to_iodata()
-
-# Convert to string when needed
-xml = IO.iodata_to_binary(iodata)
+|> Enum.join()
 # => "<root><child>text</child></root>"
 
-# Write directly to file (efficient - no intermediate string)
-File.write!("output.xml", iodata)
+# Stream directly to file (efficient for large documents)
+File.open!("output.xml", [:write], fn file ->
+  FnXML.Parser.parse(large_xml)
+  |> FnXML.Event.to_iodata()
+  |> Enum.each(&IO.binwrite(file, &1))
+end)
+
+# Collect to iodata for small documents
+iodata = FnXML.Parser.parse("<root/>")
+|> FnXML.Event.to_iodata()
+|> Enum.to_list()
 
 # Pretty printing
-iodata = FnXML.Parser.parse(xml)
+xml = FnXML.Parser.parse(xml)
 |> FnXML.Event.to_iodata(pretty: true, indent: 2)
+|> Enum.join()
 ```
 
 **Key Features:**
 - Self-closing tags (`<br/>` instead of `<br></br>`)
 - Preserves attribute order from input
 - Optional pretty printing
-- Efficient iodata output (no intermediate allocations)
+- Lazy streaming (emits iodata fragments incrementally)
 
 ### Canonical Serialization with FnXML.C14N
 
@@ -358,12 +366,11 @@ book = Element.new("book", [{"id", "3"}], [
 ])
 
 # Serialize to XML
-iodata = FnXML.API.DOM.to_event(book) |> FnXML.Event.to_iodata()
-xml = IO.iodata_to_binary(iodata)
+xml = FnXML.API.DOM.to_event(book) |> FnXML.Event.to_iodata() |> Enum.join()
 # => "<book id=\"3\"><title>Real-Time Phoenix</title><author>Stephen Bussey</author></book>"
 
 # Pretty print
-iodata = FnXML.API.DOM.to_event(book) |> FnXML.Event.to_iodata(pretty: true)
+xml = FnXML.API.DOM.to_event(book) |> FnXML.Event.to_iodata(pretty: true) |> Enum.join()
 xml = IO.iodata_to_binary(iodata)
 ```
 
