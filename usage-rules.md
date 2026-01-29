@@ -6,29 +6,39 @@ Concise rules for using the FnXML library correctly.
 
 | Scenario | Use This |
 |----------|----------|
-| Build tree, query/modify nodes | `FnXML.DOM` |
-| Large file, extract specific data | `FnXML.SAX` |
-| Large file, stateful processing | `FnXML.StAX` |
-| Custom stream transformations | `FnXML.Parser` + `FnXML.Stream` |
-| Canonicalization for signing | `FnXML.Security.C14N` |
+| Build tree, query/modify nodes | `FnXML.API.DOM` |
+| Large file, extract specific data | `FnXML.API.SAX` |
+| Large file, stateful processing | `FnXML.API.StAX` |
+| Custom stream transformations | `FnXML.Parser` + `FnXML.Event.Transform.Stream` |
+| Canonicalization for signing | `FnXML.C14N` |
 | Sign/verify XML documents | `FnXML.Security.Signature` |
 | Encrypt/decrypt XML content | `FnXML.Security.Encryption` |
 
 ## DOM Rules
 
 ```elixir
-# CORRECT: Parse and access
-doc = FnXML.DOM.parse(xml_string)
+# CORRECT: Pipeline style (recommended)
+doc = FnXML.Parser.parse(xml_string)
+      |> FnXML.API.DOM.build()
+
+# CORRECT: With validation/transforms
+doc = File.stream!("data.xml")
+      |> FnXML.Parser.parse()
+      |> FnXML.Event.Validate.well_formed()
+      |> FnXML.Namespaces.resolve()
+      |> FnXML.API.DOM.build()
+
+# CORRECT: Access
 doc.root.tag
 doc.root.children
-FnXML.DOM.Element.get_attribute(element, "attr_name")
+FnXML.API.DOM.Element.get_attribute(element, "attr_name")
 
 # CORRECT: Serialize
-FnXML.DOM.to_string(doc)
-FnXML.DOM.to_string(doc, pretty: true)
+FnXML.API.DOM.to_string(doc)
+FnXML.API.DOM.to_string(doc, pretty: true)
 
 # CORRECT: Build elements
-FnXML.DOM.Element.new("tag", [{"attr", "val"}], ["child text"])
+FnXML.API.DOM.Element.new("tag", [{"attr", "val"}], ["child text"])
 ```
 
 **Memory:** O(n) - entire document in memory
@@ -38,7 +48,7 @@ FnXML.DOM.Element.new("tag", [{"attr", "val"}], ["child text"])
 ```elixir
 # CORRECT: Define handler module
 defmodule MyHandler do
-  use FnXML.SAX.Handler  # Provides default implementations
+  use FnXML.API.SAX.Handler  # Provides default implementations
 
   @impl true
   def start_element(_uri, local_name, _qname, _attrs, state) do
@@ -46,11 +56,19 @@ defmodule MyHandler do
   end
 end
 
-# CORRECT: Parse with handler
-{:ok, final_state} = FnXML.SAX.parse(xml, MyHandler, initial_state)
+# CORRECT: Pipeline style (recommended)
+{:ok, final_state} = FnXML.Parser.parse(xml)
+                     |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
 
-# CORRECT: Parse with options
-FnXML.SAX.parse(xml, MyHandler, state, namespaces: true)
+# CORRECT: With validation/transforms
+{:ok, result} = File.stream!("large.xml")
+                |> FnXML.Parser.parse()
+                |> FnXML.Event.Validate.well_formed()
+                |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
+
+# CORRECT: With options
+{:ok, result} = FnXML.Parser.parse(xml)
+                |> FnXML.API.SAX.dispatch(MyHandler, state, namespaces: true)
 ```
 
 **Callbacks (all receive state, return `{:ok, state}`):**
@@ -67,20 +85,29 @@ FnXML.SAX.parse(xml, MyHandler, state, namespaces: true)
 ## StAX Rules
 
 ```elixir
-# CORRECT: Create reader and pull events
-reader = FnXML.StAX.Reader.new(xml_string)
-reader = FnXML.StAX.Reader.next(reader)  # Must call next() to advance
+# CORRECT: Pipeline style (recommended)
+reader = FnXML.Parser.parse(xml_string)
+         |> FnXML.API.StAX.Reader.new()
+
+# CORRECT: With validation/transforms
+reader = File.stream!("large.xml")
+         |> FnXML.Parser.parse()
+         |> FnXML.Event.Validate.well_formed()
+         |> FnXML.API.StAX.Reader.new()
+
+# CORRECT: Pull events
+reader = FnXML.API.StAX.Reader.next(reader)  # Must call next() to advance
 
 # CORRECT: Check event type before accessing data
-if FnXML.StAX.Reader.start_element?(reader) do
-  name = FnXML.StAX.Reader.local_name(reader)
-  attr = FnXML.StAX.Reader.attribute_value(reader, nil, "id")
+if FnXML.API.StAX.Reader.start_element?(reader) do
+  name = FnXML.API.StAX.Reader.local_name(reader)
+  attr = FnXML.API.StAX.Reader.attribute_value(reader, nil, "id")
 end
 
 # CORRECT: Iteration pattern
 defp process(reader) do
-  if FnXML.StAX.Reader.has_next?(reader) do
-    reader = FnXML.StAX.Reader.next(reader)
+  if FnXML.API.StAX.Reader.has_next?(reader) do
+    reader = FnXML.API.StAX.Reader.next(reader)
     # process current event...
     process(reader)
   else
@@ -89,15 +116,15 @@ defp process(reader) do
 end
 
 # CORRECT: Get all text in element
-{text, reader} = FnXML.StAX.Reader.element_text(reader)
+{text, reader} = FnXML.API.StAX.Reader.element_text(reader)
 
 # CORRECT: Writer usage
-xml = FnXML.StAX.Writer.new()
-|> FnXML.StAX.Writer.start_element("root")
-|> FnXML.StAX.Writer.attribute("id", "1")  # Attributes before content
-|> FnXML.StAX.Writer.characters("text")
-|> FnXML.StAX.Writer.end_element()
-|> FnXML.StAX.Writer.to_string()
+xml = FnXML.API.StAX.Writer.new()
+|> FnXML.API.StAX.Writer.start_element("root")
+|> FnXML.API.StAX.Writer.attribute("id", "1")  # Attributes before content
+|> FnXML.API.StAX.Writer.characters("text")
+|> FnXML.API.StAX.Writer.end_element()
+|> FnXML.API.StAX.Writer.to_string()
 ```
 
 **Event types:** `:start_element`, `:end_element`, `:characters`, `:comment`, `:cdata`, `:processing_instruction`, `:end_document`
@@ -114,7 +141,8 @@ stream = FnXML.Parser.parse(xml_string)
 stream = FnXML.Parser.parse(xml_string) |> FnXML.Namespaces.resolve()
 
 # CORRECT: Convert to XML
-xml = stream |> FnXML.Stream.to_xml() |> Enum.join()
+iodata = stream |> FnXML.Event.to_iodata()
+xml = IO.iodata_to_binary(iodata)
 
 # Event tuple formats (W3C StAX-compatible):
 {:start_element, "tag", [{"attr", "val"}], {line, line_start, byte_offset}}
@@ -134,27 +162,27 @@ xml = stream |> FnXML.Stream.to_xml() |> Enum.join()
 {"root", [{"id", "1"}], ["text", {"child", [], []}]}
 
 # CORRECT: Parse to SimpleForm
-simple = FnXML.Stream.SimpleForm.decode(xml_string)
+simple = FnXML.Event.Transform.Stream.SimpleForm.decode(xml_string)
 
 # CORRECT: Encode to XML
-xml = FnXML.Stream.SimpleForm.encode(simple_form_tuple)
+xml = FnXML.Event.Transform.Stream.SimpleForm.encode(simple_form_tuple)
 
 # CORRECT: Convert to/from DOM
-element = FnXML.Stream.SimpleForm.to_dom(simple_form_tuple)
-tuple = FnXML.Stream.SimpleForm.from_dom(element)
+element = FnXML.Event.Transform.Stream.SimpleForm.to_dom(simple_form_tuple)
+tuple = FnXML.Event.Transform.Stream.SimpleForm.from_dom(element)
 ```
 
 ## Common Mistakes
 
 ```elixir
 # WRONG: Accessing reader without calling next()
-reader = FnXML.StAX.Reader.new(xml)
-FnXML.StAX.Reader.local_name(reader)  # Returns nil!
+reader = FnXML.API.StAX.Reader.new(xml)
+FnXML.API.StAX.Reader.local_name(reader)  # Returns nil!
 
 # CORRECT: Call next() first
-reader = FnXML.StAX.Reader.new(xml)
-reader = FnXML.StAX.Reader.next(reader)
-FnXML.StAX.Reader.local_name(reader)  # Works
+reader = FnXML.API.StAX.Reader.new(xml)
+reader = FnXML.API.StAX.Reader.next(reader)
+FnXML.API.StAX.Reader.local_name(reader)  # Works
 
 # WRONG: SAX handler not returning proper tuple
 def start_element(_, _, _, _, state) do
@@ -168,31 +196,34 @@ end
 
 # WRONG: Writer attributes after content
 writer
-|> FnXML.StAX.Writer.start_element("root")
-|> FnXML.StAX.Writer.characters("text")
-|> FnXML.StAX.Writer.attribute("id", "1")  # Too late!
+|> FnXML.API.StAX.Writer.start_element("root")
+|> FnXML.API.StAX.Writer.characters("text")
+|> FnXML.API.StAX.Writer.attribute("id", "1")  # Too late!
 
 # CORRECT: Attributes immediately after start_element
 writer
-|> FnXML.StAX.Writer.start_element("root")
-|> FnXML.StAX.Writer.attribute("id", "1")
-|> FnXML.StAX.Writer.characters("text")
+|> FnXML.API.StAX.Writer.start_element("root")
+|> FnXML.API.StAX.Writer.attribute("id", "1")
+|> FnXML.API.StAX.Writer.characters("text")
 ```
 
 ## Namespace Handling
 
 ```elixir
 # SAX with namespaces (default: true)
-FnXML.SAX.parse(xml, Handler, state, namespaces: true)
+FnXML.Parser.parse(xml)
+|> FnXML.API.SAX.dispatch(Handler, state, namespaces: true)
 # Handler receives: start_element("http://ns", "local", "prefix:local", attrs, state)
 
 # SAX without namespaces
-FnXML.SAX.parse(xml, Handler, state, namespaces: false)
+FnXML.Parser.parse(xml)
+|> FnXML.API.SAX.dispatch(Handler, state, namespaces: false)
 # Handler receives: start_element(nil, "prefix:local", "prefix:local", attrs, state)
 
 # StAX with namespaces
-reader = FnXML.StAX.Reader.new(xml, namespaces: true)
-FnXML.StAX.Reader.namespace_uri(reader)  # => "http://ns"
+reader = FnXML.Parser.parse(xml)
+         |> FnXML.API.StAX.Reader.new(namespaces: true)
+FnXML.API.StAX.Reader.namespace_uri(reader)  # => "http://ns"
 
 # Low-level with namespaces
 FnXML.Parser.parse(xml) |> FnXML.Namespaces.resolve()
@@ -212,13 +243,13 @@ FnXML.Parser.parse(xml) |> FnXML.Namespaces.resolve()
 
 ```elixir
 # CORRECT: Basic canonicalization
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml)
 
 # CORRECT: Exclusive C14N for document subsets
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml, algorithm: :exc_c14n)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml, algorithm: :exc_c14n)
 
 # CORRECT: Preserve comments
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml, algorithm: :c14n_with_comments)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml, algorithm: :c14n_with_comments)
 
 # Algorithms: :c14n, :c14n_with_comments, :exc_c14n, :exc_c14n_with_comments
 ```

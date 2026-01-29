@@ -82,7 +82,7 @@ defmodule FnXML.Security.Encryption do
   alias FnXML.Security.{Algorithms, Namespaces}
 
   # C14N alias currently unused in this module - uncomment when needed
-  # alias FnXML.Security.C14N
+  # alias FnXML.C14N
   alias FnXML.Security.Encryption.{Encryptor, Decryptor}
 
   @type encryption_type :: :element | :content

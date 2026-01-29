@@ -1,7 +1,7 @@
 defmodule FnXML.ValidateTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Validate
+  alias FnXML.Event.Validate
 
   describe "well_formed/2" do
     test "valid nested tags pass" do
@@ -32,8 +32,8 @@ defmodule FnXML.ValidateTest do
       # With explicit loc in stream
       stream = [
         {:start_document, nil},
-        {:start_element, "a", [], {1, 0, 0}},
-        {:end_element, "b", {1, 0, 5}},
+        {:start_element, "a", [], 1, 0, 0},
+        {:end_element, "b", 1, 0, 5},
         {:end_document, nil}
       ]
 
@@ -52,7 +52,7 @@ defmodule FnXML.ValidateTest do
       # With explicit loc
       stream = [
         {:start_document, nil},
-        {:end_element, "a", {1, 0, 5}},
+        {:end_element, "a", 1, 0, 5},
         {:end_document, nil}
       ]
 

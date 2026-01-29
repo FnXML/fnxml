@@ -17,7 +17,7 @@ defmodule FnXML.StreamTest do
 
       assert capture_io(fn ->
                FnXML.Parser.parse(xml)
-               |> FnXML.Stream.tap(label: "test_stream")
+               |> FnXML.Event.tap(label: "test_stream")
                |> Enum.map(& &1)
              end)
              |> all_lines_start_with?("test_stream:")
@@ -25,21 +25,22 @@ defmodule FnXML.StreamTest do
 
     test "custom tap function receives events" do
       test_pid = self()
-      stream = [{:start_element, "foo", [], nil}, {:end_element, "foo"}]
+      stream = [{:start_element, "foo", [], 1, 0, 1}, {:end_element, "foo", 1, 0, 10}]
 
-      FnXML.Stream.tap(stream, fn event, _path -> send(test_pid, {:event, event}) end,
+      FnXML.Event.tap(stream, fn event, _path -> send(test_pid, {:event, event}) end,
         label: "test"
       )
       |> Enum.to_list()
 
-      assert_received {:event, {:start_element, "foo", [], nil}}
+      assert_received {:event, {:start_element, "foo", [], 1, 0, 1}}
     end
   end
 
-  describe "to_xml" do
+  describe "Event serialization" do
     test "roundtrips XML" do
       xml = "<foo a=\"1\">first element<bar>nested element</bar></foo>"
-      assert FnXML.Parser.parse(xml) |> FnXML.Stream.to_xml() |> Enum.join() == xml
+      iodata = FnXML.Parser.parse(xml) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == xml
     end
 
     test "handles all XML constructs" do
@@ -48,7 +49,9 @@ defmodule FnXML.StreamTest do
       <foo a=\"1\">text<!--comment--><?pi data?><bar/><![CDATA[<x>]]></foo>
       """
 
-      result = FnXML.Parser.parse(xml) |> FnXML.Stream.to_xml() |> Enum.join() |> strip_ws()
+      iodata = FnXML.Parser.parse(xml) |> FnXML.Event.to_iodata()
+      result = IO.iodata_to_binary(iodata) |> strip_ws()
+
       # Empty elements may be serialized as <bar></bar> instead of <bar/>
       assert result =~ "<?xmlversion=\"1.0\"encoding=\"UTF-8\"?>"
       assert result =~ "<fooa=\"1\">"
@@ -59,14 +62,15 @@ defmodule FnXML.StreamTest do
       assert result =~ "</foo>"
     end
 
-    test "escapes special chars in CDATA" do
+    test "escapes special chars with entities" do
       stream = [
-        {:start_element, "root", [], nil},
-        {:characters, "<script>", nil},
-        {:end_element, "root"}
+        {:start_element, "root", [], 1, 0, 1},
+        {:characters, "<script>", 1, 0, 7},
+        {:end_element, "root", 1, 0, 15}
       ]
 
-      assert FnXML.Stream.to_xml(stream) |> Enum.join() =~ "<![CDATA["
+      iodata = FnXML.Event.to_iodata(stream)
+      assert IO.iodata_to_binary(iodata) == "<root>&lt;script&gt;</root>"
     end
   end
 
@@ -76,7 +80,7 @@ defmodule FnXML.StreamTest do
 
       result =
         FnXML.Parser.parse(xml)
-        |> FnXML.Stream.transform(fn element, _path, acc -> {element, acc} end)
+        |> FnXML.Event.transform(fn element, _path, acc -> {element, acc} end)
         |> Enum.to_list()
 
       # Parser outputs 6-tuple: {:start_element, tag, attrs, line, ls, pos}
@@ -84,45 +88,45 @@ defmodule FnXML.StreamTest do
       assert match?({:start_element, "bar", _, _, _, _}, Enum.at(result, 2))
     end
 
-    test "to_xml with simple stream" do
-      result =
+    test "serialization with simple stream" do
+      iodata =
         [
-          {:start_element, "a", [], nil},
-          {:start_element, "b", [], nil},
-          {:end_element, "b"},
-          {:end_element, "a"}
+          {:start_element, "a", [], 1, 0, 1},
+          {:start_element, "b", [], 1, 0, 4},
+          {:end_element, "b", 1, 0, 7},
+          {:end_element, "a", 1, 0, 11}
         ]
-        |> FnXML.Stream.to_xml()
-        |> Enum.join()
+        |> FnXML.Event.to_iodata()
 
-      assert result == "<a><b></b></a>"
+      assert IO.iodata_to_binary(iodata) == "<a><b/></a>"
     end
   end
 
   describe "filter" do
     test "filter_ws removes whitespace-only characters" do
       stream = [
-        {:start_element, "foo", [], nil},
-        {:characters, "keep", nil},
-        {:characters, " \t\n", nil},
-        {:end_element, "foo"}
+        {:start_element, "foo", [], 1, 0, 1},
+        {:characters, "keep", 1, 0, 6},
+        {:characters, " \t\n", 1, 0, 10},
+        {:end_element, "foo", 1, 0, 13}
       ]
 
-      result = FnXML.Stream.filter_ws(stream) |> Enum.to_list()
+      result = FnXML.Event.Filter.filter_ws(stream) |> Enum.to_list()
 
       assert length(result) == 3
-      refute Enum.any?(result, &match?({:characters, " \t\n", _}, &1))
+      refute Enum.any?(result, &match?({:characters, " \t\n", _, _, _}, &1))
     end
 
     test "filter passes through document markers" do
       stream = [
         {:start_document, nil},
-        {:start_element, "foo", [], nil},
-        {:end_element, "foo"},
+        {:start_element, "foo", [], 1, 0, 1},
+        {:end_element, "foo", 1, 0, 10},
         {:end_document, nil}
       ]
 
-      result = FnXML.Stream.filter(stream, fn _, _, acc -> {true, acc} end) |> Enum.to_list()
+      result =
+        FnXML.Event.filter(stream, fn _, _, acc -> {true, acc} end) |> Enum.to_list()
 
       assert {:start_document, nil} in result
       assert {:end_document, nil} in result
@@ -130,97 +134,131 @@ defmodule FnXML.StreamTest do
 
     test "filter excludes elements matching predicate" do
       stream = [
-        {:start_element, "foo", [], nil},
-        {:characters, "skip", nil},
-        {:characters, "keep", nil},
-        {:end_element, "foo"}
+        {:start_element, "foo", [], 1, 0, 1},
+        {:characters, "skip", 1, 0, 6},
+        {:characters, "keep", 1, 0, 10},
+        {:end_element, "foo", 1, 0, 14}
       ]
 
       result =
-        FnXML.Stream.filter(stream, fn
-          {:characters, "skip", _}, _, acc -> {false, acc}
+        FnXML.Event.filter(stream, fn
+          {:characters, "skip", _, _, _}, _, acc -> {false, acc}
           _, _, acc -> {true, acc}
         end)
         |> Enum.to_list()
 
       assert length(result) == 3
-      refute Enum.any?(result, &match?({:characters, "skip", _}, &1))
+      refute Enum.any?(result, &match?({:characters, "skip", _, _, _}, &1))
     end
   end
 
   describe "filter_namespaces" do
     test "filters by namespace prefix" do
       stream = [
-        {:start_element, "foo", [], nil},
-        {:start_element, "bar:child", [], nil},
-        {:end_element, "bar:child"},
-        {:start_element, "baz:other", [], nil},
-        {:end_element, "baz:other"},
-        {:end_element, "foo"}
+        {:start_element, "foo", [], 1, 0, 1},
+        {:start_element, "bar:child", [], 1, 0, 6},
+        {:end_element, "bar:child", 1, 0, 17},
+        {:start_element, "baz:other", [], 1, 0, 29},
+        {:end_element, "baz:other", 1, 0, 40},
+        {:end_element, "foo", 1, 0, 52}
       ]
 
       # Exclude bar and baz namespaces
       result =
-        FnXML.Stream.filter_namespaces(stream, ["bar", "baz"], exclude: true) |> Enum.to_list()
+        FnXML.Event.Filter.filter_namespaces(stream, ["bar", "baz"], exclude: true)
+        |> Enum.to_list()
 
       # Only foo start and end
       assert length(result) == 2
 
       # Include only bar namespace
-      result2 = FnXML.Stream.filter_namespaces(stream, ["bar"], include: true) |> Enum.to_list()
-      assert Enum.any?(result2, &match?({:start_element, "bar:child", _, _}, &1))
+      result2 =
+        FnXML.Event.Filter.filter_namespaces(stream, ["bar"], include: true)
+        |> Enum.to_list()
+
+      assert Enum.any?(result2, &match?({:start_element, "bar:child", _, _, _, _}, &1))
     end
 
     test "handles end_element with and without loc" do
       stream = [
-        {:start_element, "foo", [], nil},
-        {:start_element, "bar:x", [], nil},
-        {:end_element, "bar:x", {1, 0, 10}},
-        {:end_element, "foo"}
+        {:start_element, "foo", [], 1, 0, 1},
+        {:start_element, "bar:x", [], 1, 0, 6},
+        {:end_element, "bar:x", 1, 0, 13},
+        {:end_element, "foo", 1, 0, 20}
       ]
 
-      result = FnXML.Stream.filter_namespaces(stream, ["bar"], include: true) |> Enum.to_list()
-      assert Enum.any?(result, &match?({:start_element, "bar:x", _, _}, &1))
+      result =
+        FnXML.Event.Filter.filter_namespaces(stream, ["bar"], include: true)
+        |> Enum.to_list()
+
+      assert Enum.any?(result, &match?({:start_element, "bar:x", _, _, _, _}, &1))
     end
   end
 
   describe "transform error handling" do
-    test "raises on unexpected or mismatched close tags" do
-      assert_raise FnXML.Stream.Exception, ~r/unexpected close tag/, fn ->
+    test "emits error events for unexpected or mismatched close tags" do
+      result =
         [{:end_element, "foo"}]
-        |> FnXML.Stream.transform(fn e, _, acc -> {e, acc} end)
+        |> FnXML.Event.transform(fn e, _, acc -> {e, acc} end)
         |> Enum.to_list()
-      end
 
-      assert_raise FnXML.Stream.Exception, ~r/unexpected close tag/, fn ->
-        [{:end_element, "foo", {1, 0, 5}}]
-        |> FnXML.Stream.transform(fn e, _, acc -> {e, acc} end)
-        |> Enum.to_list()
-      end
+      assert Enum.any?(result, fn
+               {:error, :validation, msg} -> String.contains?(msg, "unexpected close tag")
+               _ -> false
+             end)
 
-      assert_raise FnXML.Stream.Exception, ~r/mis-matched close tag/, fn ->
-        [{:start_element, "foo", [], nil}, {:end_element, "bar"}]
-        |> FnXML.Stream.transform(fn e, _, acc -> {e, acc} end)
+      result =
+        [{:end_element, "foo", 1, 0, 5}]
+        |> FnXML.Event.transform(fn e, _, acc -> {e, acc} end)
         |> Enum.to_list()
-      end
+
+      assert Enum.any?(result, fn
+               {:error, :validation, msg, 1, 0, 5} ->
+                 String.contains?(msg, "unexpected close tag")
+
+               _ ->
+                 false
+             end)
+
+      result =
+        [{:start_element, "foo", [], 1, 0, 1}, {:end_element, "bar", 1, 0, 10}]
+        |> FnXML.Event.transform(fn e, _, acc -> {e, acc} end)
+        |> Enum.to_list()
+
+      assert Enum.any?(result, fn
+               {:error, :validation, msg, _, _, _} ->
+                 String.contains?(msg, "mis-matched close tag")
+
+               _ ->
+                 false
+             end)
     end
 
-    test "raises on non-whitespace text outside element" do
-      assert_raise FnXML.Stream.Exception, ~r/Text element outside/, fn ->
-        [{:characters, "text", nil}]
-        |> FnXML.Stream.transform(fn e, _, acc -> {e, acc} end)
+    test "emits error event for non-whitespace text outside element" do
+      result =
+        [{:characters, "text", 1, 0, 1}]
+        |> FnXML.Event.transform(fn e, _, acc -> {e, acc} end)
         |> Enum.to_list()
-      end
+
+      assert Enum.any?(result, fn
+               {:error, :validation, msg, 1, 0, 1} ->
+                 String.contains?(msg, "Text element outside")
+
+               _ ->
+                 false
+             end)
     end
 
     test "ignores whitespace outside element" do
       stream = [
-        {:characters, "  \n  ", nil},
-        {:start_element, "root", [], nil},
-        {:end_element, "root"}
+        {:characters, "  \n  ", 1, 0, 1},
+        {:start_element, "root", [], 1, 0, 6},
+        {:end_element, "root", 1, 0, 12}
       ]
 
-      result = FnXML.Stream.transform(stream, fn e, _, acc -> {e, acc} end) |> Enum.to_list()
+      result =
+        FnXML.Event.transform(stream, fn e, _, acc -> {e, acc} end) |> Enum.to_list()
+
       assert length(result) >= 2
     end
   end

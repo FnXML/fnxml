@@ -1,8 +1,8 @@
 defmodule FnXML.DOMTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.DOM
-  alias FnXML.DOM.{Document, Element}
+  alias FnXML.API.DOM
+  alias FnXML.API.DOM.{Document, Element}
 
   # ==========================================================================
   # Node Type Constants
@@ -79,13 +79,13 @@ defmodule FnXML.DOMTest do
 
   describe "build/2" do
     test "builds DOM from parser stream" do
-      doc = FnXML.parse_stream("<root>text</root>") |> DOM.build()
+      doc = FnXML.Parser.parse("<root>text</root>") |> DOM.build()
       assert doc.root.tag == "root"
       assert doc.root.children == ["text"]
     end
 
     test "builds DOM with nested elements from stream" do
-      doc = FnXML.parse_stream("<a><b><c/></b></a>") |> DOM.build()
+      doc = FnXML.Parser.parse("<a><b><c/></b></a>") |> DOM.build()
       assert doc.root.tag == "a"
       [b] = doc.root.children
       assert b.tag == "b"
@@ -93,19 +93,19 @@ defmodule FnXML.DOMTest do
   end
 
   # ==========================================================================
-  # DOM.to_iodata/2
+  # Serialization via FnXML.Stream
   # ==========================================================================
 
-  describe "to_iodata/2" do
+  describe "serialization to iodata via FnXML.Stream" do
     test "converts document to iodata" do
-      doc = DOM.parse("<root><child/></root>")
-      iodata = DOM.to_iodata(doc)
+      doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
       assert IO.iodata_to_binary(iodata) == "<root><child/></root>"
     end
 
     test "converts element to iodata" do
       elem = DOM.element("div", [{"id", "1"}], ["text"])
-      iodata = DOM.to_iodata(elem)
+      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata()
       assert IO.iodata_to_binary(iodata) == "<div id=\"1\">text</div>"
     end
   end
@@ -116,20 +116,20 @@ defmodule FnXML.DOMTest do
 
   describe "parse/2" do
     test "parses simple element" do
-      doc = DOM.parse("<root/>")
+      doc = FnXML.Parser.parse("<root/>") |> DOM.build()
       assert doc.root.tag == "root"
       assert doc.root.children == []
     end
 
     test "parses element with attributes" do
-      doc = DOM.parse("<root id=\"1\" class=\"main\"/>")
+      doc = FnXML.Parser.parse("<root id=\"1\" class=\"main\"/>") |> DOM.build()
       assert doc.root.tag == "root"
       assert Element.get_attribute(doc.root, "id") == "1"
       assert Element.get_attribute(doc.root, "class") == "main"
     end
 
     test "parses nested elements" do
-      doc = DOM.parse("<root><child><grandchild/></child></root>")
+      doc = FnXML.Parser.parse("<root><child><grandchild/></child></root>") |> DOM.build()
       assert doc.root.tag == "root"
       [child] = doc.root.children
       assert child.tag == "child"
@@ -138,12 +138,12 @@ defmodule FnXML.DOMTest do
     end
 
     test "parses text content" do
-      doc = DOM.parse("<root>Hello World</root>")
+      doc = FnXML.Parser.parse("<root>Hello World</root>") |> DOM.build()
       assert doc.root.children == ["Hello World"]
     end
 
     test "parses mixed content" do
-      doc = DOM.parse("<root>Hello <b>World</b>!</root>")
+      doc = FnXML.Parser.parse("<root>Hello <b>World</b>!</root>") |> DOM.build()
       assert length(doc.root.children) == 3
       assert Enum.at(doc.root.children, 0) == "Hello "
       assert Enum.at(doc.root.children, 1).tag == "b"
@@ -151,60 +151,68 @@ defmodule FnXML.DOMTest do
     end
 
     test "parses XML declaration" do
-      doc = DOM.parse("<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>")
+      doc = FnXML.Parser.parse("<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>") |> DOM.build()
       assert Document.version(doc) == "1.0"
       assert Document.encoding(doc) == "UTF-8"
     end
 
     test "parses comments when enabled" do
-      doc = DOM.parse("<root><!-- comment --></root>", include_comments: true)
+      doc =
+        FnXML.Parser.parse("<root><!-- comment --></root>") |> DOM.build(include_comments: true)
+
       assert [{:comment, " comment "}] = doc.root.children
     end
 
     test "ignores comments by default" do
-      doc = DOM.parse("<root><!-- comment --><child/></root>")
+      doc = FnXML.Parser.parse("<root><!-- comment --><child/></root>") |> DOM.build()
       assert [%Element{tag: "child"}] = doc.root.children
     end
   end
 
-  describe "to_string/2" do
+  describe "serialization to string via FnXML.Stream" do
     test "serializes simple element" do
-      doc = DOM.parse("<root/>")
-      assert DOM.to_string(doc) == "<root/>"
+      doc = FnXML.Parser.parse("<root/>") |> DOM.build()
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root/>"
     end
 
     test "serializes element with attributes" do
-      doc = DOM.parse("<root id=\"1\"/>")
-      assert DOM.to_string(doc) == "<root id=\"1\"/>"
+      doc = FnXML.Parser.parse("<root id=\"1\"/>") |> DOM.build()
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root id=\"1\"/>"
     end
 
     test "serializes nested elements" do
-      doc = DOM.parse("<root><child/></root>")
-      assert DOM.to_string(doc) == "<root><child/></root>"
+      doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root><child/></root>"
     end
 
     test "serializes text content" do
-      doc = DOM.parse("<root>Hello</root>")
-      assert DOM.to_string(doc) == "<root>Hello</root>"
+      doc = FnXML.Parser.parse("<root>Hello</root>") |> DOM.build()
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root>Hello</root>"
     end
 
     test "escapes special characters" do
       elem = Element.new("root", [], ["<>&"])
-      assert DOM.to_string(elem) == "<root>&lt;&gt;&amp;</root>"
+      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root>&lt;&gt;&amp;</root>"
     end
 
     test "pretty prints when enabled" do
-      doc = DOM.parse("<root><child/></root>")
-      result = DOM.to_string(doc, pretty: true)
+      doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata(pretty: true)
+      result = IO.iodata_to_binary(iodata)
       assert result =~ "\n"
       assert result =~ "  <child/>"
     end
   end
 
-  describe "to_stream/1" do
+  describe "to_event/1" do
     test "converts element to event stream" do
       elem = Element.new("root", [{"id", "1"}], ["text"])
-      events = DOM.to_stream(elem) |> Enum.to_list()
+      events = DOM.to_event(elem) |> Enum.to_list()
 
       assert [
                {:start_element, "root", [{"id", "1"}], nil},
@@ -214,8 +222,8 @@ defmodule FnXML.DOMTest do
     end
 
     test "converts document to event stream" do
-      doc = DOM.parse("<root><child/></root>")
-      events = DOM.to_stream(doc) |> Enum.to_list()
+      doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
+      events = DOM.to_event(doc) |> Enum.to_list()
 
       assert [
                {:start_element, "root", [], nil},
@@ -229,8 +237,9 @@ defmodule FnXML.DOMTest do
   describe "round-trip" do
     test "parse and serialize produce equivalent output" do
       original = "<root id=\"1\"><child>text</child></root>"
-      doc = DOM.parse(original)
-      result = DOM.to_string(doc)
+      doc = FnXML.Parser.parse(original) |> DOM.build()
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      result = IO.iodata_to_binary(iodata)
       assert result == original
     end
   end
@@ -239,16 +248,9 @@ defmodule FnXML.DOMTest do
   # Builder-specific tests for coverage
   # ==========================================================================
 
-  describe "Builder.parse!" do
-    test "returns document for valid XML" do
-      doc = FnXML.DOM.Builder.parse!("<root/>")
-      assert doc.root.tag == "root"
-    end
-  end
-
   describe "Builder CDATA handling" do
     test "parses CDATA sections" do
-      doc = DOM.parse("<root><![CDATA[<data>]]></root>")
+      doc = FnXML.Parser.parse("<root><![CDATA[<data>]]></root>") |> DOM.build()
       # Parser may emit CDATA as characters or cdata tuple
       assert is_list(doc.root.children)
       assert length(doc.root.children) == 1
@@ -257,38 +259,38 @@ defmodule FnXML.DOMTest do
 
   describe "Builder processing instructions" do
     test "parses PI inside element" do
-      doc = DOM.parse("<root><?php echo 'hi'; ?></root>")
+      doc = FnXML.Parser.parse("<root><?php echo 'hi'; ?></root>") |> DOM.build()
       assert [{:pi, "php", _}] = doc.root.children
     end
 
     test "ignores PI outside elements" do
-      doc = DOM.parse("<?xml-stylesheet type='text/xsl'?><root/>")
+      doc = FnXML.Parser.parse("<?xml-stylesheet type='text/xsl'?><root/>") |> DOM.build()
       assert doc.root.tag == "root"
     end
   end
 
   describe "Builder DOCTYPE handling" do
     test "captures DOCTYPE" do
-      doc = DOM.parse("<!DOCTYPE html><root/>")
+      doc = FnXML.Parser.parse("<!DOCTYPE html><root/>") |> DOM.build()
       assert doc.doctype != nil
     end
   end
 
   describe "Builder namespace handling" do
     test "captures default namespace" do
-      doc = DOM.parse("<root xmlns=\"http://example.org\"/>")
+      doc = FnXML.Parser.parse("<root xmlns=\"http://example.org\"/>") |> DOM.build()
       assert doc.root.namespace_uri == "http://example.org"
     end
 
     test "captures prefixed namespace" do
-      doc = DOM.parse("<ex:root xmlns:ex=\"http://example.org\"/>")
+      doc = FnXML.Parser.parse("<ex:root xmlns:ex=\"http://example.org\"/>") |> DOM.build()
       assert doc.root.tag == "root"
       assert doc.root.prefix == "ex"
       assert doc.root.namespace_uri == "http://example.org"
     end
 
     test "handles empty default namespace" do
-      doc = DOM.parse("<root xmlns=\"\"/>")
+      doc = FnXML.Parser.parse("<root xmlns=\"\"/>") |> DOM.build()
       assert doc.root.namespace_uri == nil
     end
   end
@@ -296,7 +298,7 @@ defmodule FnXML.DOMTest do
   describe "Builder error handling" do
     test "handles errors in stream" do
       # Parser errors are ignored by builder
-      doc = DOM.parse("<root><unclosed")
+      doc = FnXML.Parser.parse("<root><unclosed") |> DOM.build()
       # Builder should still produce a result
       assert is_struct(doc, Document)
     end
@@ -306,7 +308,7 @@ defmodule FnXML.DOMTest do
     test "excludes prolog when include_prolog is false" do
       doc =
         FnXML.Parser.parse("<?xml version=\"1.0\"?><root/>")
-        |> FnXML.DOM.Builder.from_stream(include_prolog: false)
+        |> FnXML.API.DOM.Builder.from_stream(include_prolog: false)
 
       assert doc.prolog == nil
     end
@@ -314,7 +316,7 @@ defmodule FnXML.DOMTest do
 
   describe "Builder with multiple root children (malformed XML)" do
     test "handles empty stream" do
-      doc = [] |> FnXML.DOM.Builder.from_stream()
+      doc = [] |> FnXML.API.DOM.Builder.from_stream()
       assert doc.root == nil
     end
   end
@@ -402,19 +404,19 @@ defmodule FnXML.DOMTest do
 
   describe "Document.get_elements_by_tag_name/2" do
     test "finds elements by tag name" do
-      doc = DOM.parse("<root><item/><item/><other/></root>")
+      doc = FnXML.Parser.parse("<root><item/><item/><other/></root>") |> DOM.build()
       items = Document.get_elements_by_tag_name(doc, "item")
       assert length(items) == 2
     end
 
     test "finds root if it matches" do
-      doc = DOM.parse("<root/>")
+      doc = FnXML.Parser.parse("<root/>") |> DOM.build()
       roots = Document.get_elements_by_tag_name(doc, "root")
       assert length(roots) == 1
     end
 
     test "finds nested elements" do
-      doc = DOM.parse("<root><a><item/></a><item/></root>")
+      doc = FnXML.Parser.parse("<root><a><item/></a><item/></root>") |> DOM.build()
       items = Document.get_elements_by_tag_name(doc, "item")
       assert length(items) == 2
     end
@@ -427,19 +429,19 @@ defmodule FnXML.DOMTest do
 
   describe "Document.get_element_by_id/2" do
     test "finds element by id attribute" do
-      doc = DOM.parse("<root><child id=\"target\">found</child></root>")
+      doc = FnXML.Parser.parse("<root><child id=\"target\">found</child></root>") |> DOM.build()
       elem = Document.get_element_by_id(doc, "target")
       assert elem.tag == "child"
     end
 
     test "finds nested element by id" do
-      doc = DOM.parse("<root><a><b id=\"deep\"/></a></root>")
+      doc = FnXML.Parser.parse("<root><a><b id=\"deep\"/></a></root>") |> DOM.build()
       elem = Document.get_element_by_id(doc, "deep")
       assert elem.tag == "b"
     end
 
     test "returns nil when id not found" do
-      doc = DOM.parse("<root><child/></root>")
+      doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
       assert Document.get_element_by_id(doc, "nonexistent") == nil
     end
 
@@ -449,7 +451,7 @@ defmodule FnXML.DOMTest do
     end
 
     test "finds root element by id" do
-      doc = DOM.parse("<root id=\"main\"/>")
+      doc = FnXML.Parser.parse("<root id=\"main\"/>") |> DOM.build()
       elem = Document.get_element_by_id(doc, "main")
       assert elem.tag == "root"
     end

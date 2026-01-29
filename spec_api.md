@@ -788,13 +788,13 @@ Iterator-based writing.
 
 ```elixir
 # DOM nodes as structs with parent/child references
-defmodule FnXML.DOM.Node do
+defmodule FnXML.API.DOM.Node do
   defstruct [:node_type, :node_name, :node_value, :parent, :children,
              :attributes, :namespace_uri, :prefix, :local_name]
 end
 
 # Or using zipper for navigation
-defmodule FnXML.DOM.Zipper do
+defmodule FnXML.API.DOM.Zipper do
   # Efficient tree navigation without mutable references
 end
 ```
@@ -820,7 +820,7 @@ FnXML already uses a SAX-like streaming approach:
 
 ```elixir
 # StAX cursor API as Stream with state
-defmodule FnXML.StAX.Reader do
+defmodule FnXML.API.StAX.Reader do
   defstruct [:stream, :event, :location, :context]
 
   def next(%Reader{} = reader), do: ...
@@ -829,7 +829,7 @@ defmodule FnXML.StAX.Reader do
 end
 
 # StAX writer
-defmodule FnXML.StAX.Writer do
+defmodule FnXML.API.StAX.Writer do
   def start_document(writer, opts \\ []), do: ...
   def start_element(writer, name, opts \\ []), do: ...
   def end_element(writer), do: ...
@@ -952,10 +952,10 @@ end
 
 **Goal:** Define DOM node structures and basic operations.
 
-#### Module: `FnXML.DOM`
+#### Module: `FnXML.API.DOM`
 
 ```elixir
-defmodule FnXML.DOM do
+defmodule FnXML.API.DOM do
   @moduledoc """
   Document Object Model for XML.
   """
@@ -974,10 +974,10 @@ defmodule FnXML.DOM do
 end
 ```
 
-#### Module: `FnXML.DOM.Node`
+#### Module: `FnXML.API.DOM.Node`
 
 ```elixir
-defmodule FnXML.DOM.Node do
+defmodule FnXML.API.DOM.Node do
   @moduledoc """
   Base structure for all DOM nodes.
   """
@@ -991,7 +991,7 @@ defmodule FnXML.DOM.Node do
     local_name: String.t() | nil,
     parent: reference() | nil,
     children: [reference()],
-    attributes: %{String.t() => FnXML.DOM.Attr.t()},
+    attributes: %{String.t() => FnXML.API.DOM.Attr.t()},
     owner_document: reference() | nil
   }
 
@@ -1003,10 +1003,10 @@ defmodule FnXML.DOM.Node do
 end
 ```
 
-#### Module: `FnXML.DOM.Document`
+#### Module: `FnXML.API.DOM.Document`
 
 ```elixir
-defmodule FnXML.DOM.Document do
+defmodule FnXML.API.DOM.Document do
   @moduledoc """
   XML Document node and factory methods.
   """
@@ -1039,10 +1039,10 @@ defmodule FnXML.DOM.Document do
 end
 ```
 
-#### Module: `FnXML.DOM.Element`
+#### Module: `FnXML.API.DOM.Element`
 
 ```elixir
-defmodule FnXML.DOM.Element do
+defmodule FnXML.API.DOM.Element do
   @moduledoc """
   Element node with attribute operations.
   """
@@ -1067,10 +1067,10 @@ end
 
 **Goal:** Build DOM tree from parser event stream.
 
-#### Module: `FnXML.DOM.Builder`
+#### Module: `FnXML.API.DOM.Builder`
 
 ```elixir
-defmodule FnXML.DOM.Builder do
+defmodule FnXML.API.DOM.Builder do
   @moduledoc """
   Build DOM tree from XML event stream.
   """
@@ -1095,43 +1095,44 @@ end
 7. Build attribute nodes
 8. Return complete Document
 
-### Phase 4: DOM Serializer (Tree to Stream/Text)
+### Phase 4: DOM to Events (Tree to Stream)
 
-**Goal:** Convert DOM tree back to XML text or event stream.
+**Goal:** Convert DOM tree to event stream for serialization.
 
-#### Module: `FnXML.DOM.Serializer`
+#### Module: `FnXML.API.DOM`
 
 ```elixir
-defmodule FnXML.DOM.Serializer do
-  @moduledoc """
-  Serialize DOM tree to XML.
-  """
-
-  # To string
-  def to_string(node, opts \\ [])
-
-  # To iodata (more efficient)
-  def to_iodata(node, opts \\ [])
-
-  # To event stream (for pipeline processing)
-  def to_stream(node, opts \\ [])
-
-  # Options:
-  # - :indent - pretty print with indentation
-  # - :encoding - output encoding
-  # - :xml_declaration - include <?xml ...?>
-  # - :standalone - standalone declaration
+defmodule FnXML.API.DOM do
+  # Convert DOM to event stream
+  def to_event(node)
 end
+
+# Serialization usage examples:
+# To string
+node
+|> FnXML.API.DOM.to_event()
+|> FnXML.Stream.to_string()
+
+# To iodata (more efficient)
+node
+|> FnXML.API.DOM.to_event()
+|> FnXML.Stream.to_iodata()
+
+# FnXML.Stream provides serialization options:
+# - :indent - pretty print with indentation
+# - :encoding - output encoding
+# - :xml_declaration - include <?xml ...?>
+# - :standalone - standalone declaration
 ```
 
 ### Phase 5: DOM Navigation (Zipper)
 
 **Goal:** Efficient tree navigation without mutable parent references.
 
-#### Module: `FnXML.DOM.Zipper`
+#### Module: `FnXML.API.DOM.Zipper`
 
 ```elixir
-defmodule FnXML.DOM.Zipper do
+defmodule FnXML.API.DOM.Zipper do
   @moduledoc """
   Zipper-based navigation for DOM trees.
 
@@ -1174,10 +1175,10 @@ end
 
 **Goal:** Provide explicit SAX handler interface for compatibility.
 
-#### Module: `FnXML.SAX`
+#### Module: `FnXML.API.SAX`
 
 ```elixir
-defmodule FnXML.SAX do
+defmodule FnXML.API.SAX do
   @moduledoc """
   SAX-style handler-based XML processing.
   """

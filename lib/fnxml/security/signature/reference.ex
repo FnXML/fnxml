@@ -8,7 +8,8 @@ defmodule FnXML.Security.Signature.Reference do
   - Digest computation and validation
   """
 
-  alias FnXML.Security.{Algorithms, C14N, Namespaces}
+  alias FnXML.C14N
+  alias FnXML.Security.{Algorithms, Namespaces}
 
   @doc """
   Create a Reference element with digest value.

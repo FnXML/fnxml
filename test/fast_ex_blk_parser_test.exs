@@ -1,7 +1,7 @@
-defmodule FnXML.FastExBlkParserTest do
+defmodule FnXML.Legacy.FastExBlkParserTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.FastExBlkParser
+  alias FnXML.Legacy.FastExBlkParser
 
   describe "parse/1" do
     test "parses simple element" do
@@ -163,7 +163,7 @@ defmodule FnXML.FastExBlkParserTest do
     test "produces fewer events (no :space events)" do
       xml = "<root>\n  <child/>\n  <child/>\n</root>"
 
-      ex_events = FnXML.ExBlkParser.parse(xml)
+      ex_events = FnXML.Legacy.ExBlkParser.parse(xml)
       fast_events = FastExBlkParser.parse(xml)
 
       # FastExBlkParser should have fewer events (no :space)

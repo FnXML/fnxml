@@ -12,7 +12,8 @@ defmodule FnXML.Security.Encryption.Encryptor do
   6. Replace target content with EncryptedData
   """
 
-  alias FnXML.Security.{Algorithms, C14N, Namespaces}
+  alias FnXML.C14N
+  alias FnXML.Security.{Algorithms, Namespaces}
 
   @default_opts [
     algorithm: :aes_256_gcm,
@@ -42,7 +43,8 @@ defmodule FnXML.Security.Encryption.Encryptor do
 
     case find_element_by_id(events, id) do
       {:ok, element_events} ->
-        canonical = C14N.canonicalize(element_events)
+        iodata = C14N.canonicalize(element_events)
+        canonical = IO.iodata_to_binary(iodata)
         {:ok, canonical}
 
       :not_found ->
@@ -56,7 +58,8 @@ defmodule FnXML.Security.Encryption.Encryptor do
 
     case find_element_content_by_id(events, id) do
       {:ok, content_events} ->
-        canonical = C14N.canonicalize(content_events)
+        iodata = C14N.canonicalize(content_events)
+        canonical = IO.iodata_to_binary(iodata)
         {:ok, canonical}
 
       :not_found ->

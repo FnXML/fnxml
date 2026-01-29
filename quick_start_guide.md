@@ -7,15 +7,16 @@ A comprehensive guide to XML processing in Elixir with FnXML.
 1. [The XML Ecosystem](#1-the-xml-ecosystem)
 2. [FnXML Architecture Overview](#2-fnxml-architecture-overview)
 3. [Parsing XML](#3-parsing-xml)
-4. [DOM API - Document Object Model](#4-dom-api---document-object-model)
-5. [SAX API - Event-Driven Processing](#5-sax-api---event-driven-processing)
-6. [StAX API - Pull-Based Processing](#6-stax-api---pull-based-processing)
-7. [XML Namespaces](#7-xml-namespaces)
-8. [Document Type Definitions (DTD)](#8-document-type-definitions-dtd)
-9. [XML Canonicalization (C14N)](#9-xml-canonicalization-c14n)
-10. [XML Signatures](#10-xml-signatures)
-11. [XML Encryption](#11-xml-encryption)
-12. [Choosing the Right API](#12-choosing-the-right-api)
+4. [Serializing XML - Converting Events Back to XML](#4-serializing-xml---converting-events-back-to-xml)
+5. [DOM API - Document Object Model](#5-dom-api---document-object-model)
+6. [SAX API - Event-Driven Processing](#6-sax-api---event-driven-processing)
+7. [StAX API - Pull-Based Processing](#7-stax-api---pull-based-processing)
+8. [XML Namespaces](#8-xml-namespaces)
+9. [Document Type Definitions (DTD)](#9-document-type-definitions-dtd)
+10. [XML Canonicalization (C14N)](#10-xml-canonicalization-c14n)
+11. [XML Signatures](#11-xml-signatures)
+12. [XML Encryption](#12-xml-encryption)
+13. [Choosing the Right API](#13-choosing-the-right-api)
 
 ---
 
@@ -90,21 +91,21 @@ FnXML provides a complete XML processing stack for Elixir:
 ├─────────────────────────────────────────────────────────────────┤
 │                        High-Level APIs                           │
 ├─────────────────┬─────────────────────┬─────────────────────────┤
-│  FnXML.DOM      │  FnXML.SAX          │  FnXML.StAX             │
+│  FnXML.API.DOM  │  FnXML.API.SAX      │  FnXML.API.StAX         │
 │  Tree-based     │  Push callbacks     │  Pull cursor            │
 │  Random access  │  Memory efficient   │  Application control    │
 ├─────────────────┴─────────────────────┴─────────────────────────┤
 │                       FnXML.Security                             │
 │     C14N (Canonicalization) │ Signatures │ Encryption           │
 ├─────────────────────────────────────────────────────────────────┤
-│                        FnXML.Stream                              │
+│                        FnXML.Event.Transform.Stream                              │
 │            Event stream transformations & formatting             │
 ├──────────────────────────────┬──────────────────────────────────┤
 │  FnXML.Namespaces            │  FnXML.DTD                       │
 │  Namespace resolution        │  DTD parsing & validation        │
 ├──────────────────────────────┴──────────────────────────────────┤
 │                        FnXML.Parser                              │
-│       Auto-selects: Zig NIF (large) or Elixir (small)           │
+│           Macro-based streaming parser (Edition 5)              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -116,9 +117,9 @@ XML String/File
        ▼
 ┌─────────────────┐
 │  FnXML.Parser   │──────► Event Stream
-└─────────────────┘        {:start_element, "book", [...], loc}
-       │                   {:characters, "content", loc}
-       │                   {:end_element, "book", loc}
+└─────────────────┘        {:start_element, "book", [...], line, ls, pos}
+       │                   {:characters, "content", line, ls, pos}
+       │                   {:end_element, "book", line, ls, pos}
        │
        ├────────────────────────┬────────────────────────┐
        ▼                        ▼                        ▼
@@ -159,15 +160,20 @@ The parser is the foundation of all XML processing. A fast, correct parser enabl
 ```elixir
 # Parse XML to event stream
 events = FnXML.Parser.parse("<root><child>Hello</child></root>")
+|> Enum.to_list()
 
 # Events are tuples describing each XML construct
 # [
-#   {:start_element, "root", [], {1, 0, 1}},
-#   {:start_element, "child", [], {1, 6, 7}},
-#   {:characters, "Hello", {1, 13, 14}},
-#   {:end_element, "child", {1, 18, 19}},
-#   {:end_element, "root", {1, 26, 27}}
+#   {:start_document, nil},
+#   {:start_element, "root", [], 1, 0, 1},
+#   {:start_element, "child", [], 1, 6, 7},
+#   {:characters, "Hello", 1, 13, 14},
+#   {:end_element, "child", 1, 18, 19},
+#   {:end_element, "root", 1, 26, 27},
+#   {:end_document, nil}
 # ]
+#
+# Location fields: line (1-based), line_start_offset, absolute_position
 ```
 
 **Streaming Large Files**
@@ -175,7 +181,7 @@ events = FnXML.Parser.parse("<root><child>Hello</child></root>")
 ```elixir
 # Process large files in chunks (memory efficient)
 File.stream!("large.xml", [], 65536)
-|> FnXML.Parser.stream()
+|> FnXML.Parser.parse()
 |> Enum.each(fn event ->
   # Process each event as it arrives
 end)
@@ -184,19 +190,103 @@ end)
 **Parser Selection**
 
 ```elixir
-# Auto-selects best parser (default)
+# Default: Edition 5 parser (permissive Unicode)
 FnXML.Parser.parse(xml)
 
-# Force Zig NIF for maximum performance
-FnXML.Parser.parse(xml, parser: :nif)
+# Use Edition 4 parser (strict character validation)
+FnXML.Parser.parse(xml, edition: 4)
 
-# Force pure Elixir (no NIF dependency)
-FnXML.Parser.parse(xml, parser: :elixir)
+# Use fast parser (no position tracking, faster)
+FnXML.Parser.parse(xml, parser: :fast)
+
+# Use legacy parser
+FnXML.Parser.parse(xml, parser: :legacy)
 ```
 
 ---
 
-## 4. DOM API - Document Object Model
+## 4. Serializing XML - Converting Events Back to XML
+
+### Serialization vs Canonicalization
+
+After parsing or transforming XML, you often need to convert it back to text. FnXML provides two approaches:
+
+| Function | Purpose | Output Format | Use Case |
+|----------|---------|---------------|----------|
+| `FnXML.Event.to_iodata/2` | **General serialization** | Normal XML with optional pretty printing | Writing XML files, API responses, general output |
+| `FnXML.C14N.canonicalize/2` | **Canonical serialization** | Standardized W3C canonical form | Digital signatures, document comparison, cryptography |
+
+### General Serialization with FnXML.Event
+
+Use `FnXML.Event.to_iodata/2` for everyday XML serialization:
+
+```elixir
+# Parse and serialize back to XML
+iodata = FnXML.Parser.parse("<root><child>text</child></root>")
+|> FnXML.Event.to_iodata()
+
+# Convert to string when needed
+xml = IO.iodata_to_binary(iodata)
+# => "<root><child>text</child></root>"
+
+# Write directly to file (efficient - no intermediate string)
+File.write!("output.xml", iodata)
+
+# Pretty printing
+iodata = FnXML.Parser.parse(xml)
+|> FnXML.Event.to_iodata(pretty: true, indent: 2)
+```
+
+**Key Features:**
+- Self-closing tags (`<br/>` instead of `<br></br>`)
+- Preserves attribute order from input
+- Optional pretty printing
+- Efficient iodata output (no intermediate allocations)
+
+### Canonical Serialization with FnXML.C14N
+
+Use `FnXML.C14N.canonicalize/2` when you need **byte-identical** output:
+
+```elixir
+# Canonicalize for signatures or comparison
+iodata = FnXML.Parser.parse(xml)
+|> FnXML.C14N.canonicalize()
+
+canonical = IO.iodata_to_binary(iodata)
+
+# Different inputs become identical after canonicalization
+xml1 = "<root b='2' a='1'/>"
+xml2 = "<root   a=\"1\"   b=\"2\"  ></root>"
+
+c1 = FnXML.Parser.parse(xml1) |> FnXML.C14N.canonicalize() |> IO.iodata_to_binary()
+c2 = FnXML.Parser.parse(xml2) |> FnXML.C14N.canonicalize() |> IO.iodata_to_binary()
+
+c1 == c2  # => true (both become "<root a="1" b="2"></root>")
+```
+
+**Key Features:**
+- Attributes sorted by namespace URI, then name
+- Empty elements always as `<tag></tag>` (never `<tag/>`)
+- Whitespace normalized in attributes
+- Deterministic output (same input always produces identical bytes)
+
+### When to Use Each
+
+**Use `FnXML.Event.to_iodata/2` for:**
+- General XML output
+- API responses
+- Writing configuration files
+- Human-readable output (with pretty printing)
+
+**Use `FnXML.C14N.canonicalize/2` for:**
+- Digital signatures (before signing/verifying)
+- Document comparison (to check logical equality)
+- Cryptographic hashing
+- Compliance with W3C specifications (SAML, SOAP-Security)
+
+---
+
+## 5. DOM API - Document Object Model
 
 ### What is DOM?
 
@@ -224,8 +314,7 @@ DOM is essential when you need to:
 **Parsing and Navigation**
 
 ```elixir
-# Parse XML to DOM tree
-doc = FnXML.DOM.parse("""
+xml = """
 <library>
   <book id="1">
     <title>Elixir in Action</title>
@@ -236,7 +325,11 @@ doc = FnXML.DOM.parse("""
     <author>Chris McCord</author>
   </book>
 </library>
-""")
+"""
+
+# Parse XML to DOM tree (pipeline style)
+doc = FnXML.Parser.parse(xml)
+      |> FnXML.API.DOM.build()
 
 # Access the root element
 doc.root.tag  # => "library"
@@ -246,17 +339,17 @@ first_book = hd(doc.root.children)
 first_book.tag  # => "book"
 
 # Get attributes
-FnXML.DOM.Element.get_attribute(first_book, "id")  # => "1"
+FnXML.API.DOM.Element.get_attribute(first_book, "id")  # => "1"
 
 # Get text content
 title = Enum.find(first_book.children, &(&1.tag == "title"))
-FnXML.DOM.Element.text_content(title)  # => "Elixir in Action"
+FnXML.API.DOM.Element.text_content(title)  # => "Elixir in Action"
 ```
 
 **Building Documents**
 
 ```elixir
-alias FnXML.DOM.Element
+alias FnXML.API.DOM.Element
 
 # Create elements programmatically
 book = Element.new("book", [{"id", "3"}], [
@@ -264,12 +357,14 @@ book = Element.new("book", [{"id", "3"}], [
   Element.new("author", [], ["Stephen Bussey"])
 ])
 
-# Serialize to XML string
-FnXML.DOM.to_string(book)
+# Serialize to XML
+iodata = FnXML.API.DOM.to_event(book) |> FnXML.Event.to_iodata()
+xml = IO.iodata_to_binary(iodata)
 # => "<book id=\"3\"><title>Real-Time Phoenix</title><author>Stephen Bussey</author></book>"
 
 # Pretty print
-FnXML.DOM.to_string(book, pretty: true)
+iodata = FnXML.API.DOM.to_event(book) |> FnXML.Event.to_iodata(pretty: true)
+xml = IO.iodata_to_binary(iodata)
 ```
 
 **When to Use DOM**
@@ -284,7 +379,7 @@ FnXML.DOM.to_string(book, pretty: true)
 
 ---
 
-## 5. SAX API - Event-Driven Processing
+## 6. SAX API - Event-Driven Processing
 
 ### What is SAX?
 
@@ -317,7 +412,7 @@ SAX is crucial for:
 
 ```elixir
 defmodule BookHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
 
   # Called when an element opens
   @impl true
@@ -370,7 +465,9 @@ xml = """
 </library>
 """
 
-{:ok, books} = FnXML.SAX.parse(xml, BookHandler, %{})
+# Pipeline style (recommended)
+{:ok, books} = FnXML.Parser.parse(xml)
+               |> FnXML.API.SAX.dispatch(BookHandler, %{})
 # => [%{id: "1", title: "Book One"}, %{id: "2", title: "Book Two"}]
 ```
 
@@ -378,7 +475,7 @@ xml = """
 
 ```elixir
 defmodule FindFirstHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
 
   @impl true
   def start_element(_uri, "target", _qname, attrs, _state) do
@@ -390,12 +487,13 @@ defmodule FindFirstHandler do
 end
 
 # Stops as soon as <target> is found
-{:ok, value} = FnXML.SAX.parse(large_xml, FindFirstHandler, nil)
+{:ok, value} = FnXML.Parser.parse(large_xml)
+               |> FnXML.API.SAX.dispatch(FindFirstHandler, nil)
 ```
 
 ---
 
-## 6. StAX API - Pull-Based Processing
+## 7. StAX API - Pull-Based Processing
 
 ### What is StAX?
 
@@ -428,15 +526,18 @@ StAX excels when you need:
 **Reader: Parsing XML**
 
 ```elixir
-alias FnXML.StAX.Reader
+alias FnXML.API.StAX.Reader
 
-# Create a reader
-reader = Reader.new("""
+xml = """
 <users>
   <user id="1" name="Alice"/>
   <user id="2" name="Bob"/>
 </users>
-""")
+"""
+
+# Create a reader (pipeline style)
+reader = FnXML.Parser.parse(xml)
+         |> Reader.new()
 
 # Pull events one at a time
 reader = Reader.next(reader)
@@ -476,9 +577,9 @@ end
 **Writer: Building XML**
 
 ```elixir
-alias FnXML.StAX.Writer
+alias FnXML.API.StAX.Writer
 
-xml = Writer.new()
+iodata = Writer.new()
 |> Writer.start_document()
 |> Writer.start_element("users")
 |> Writer.start_element("user")
@@ -490,8 +591,9 @@ xml = Writer.new()
 |> Writer.attribute("name", "Bob")
 |> Writer.end_element()
 |> Writer.end_element()
-|> Writer.to_string()
+|> Writer.to_iodata()
 
+xml = IO.iodata_to_binary(iodata)
 # Result:
 # <?xml version="1.0"?><users><user id="1" name="Alice"/><user id="2" name="Bob"/></users>
 ```
@@ -513,7 +615,7 @@ Reader.characters?(reader)     # => true/false
 
 ---
 
-## 7. XML Namespaces
+## 8. XML Namespaces
 
 ### What are Namespaces?
 
@@ -554,16 +656,16 @@ events = FnXML.Parser.parse(xml)
 |> Enum.to_list()
 
 # Elements now have {namespace_uri, local_name} tuples
-# {:start_element, {"http://default.ns", "root"}, [...], loc}
-# {:start_element, {"http://default.ns", "child"}, [...], loc}
-# {:start_element, {"http://custom.ns", "child"}, [...], loc}
+# {:start_element, {"http://default.ns", "root"}, [...], line, ls, pos}
+# {:start_element, {"http://default.ns", "child"}, [...], line, ls, pos}
+# {:start_element, {"http://custom.ns", "child"}, [...], line, ls, pos}
 ```
 
 **SAX with Namespaces**
 
 ```elixir
 defmodule NsHandler do
-  use FnXML.SAX.Handler
+  use FnXML.API.SAX.Handler
 
   @impl true
   def start_element(uri, local_name, _qname, _attrs, state) do
@@ -574,23 +676,24 @@ defmodule NsHandler do
   end
 end
 
-FnXML.SAX.parse(xml, NsHandler, nil, namespaces: true)
+FnXML.Parser.parse(xml)
+|> FnXML.API.SAX.dispatch(NsHandler, nil, namespaces: true)
 ```
 
 **StAX with Namespaces**
 
 ```elixir
-reader = FnXML.StAX.Reader.new(xml, namespaces: true)
-reader = FnXML.StAX.Reader.next(reader)
+reader = FnXML.API.StAX.Reader.new(xml, namespaces: true)
+reader = FnXML.API.StAX.Reader.next(reader)
 
-FnXML.StAX.Reader.namespace_uri(reader)  # => "http://default.ns"
-FnXML.StAX.Reader.local_name(reader)     # => "root"
-FnXML.StAX.Reader.prefix(reader)         # => nil (default namespace)
+FnXML.API.StAX.Reader.namespace_uri(reader)  # => "http://default.ns"
+FnXML.API.StAX.Reader.local_name(reader)     # => "root"
+FnXML.API.StAX.Reader.prefix(reader)         # => nil (default namespace)
 ```
 
 ---
 
-## 8. Document Type Definitions (DTD)
+## 9. Document Type Definitions (DTD)
 
 ### What is a DTD?
 
@@ -640,9 +743,9 @@ xml = """
 
 # Single-pass DTD entity resolution
 events = xml
-|> FnXML.parse_stream()
+|> FnXML.Parser.parse()
 |> FnXML.DTD.resolve()              # Extracts entities from DTD and resolves them
-|> FnXML.Validate.well_formed()
+|> FnXML.Event.Validate.well_formed()
 |> Enum.to_list()
 
 # The &company; entity is resolved to "Acme Corp"
@@ -659,7 +762,7 @@ resolver = fn system_id, _public_id ->
 end
 
 events = xml
-|> FnXML.parse_stream()
+|> FnXML.Parser.parse()
 |> FnXML.DTD.resolve(external_resolver: resolver)
 |> Enum.to_list()
 ```
@@ -698,7 +801,7 @@ dtd.attributes["child"]  # => attribute definitions
 
 ---
 
-## 9. XML Canonicalization (C14N)
+## 10. XML Canonicalization (C14N)
 
 ### What is Canonicalization?
 
@@ -745,7 +848,8 @@ xml = """
 </root>
 """
 
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml)
+iodata = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize()
+canonical = IO.iodata_to_binary(iodata)
 # Result (note attribute order and empty element):
 # <root a="1" b="2">
 #   <child></child>
@@ -764,7 +868,8 @@ xml = """
 </root>
 """
 
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml, algorithm: :exc_c14n)
+iodata = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize(algorithm: :exc_c14n)
+canonical = IO.iodata_to_binary(iodata)
 # Only xmlns:used is included, xmlns:unused is filtered out
 ```
 
@@ -772,21 +877,21 @@ xml = """
 
 ```elixir
 # C14N 1.0 (includes all inherited namespaces)
-{:ok, c} = FnXML.Security.C14N.canonicalize(xml, algorithm: :c14n)
+iodata = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize(algorithm: :c14n)
 
 # C14N 1.0 with comments preserved
-{:ok, c} = FnXML.Security.C14N.canonicalize(xml, algorithm: :c14n_with_comments)
+iodata = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize(algorithm: :c14n_with_comments)
 
 # Exclusive C14N (only visibly utilized namespaces)
-{:ok, c} = FnXML.Security.C14N.canonicalize(xml, algorithm: :exc_c14n)
+iodata = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize(algorithm: :exc_c14n)
 
 # Exclusive C14N with comments
-{:ok, c} = FnXML.Security.C14N.canonicalize(xml, algorithm: :exc_c14n_with_comments)
+iodata = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize(algorithm: :exc_c14n_with_comments)
 ```
 
 ---
 
-## 10. XML Signatures
+## 11. XML Signatures
 
 ### What are XML Signatures?
 
@@ -883,7 +988,7 @@ info.references           # => [%{uri: "", transforms: [...]}]
 
 ---
 
-## 11. XML Encryption
+## 12. XML Encryption
 
 ### What is XML Encryption?
 
@@ -995,7 +1100,7 @@ info.key_transport_algorithm  # => :rsa_oaep
 
 ---
 
-## 12. Choosing the Right API
+## 13. Choosing the Right API
 
 ### Decision Guide
 
@@ -1067,5 +1172,5 @@ info.key_transport_algorithm  # => :rsa_oaep
 2. **Use `:halt` for early exit**: Stop SAX when you find what you need
 3. **Use Exclusive C14N**: Smaller output than regular C14N
 4. **Use AES-GCM**: Authenticated encryption, faster than CBC
-5. **Stream when possible**: Use `FnXML.Parser.stream/2` for files
+5. **Stream when possible**: Use `FnXML.Parser.parse/2` with `File.stream!` for files
 6. **Reuse keys**: Key generation is expensive
