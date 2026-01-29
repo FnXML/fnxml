@@ -47,7 +47,7 @@ defmodule FnXML.MixProject do
 
   defp docs do
     [
-      main: "FnXML",
+      main: "readme",
       extras: ["README.md", "quick_start_guide.md", "usage-rules.md"],
       groups_for_modules: [
         Core: [FnXML, FnXML.Parser, FnXML.Event, FnXML.Event.Filter],

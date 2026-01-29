@@ -1,14 +1,65 @@
 defmodule FnXML do
   @moduledoc """
-  Utility functions for XML event stream processing.
+  FnXML is a high-performance, pure Elixir XML processing library that implements
+  W3C XML standards using a streaming event-based architecture.
 
-  This module provides helper functions for working with XML event streams
-  produced by `FnXML.Parser`. For parsing, use `FnXML.Parser.parse/2` directly.
+  ## What is FnXML?
 
-  ## Specifications
+  FnXML parses XML documents into lazy streams of events (start element, end element,
+  characters, etc.) that flow through a composable pipeline of transformation and
+  validation components. This architecture provides:
 
-  - W3C XML 1.0 (Fifth Edition): https://www.w3.org/TR/xml/
-  - W3C Namespaces in XML 1.0: https://www.w3.org/TR/xml-names/
+  - **Constant memory usage** - Process multi-gigabyte files with minimal memory
+  - **Lazy evaluation** - Parse only what you need with early termination support
+  - **Composable pipelines** - Chain transformations, validations, and conversions
+  - **Multiple paradigms** - Use DOM (tree), SAX (push), or StAX (pull) APIs on the same stream
+  - **High performance** - Macro-generated parsers with zero-copy binary processing
+
+  ## Standards Implemented
+
+  - **W3C XML 1.0 (Fifth Edition)**: https://www.w3.org/TR/xml/
+  - **W3C Namespaces in XML 1.0**: https://www.w3.org/TR/xml-names/
+
+  The library supports both Edition 4 (strict character validation) and Edition 5
+  (permissive Unicode) parsing modes.
+
+  ## Architecture Philosophy
+
+  FnXML uses an **event streaming model** where XML processing flows through stages:
+
+  ```
+  XML Input
+     │
+     ▼
+  Parser (FnXML.Parser)
+     │
+     ├─► Events: {:start_element, "root", [], 1, 0, 1}
+     │           {:characters, "content", 1, 6, 7}
+     │           {:end_element, "root", 1, 13, 14}
+     ▼
+  Transform Components (optional)
+     │
+     ├─► FnXML.Namespaces.resolve()      - Resolve namespace URIs
+     ├─► FnXML.Event.Transform.*         - Normalize, filter, modify
+     ├─► FnXML.Event.Validate.*          - Validation layers
+     ▼
+  Consumer (your code)
+     │
+     ├─► FnXML.API.DOM.build()           - Build in-memory tree
+     ├─► FnXML.API.SAX.dispatch()        - Callback-based processing
+     ├─► FnXML.API.StAX.Reader.new()     - Cursor-based navigation
+     └─► Enum.to_list() / Enum.reduce()  - Direct stream consumption
+  ```
+
+  Each component receives events, processes them, and emits new events downstream.
+  This enables building complex XML processing pipelines from simple, focused
+  components.
+
+  ## Module Overview
+
+  This module (`FnXML`) provides utility functions for working with XML event streams
+  produced by `FnXML.Parser`. For parsing, use `FnXML.Parser.parse/2` directly or
+  the `FnXML.parse/2` alias.
 
   ## API Overview
 

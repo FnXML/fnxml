@@ -117,9 +117,9 @@ XML String/File
        ▼
 ┌─────────────────┐
 │  FnXML.Parser   │──────► Event Stream
-└─────────────────┘        {:start_element, "book", [...], loc}
-       │                   {:characters, "content", loc}
-       │                   {:end_element, "book", loc}
+└─────────────────┘        {:start_element, "book", [...], line, ls, pos}
+       │                   {:characters, "content", line, ls, pos}
+       │                   {:end_element, "book", line, ls, pos}
        │
        ├────────────────────────┬────────────────────────┐
        ▼                        ▼                        ▼
@@ -160,15 +160,20 @@ The parser is the foundation of all XML processing. A fast, correct parser enabl
 ```elixir
 # Parse XML to event stream
 events = FnXML.Parser.parse("<root><child>Hello</child></root>")
+|> Enum.to_list()
 
 # Events are tuples describing each XML construct
 # [
-#   {:start_element, "root", [], {1, 0, 1}},
-#   {:start_element, "child", [], {1, 6, 7}},
-#   {:characters, "Hello", {1, 13, 14}},
-#   {:end_element, "child", {1, 18, 19}},
-#   {:end_element, "root", {1, 26, 27}}
+#   {:start_document, nil},
+#   {:start_element, "root", [], 1, 0, 1},
+#   {:start_element, "child", [], 1, 6, 7},
+#   {:characters, "Hello", 1, 13, 14},
+#   {:end_element, "child", 1, 18, 19},
+#   {:end_element, "root", 1, 26, 27},
+#   {:end_document, nil}
 # ]
+#
+# Location fields: line (1-based), line_start_offset, absolute_position
 ```
 
 **Streaming Large Files**
@@ -651,9 +656,9 @@ events = FnXML.Parser.parse(xml)
 |> Enum.to_list()
 
 # Elements now have {namespace_uri, local_name} tuples
-# {:start_element, {"http://default.ns", "root"}, [...], loc}
-# {:start_element, {"http://default.ns", "child"}, [...], loc}
-# {:start_element, {"http://custom.ns", "child"}, [...], loc}
+# {:start_element, {"http://default.ns", "root"}, [...], line, ls, pos}
+# {:start_element, {"http://default.ns", "child"}, [...], line, ls, pos}
+# {:start_element, {"http://custom.ns", "child"}, [...], line, ls, pos}
 ```
 
 **SAX with Namespaces**
