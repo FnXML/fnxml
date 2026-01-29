@@ -41,61 +41,100 @@ defmodule FnXML.Event do
 
   ## Examples
 
-      # Parse and serialize to iodata
-      iodata = FnXML.Parser.parse("<root><child/></root>")
+      # Parse and serialize to string
+      xml = FnXML.Parser.parse("<root><child/></root>")
       |> FnXML.Event.to_iodata()
-
-      # Convert to string when needed
-      xml = IO.iodata_to_binary(iodata)
+      |> Enum.join()
       # => "<root><child/></root>"
 
-      # Write directly to file (efficient - no intermediate string)
-      iodata = FnXML.Parser.parse(large_xml)
+      # Stream directly to file (efficient for large documents)
+      File.open!("output.xml", [:write], fn file ->
+        FnXML.Parser.parse(large_xml)
+        |> FnXML.Event.to_iodata()
+        |> Enum.each(&IO.binwrite(file, &1))
+      end)
+
+      # Collect to iodata for small documents
+      iodata = FnXML.Parser.parse(xml)
       |> FnXML.Event.to_iodata()
-      File.write!("output.xml", iodata)
+      |> Enum.to_list()
 
       # Pretty print
-      iodata = FnXML.Parser.parse(xml)
+      xml = FnXML.Parser.parse(xml)
       |> FnXML.Event.to_iodata(pretty: true, indent: 4)
-      pretty_xml = IO.iodata_to_binary(iodata)
+      |> Enum.join()
 
       # DOM to XML
       doc = FnXML.API.DOM.parse("<root/>")
-      iodata = FnXML.API.DOM.to_event(doc)
+      xml = FnXML.API.DOM.to_event(doc)
       |> FnXML.Event.to_iodata()
+      |> Enum.join()
 
-      # Pipeline with validation
-      iodata = File.stream!("data.xml")
-      |> FnXML.Parser.parse()
-      |> FnXML.Event.Validate.well_formed()
-      |> FnXML.Event.to_iodata()
+      # Stream pipeline with validation to file
+      File.open!("output.xml", [:write], fn file ->
+        File.stream!("data.xml")
+        |> FnXML.Parser.parse()
+        |> FnXML.Event.Validate.well_formed()
+        |> FnXML.Event.to_iodata()
+        |> Enum.each(&IO.binwrite(file, &1))
+      end)
   """
 
   @doc """
-  Serialize event stream to iodata.
+  Serialize event stream to iodata fragments.
 
-  This is the primary serialization function. It processes events directly
-  and builds iodata in a single pass using `transform/3`.
+  Returns a **lazy stream of iodata fragments** that can be consumed incrementally.
+  This enables processing large XML documents without loading the entire
+  serialized output into memory.
 
   ## Options
 
   - `:pretty` - Format with indentation (default: false)
   - `:indent` - Number of spaces or string for indentation (default: 2)
 
+  ## Returns
+
+  A lazy stream that emits iodata fragments (binaries or iolists). Each fragment
+  is emitted as XML events are processed.
+
   ## Examples
 
-      # Serialize to iodata
-      events = FnXML.Parser.parse("<root><child/></root>")
-      iodata = FnXML.Event.to_iodata(events)
-      File.write!("output.xml", iodata)
+      # Stream directly to file (efficient for large documents)
+      File.open!("output.xml", [:write], fn file ->
+        FnXML.Parser.parse(large_xml)
+        |> FnXML.Event.to_iodata()
+        |> Enum.each(&IO.binwrite(file, &1))
+      end)
 
-      # Pretty print
-      iodata = FnXML.Event.to_iodata(events, pretty: true, indent: 4)
+      # Collect to iodata for small documents
+      iodata = FnXML.Parser.parse("<root><child/></root>")
+      |> FnXML.Event.to_iodata()
+      |> Enum.to_list()
+
+      # Convert to string
+      xml = FnXML.Parser.parse(xml)
+      |> FnXML.Event.to_iodata()
+      |> Enum.join()
+
+      # Pretty print to string
+      xml = FnXML.Parser.parse(xml)
+      |> FnXML.Event.to_iodata(pretty: true, indent: 4)
+      |> Enum.join()
 
       # Custom indent string
-      iodata = FnXML.Event.to_iodata(events, pretty: true, indent: "\\t")
+      xml = FnXML.Event.to_iodata(events, pretty: true, indent: "\\t")
+      |> Enum.join()
+
+      # Stream large file with transformations
+      File.open!("output.xml", [:write], fn file ->
+        File.stream!("input.xml")
+        |> FnXML.Parser.parse()
+        |> FnXML.Event.Validate.well_formed()
+        |> FnXML.Event.to_iodata(pretty: true)
+        |> Enum.each(&IO.binwrite(file, &1))
+      end)
   """
-  @spec to_iodata(Enumerable.t(), keyword()) :: iodata()
+  @spec to_iodata(Enumerable.t(), keyword()) :: Enumerable.t()
   def to_iodata(stream, opts \\ []) do
     pretty = Keyword.get(opts, :pretty, false)
     indent_size = Keyword.get(opts, :indent, 2)
@@ -104,25 +143,108 @@ defmodule FnXML.Event do
     # pending = nil | {tag, attrs_str, depth}
     initial_acc = nil
 
-    fragments =
-      stream
-      |> transform(initial_acc, fn element, path, pending ->
-        # Format event → {output_fragment, new_pending}
-        {output, new_pending} = format_event(element, path, pending, pretty, indent_size)
+    stream
+    |> transform(initial_acc, fn element, path, pending ->
+      # Format event → {output_fragment, new_pending}
+      {output, new_pending} = format(element, path, pending, pretty, indent_size)
 
-        # Emit output if non-empty, otherwise just update accumulator
-        if output == "" do
-          new_pending
-        else
-          {output, new_pending}
-        end
+      # Emit output if non-empty, otherwise just update accumulator
+      if output == "" do
+        new_pending
+      else
+        {output, new_pending}
+      end
+    end)
+  end
+
+  @doc """
+  Convert an iodata fragment stream to binary chunks of approximately the specified size.
+
+  Takes the lazy stream of iodata fragments from `to_iodata/2` and combines them
+  into larger binary chunks. This is useful for:
+  - Writing to files with controlled buffer sizes
+  - Sending over network with specific packet sizes
+  - Controlling memory usage when processing large documents
+
+  ## Parameters
+
+  - `iodata_stream` - Stream of iodata fragments (from `to_iodata/2`)
+  - `chunk_size` - Target size in bytes (default: 65536 / 64KB)
+
+  ## Returns
+
+  A lazy stream that emits binary chunks of approximately `chunk_size` bytes.
+  The final chunk may be smaller than `chunk_size`.
+
+  ## Examples
+
+      # Stream to file with 8KB chunks
+      File.open!("output.xml", [:write], fn file ->
+        FnXML.Parser.parse(large_xml)
+        |> FnXML.Event.to_iodata()
+        |> FnXML.Event.iodata_to_binary_block(8192)
+        |> Enum.each(&IO.binwrite(file, &1))
       end)
+
+      # Stream to file with File.stream! (default 64KB chunks)
+      FnXML.Parser.parse(large_xml)
+      |> FnXML.Event.to_iodata()
+      |> FnXML.Event.iodata_to_binary_block()
+      |> Stream.into(File.stream!("output.xml"))
+      |> Stream.run()
+
+      # Custom chunk size for network transmission
+      FnXML.Parser.parse(xml)
+      |> FnXML.Event.to_iodata()
+      |> FnXML.Event.iodata_to_binary_block(1024)  # 1KB chunks
+      |> Enum.each(&send_over_network/1)
+
+      # Collect chunks into a list
+      chunks = FnXML.Parser.parse(xml)
+      |> FnXML.Event.to_iodata()
+      |> FnXML.Event.iodata_to_binary_block(4096)
       |> Enum.to_list()
 
-    # Check if there's a final pending fragment to flush
-    # This should be handled by finalize, but transform doesn't give us
-    # an after hook, so we rely on events being well-formed
-    fragments
+  ## Performance
+
+  This function efficiently tracks the size of accumulated iodata fragments
+  without materializing them until a chunk is ready to emit. It only converts
+  to binary when emitting a chunk, minimizing allocations.
+  """
+  @spec iodata_to_binary_block(Enumerable.t(), pos_integer()) :: Enumerable.t()
+  def iodata_to_binary_block(iodata_stream, chunk_size \\ 65536) do
+    Stream.chunk_while(
+      iodata_stream,
+      # Accumulator: {list_of_fragments, accumulated_size}
+      {[], 0},
+      fn fragment, {acc_fragments, acc_size} ->
+        # Calculate size of this fragment
+        fragment_size = IO.iodata_length(fragment)
+        new_fragments = [fragment | acc_fragments]
+        new_size = acc_size + fragment_size
+
+        # If we've accumulated enough, emit a chunk
+        if new_size >= chunk_size do
+          # Convert accumulated iodata to binary (reversing to maintain order)
+          binary = IO.iodata_to_binary(Enum.reverse(new_fragments))
+          {:cont, binary, {[], 0}}
+        else
+          # Keep accumulating
+          {:cont, {new_fragments, new_size}}
+        end
+      end,
+      # After function: emit any remaining accumulated data
+      fn
+        {[], 0} ->
+          # No leftover data
+          {:cont, {[], 0}}
+
+        {fragments, _size} ->
+          # Emit final chunk (may be smaller than chunk_size)
+          binary = IO.iodata_to_binary(Enum.reverse(fragments))
+          {:cont, binary, {[], 0}}
+      end
+    )
   end
 
   # ============================================================================
@@ -130,7 +252,7 @@ defmodule FnXML.Event do
   # ============================================================================
 
   # Format a single event, handling self-closing tag detection
-  defp format_event(element, path, pending, pretty, indent_size) do
+  defp format(element, path, pending, pretty, indent_size) do
     # Returns: {output_iodata, new_pending}
     # pending = nil | {tag, attrs_str, depth}
 

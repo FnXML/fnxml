@@ -1,7 +1,7 @@
-defmodule FnXML.Event.Transform.Utf16Test do
+defmodule FnXML.Event.Preprocess.Utf16Test do
   use ExUnit.Case, async: true
 
-  alias FnXML.Event.Transform.Utf16
+  alias FnXML.Event.Preprocess.Utf16
 
   describe "detect_encoding/1" do
     test "detects UTF-16 LE BOM" do

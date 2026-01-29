@@ -39,8 +39,8 @@ defmodule FnXML.StreamTest do
   describe "Event serialization" do
     test "roundtrips XML" do
       xml = "<foo a=\"1\">first element<bar>nested element</bar></foo>"
-      iodata = FnXML.Parser.parse(xml) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == xml
+      iodata = FnXML.Parser.parse(xml) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == xml
     end
 
     test "handles all XML constructs" do
@@ -49,8 +49,8 @@ defmodule FnXML.StreamTest do
       <foo a=\"1\">text<!--comment--><?pi data?><bar/><![CDATA[<x>]]></foo>
       """
 
-      iodata = FnXML.Parser.parse(xml) |> FnXML.Event.to_iodata()
-      result = IO.iodata_to_binary(iodata) |> strip_ws()
+      iodata = FnXML.Parser.parse(xml) |> FnXML.Event.to_iodata() |> Enum.join()
+      result = iodata |> strip_ws()
 
       # Empty elements may be serialized as <bar></bar> instead of <bar/>
       assert result =~ "<?xmlversion=\"1.0\"encoding=\"UTF-8\"?>"
@@ -69,8 +69,8 @@ defmodule FnXML.StreamTest do
         {:end_element, "root", 1, 0, 15}
       ]
 
-      iodata = FnXML.Event.to_iodata(stream)
-      assert IO.iodata_to_binary(iodata) == "<root>&lt;script&gt;</root>"
+      iodata = FnXML.Event.to_iodata(stream) |> Enum.join()
+      assert iodata == "<root>&lt;script&gt;</root>"
     end
   end
 
@@ -96,9 +96,9 @@ defmodule FnXML.StreamTest do
           {:end_element, "b", 1, 0, 7},
           {:end_element, "a", 1, 0, 11}
         ]
-        |> FnXML.Event.to_iodata()
+        |> FnXML.Event.to_iodata() |> Enum.join()
 
-      assert IO.iodata_to_binary(iodata) == "<a><b/></a>"
+      assert iodata == "<a><b/></a>"
     end
   end
 

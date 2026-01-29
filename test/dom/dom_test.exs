@@ -99,14 +99,14 @@ defmodule FnXML.DOMTest do
   describe "serialization to iodata via FnXML.Stream" do
     test "converts document to iodata" do
       doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
-      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == "<root><child/></root>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == "<root><child/></root>"
     end
 
     test "converts element to iodata" do
       elem = DOM.element("div", [{"id", "1"}], ["text"])
-      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == "<div id=\"1\">text</div>"
+      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == "<div id=\"1\">text</div>"
     end
   end
 
@@ -172,38 +172,38 @@ defmodule FnXML.DOMTest do
   describe "serialization to string via FnXML.Stream" do
     test "serializes simple element" do
       doc = FnXML.Parser.parse("<root/>") |> DOM.build()
-      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == "<root/>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == "<root/>"
     end
 
     test "serializes element with attributes" do
       doc = FnXML.Parser.parse("<root id=\"1\"/>") |> DOM.build()
-      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == "<root id=\"1\"/>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == "<root id=\"1\"/>"
     end
 
     test "serializes nested elements" do
       doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
-      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == "<root><child/></root>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == "<root><child/></root>"
     end
 
     test "serializes text content" do
       doc = FnXML.Parser.parse("<root>Hello</root>") |> DOM.build()
-      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == "<root>Hello</root>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == "<root>Hello</root>"
     end
 
     test "escapes special characters" do
       elem = Element.new("root", [], ["<>&"])
-      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata()
-      assert IO.iodata_to_binary(iodata) == "<root>&lt;&gt;&amp;</root>"
+      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata() |> Enum.join()
+      assert iodata == "<root>&lt;&gt;&amp;</root>"
     end
 
     test "pretty prints when enabled" do
       doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
-      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata(pretty: true)
-      result = IO.iodata_to_binary(iodata)
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata(pretty: true) |> Enum.join()
+      result = iodata
       assert result =~ "\n"
       assert result =~ "  <child/>"
     end
@@ -238,8 +238,8 @@ defmodule FnXML.DOMTest do
     test "parse and serialize produce equivalent output" do
       original = "<root id=\"1\"><child>text</child></root>"
       doc = FnXML.Parser.parse(original) |> DOM.build()
-      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
-      result = IO.iodata_to_binary(iodata)
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
+      result = iodata
       assert result == original
     end
   end

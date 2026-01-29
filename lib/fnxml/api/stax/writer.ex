@@ -145,6 +145,7 @@ defmodule FnXML.API.StAX.Writer do
     writer
     |> to_event()
     |> FnXML.Event.to_iodata()
+    |> Enum.to_list()
   end
 
   @doc """

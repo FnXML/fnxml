@@ -355,7 +355,7 @@ defmodule Mix.Tasks.Conformance.Xml do
         # For XML 1.1, also normalize NEL and LS to LF
         utf8_content =
           content
-          |> FnXML.Event.Transform.Utf16.to_utf8()
+          |> FnXML.Event.Preprocess.Utf16.to_utf8()
           |> convert_iso8859_if_declared()
 
         # Detect XML version for line-end normalization
@@ -363,7 +363,7 @@ defmodule Mix.Tasks.Conformance.Xml do
 
         normalized_content =
           utf8_content
-          |> FnXML.Event.Transform.Normalize.line_endings()
+          |> FnXML.Event.Preprocess.Normalize.line_endings()
           |> maybe_normalize_xml11_line_ends(xml_version)
 
         # Check for encoding mismatch (e.g., UTF-16 declared but no BOM)
@@ -1660,7 +1660,7 @@ defmodule Mix.Tasks.Conformance.Xml do
   # but doesn't have a BOM and is actually ASCII/UTF-8.
   defp check_encoding_mismatch(raw_content, normalized_content) do
     # Detect actual encoding from BOM
-    actual_encoding = FnXML.Event.Transform.Utf16.detect_encoding(raw_content) |> elem(0)
+    actual_encoding = FnXML.Event.Preprocess.Utf16.detect_encoding(raw_content) |> elem(0)
 
     # Extract declared encoding from XML declaration (if present)
     declared_encoding = extract_declared_encoding(normalized_content)

@@ -30,8 +30,12 @@ defmodule FnXML do
   with XML:
 
   ```
-  XML Input
+  XML Input (Binary | File Stream)
      │
+     ▼ Preprocess (Optional - operates on binaries)
+  FnXML.Event.Preprocess.*
+     ├─► Utf16.to_utf8()                 - Convert UTF-16 to UTF-8
+     ├─► Normalize.line_endings()        - Normalize line endings
      ▼
   Parser (FnXML.Parser)
      │
@@ -146,8 +150,8 @@ defmodule FnXML do
 
       # Fully XML Spec Compliant Parsing
       stream
-      |> FnXML.Event.Transform.Utf16.to_utf8()
-      |> FnXML.Event.Transform.Normalize.line_endings_stream()
+      |> FnXML.Event.Preprocess.Utf16.to_utf8()
+      |> FnXML.Event.Preprocess.Normalize.line_endings_stream()
       |> FnXML.Parser.parse()
       |> FnXML.Event.Validate.well_formed()
       |> FnXML.Event.Validate.attributes()

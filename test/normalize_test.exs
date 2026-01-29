@@ -1,7 +1,7 @@
-defmodule FnXML.Event.Transform.NormalizeTest do
+defmodule FnXML.Event.Preprocess.NormalizeTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Event.Transform.Normalize
+  alias FnXML.Event.Preprocess.Normalize
 
   describe "line_endings/1" do
     test "converts CRLF to LF" do
