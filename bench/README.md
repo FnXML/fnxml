@@ -106,7 +106,7 @@ Key optimizations:
 |----------|-------------|
 | Maximum speed, full document | `FnXML.Legacy.FastExBlkParser.parse(xml)` |
 | Minimum memory, large files | `FnXML.Legacy.FastExBlkParser.stream(chunks)` |
-| Auto NIF/Elixir selection | `FnXML.Parser.parse(xml)` |
+| Standard parsing (Edition 5) | `FnXML.Parser.parse(xml)` |
 | File streaming | `File.stream!(path, [], 65536) \|> FnXML.Parser.parse()` |
 
 ---
@@ -130,7 +130,7 @@ mix run bench/all_parsers_bench.exs --by-size
 mix run bench/all_parsers_bench.exs --ed5
 ```
 
-**Note**: The comprehensive benchmark now includes `fnxml_parser_orig` (FnXML.Legacy.ParserOrig) which is a dead code candidate being evaluated for removal.
+**Note**: The benchmarks compare FnXML's macro-based parser (Edition 4 and Edition 5 variants) against legacy implementations and external libraries.
 
 ## Regenerating Test Data
 

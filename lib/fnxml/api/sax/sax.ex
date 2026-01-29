@@ -54,10 +54,10 @@ defmodule FnXML.API.SAX do
 
   ## Using the Default Handler
 
-  For simpler cases, use `FnXML.SAX.Handler` which provides defaults:
+  For simpler cases, use `FnXML.API.SAX.Handler` which provides defaults:
 
       defmodule CountHandler do
-        use FnXML.SAX.Handler
+        use FnXML.API.SAX.Handler
 
         @impl true
         def start_element(_uri, _local, _qname, _attrs, state) do

@@ -1,6 +1,6 @@
 defmodule FnXML.Legacy.ExBlkParser do
   @moduledoc """
-  Legacy block-at-a-time XML parser using the same algorithm as the Zig NIF parser.
+  Legacy block-at-a-time XML parser for streaming XML processing.
 
   **Note**: This parser is kept for benchmarking and backwards compatibility only.
   It is a legacy implementation that may be removed in future versions.

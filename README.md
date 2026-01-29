@@ -22,7 +22,7 @@ A functional XML library for Elixir with streaming support and three standard AP
  │  Namespace resolution      │  Saxy compatibility                │
  ├─────────────────────────────────────────────────────────────────┤
  │                      FnXML.Parser                               │
- │      Auto-selects: Zig NIF (>60KB) or ExBlkParser (<60KB)       │
+ │            Macro-based streaming parser (Edition 5)             │
  ├─────────────────────────────────────────────────────────────────┤
  │  FnXML.Legacy.ExBlkParser  │  FnXML.Legacy.FastExBlkParser      │
  │  Pure Elixir, streaming    │  Optimized variant (legacy)        │
@@ -62,6 +62,134 @@ def deps do
   [{:fnxml, "~> 0.1.0"}]
 end
 ```
+
+## Streaming Architecture
+
+FnXML uses a **lazy streaming architecture** where XML documents are processed as a stream of events rather than being loaded entirely into memory. This approach provides several key benefits:
+
+### Event Stream Model
+
+XML documents flow through the system as a lazy stream of events:
+
+```elixir
+# Each XML construct becomes an event tuple
+"<root><child>text</child></root>"
+  ↓
+[
+  {:start_document, nil},
+  {:start_element, "root", [], {1, 0, 1}},
+  {:start_element, "child", [], {1, 6, 7}},
+  {:characters, "text", {1, 13, 14}},
+  {:end_element, "child", {1, 18, 19}},
+  {:end_element, "root", {1, 26, 27}},
+  {:end_document, nil}
+]
+```
+
+### Key Advantages
+
+**1. Constant Memory Usage**
+
+Process files of any size with O(1) memory by consuming events one at a time:
+
+```elixir
+# Process a 10GB XML file with minimal memory
+File.stream!("huge.xml", [], 65_536)
+|> FnXML.Parser.parse()
+|> Stream.filter(fn {:start_element, tag, _, _} -> tag == "record"; _ -> false end)
+|> Stream.take(100)
+|> Enum.to_list()
+# Only the 100 matching records are kept in memory
+```
+
+**2. Composable Transformations**
+
+Build processing pipelines by composing stream transformations:
+
+```elixir
+File.stream!("data.xml")
+|> FnXML.Parser.parse()                        # Parse to events
+|> FnXML.Event.Validate.well_formed()          # Validate structure
+|> FnXML.Namespaces.resolve()                  # Resolve namespaces
+|> FnXML.Event.Filter.filter_ws()              # Remove whitespace
+|> FnXML.API.SAX.dispatch(Handler, state)      # Process with handler
+```
+
+Each transformation is lazy - it only processes events as they're requested downstream.
+
+**3. Early Termination**
+
+Stop processing as soon as you find what you need:
+
+```elixir
+# Find the first user with id=123, then stop parsing
+FnXML.Parser.parse(large_xml)
+|> Stream.drop_while(fn
+  {:start_element, "user", attrs, _} ->
+    not Enum.any?(attrs, fn {k, v} -> k == "id" and v == "123" end)
+  _ -> true
+end)
+|> Stream.take(1)
+|> Enum.to_list()
+# Parser stops immediately after finding the match
+```
+
+**4. Backpressure Support**
+
+Stream processing naturally provides backpressure - the parser only generates events as fast as consumers can process them:
+
+```elixir
+# Slow consumer automatically slows down the parser
+FnXML.Parser.parse(xml)
+|> Stream.each(fn event ->
+  # Expensive operation (database write, API call, etc.)
+  process_slowly(event)
+  Process.sleep(100)
+end)
+|> Stream.run()
+# Parser waits for each event to be processed before generating the next
+```
+
+**5. Multiple API Styles**
+
+The event stream can be consumed in different ways depending on your needs:
+
+- **DOM:** Collect all events into an in-memory tree (O(n) memory)
+- **SAX:** Process events with callbacks as they arrive (O(1) memory)
+- **StAX:** Pull events on demand with a cursor (O(1) memory)
+- **Raw Stream:** Direct stream manipulation with Elixir's Stream functions
+
+```elixir
+events = FnXML.Parser.parse(xml)
+
+# Option 1: Build DOM tree
+doc = events |> FnXML.API.DOM.build()
+
+# Option 2: SAX callbacks
+{:ok, result} = events |> FnXML.API.SAX.dispatch(Handler, initial_state)
+
+# Option 3: StAX cursor
+reader = events |> FnXML.API.StAX.Reader.new()
+
+# Option 4: Raw stream operations
+filtered = events
+|> Stream.filter(fn {:characters, _, _} -> true; _ -> false end)
+|> Enum.map(fn {:characters, text, _} -> text end)
+```
+
+### Chunk Boundary Handling
+
+FnXML correctly handles XML elements that span chunk boundaries in streamed input:
+
+```elixir
+# Even if <element> starts in one chunk and ends in another, it's parsed correctly
+File.stream!("file.xml", [], 1024)  # Small chunks
+|> FnXML.Parser.parse()
+|> Enum.to_list()
+# All elements are correctly parsed regardless of chunk boundaries
+```
+
+The parser maintains continuation state to handle incomplete elements across chunk boundaries transparently.
 
 ## APIs
 
@@ -213,9 +341,8 @@ xml = IO.iodata_to_binary(iodata)
 ```
 
 **Parser Options:**
-- `:parser` - Force parser: `:nif`, `:elixir`, or `:auto` (default)
-- `:threshold` - Auto-selection cutoff in bytes (default: 60KB)
-- `:block_size` - For streams, hint about chunk size for auto-selection
+- `:parser` - Select parser: `:default` (Edition 5), `:fast` (no position tracking), or `:legacy` (ExBlkParser)
+- `:edition` - XML 1.0 edition: 4 (strict) or 5 (permissive, default)
 
 **Event types (W3C StAX-compatible):**
 - `{:start_element, tag, attrs, location}` - Start element
@@ -410,16 +537,17 @@ All cryptographic operations use Erlang/OTP built-in `:crypto` and `:public_key`
 
 ## Features
 
-- **NIF acceleration** - Optional Zig NIF for high-throughput parsing (auto-selected for large inputs)
+- **Pure Elixir** - No external dependencies, runs anywhere Elixir runs
 - **Streaming parser** - Process XML incrementally without loading entire document
-- **Chunk boundary handling** - Mini-block approach handles elements spanning chunk boundaries
-- **Namespace support** - Full XML namespace resolution
+- **Macro-based performance** - Compile-time parser generation for optimal speed
+- **Chunk boundary handling** - Handles elements spanning chunk boundaries correctly
+- **Namespace support** - Full XML namespace resolution per W3C specification
 - **Three standard APIs** - DOM, SAX, StAX for different use cases
 - **XML Security** - W3C-compliant canonicalization, signatures, and encryption
 - **Lazy evaluation** - StAX Reader uses O(1) memory
 - **Location tracking** - Line/column info for error reporting
 - **Saxy compatible** - SimpleForm format for easy migration
-- **Disable NIF** - Set `FNXML_NIF=false` or `{:fnxml, "~> x.x", nif: false}` for pure Elixir
+- **Custom parsers** - Generate specialized parsers with compile-time event filtering
 
 ## License
 

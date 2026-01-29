@@ -105,7 +105,7 @@ FnXML provides a complete XML processing stack for Elixir:
 │  Namespace resolution        │  DTD parsing & validation        │
 ├──────────────────────────────┴──────────────────────────────────┤
 │                        FnXML.Parser                              │
-│       Auto-selects: Zig NIF (large) or Elixir (small)           │
+│           Macro-based streaming parser (Edition 5)              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -185,14 +185,17 @@ end)
 **Parser Selection**
 
 ```elixir
-# Auto-selects best parser (default)
+# Default: Edition 5 parser (permissive Unicode)
 FnXML.Parser.parse(xml)
 
-# Force Zig NIF for maximum performance
-FnXML.Parser.parse(xml, parser: :nif)
+# Use Edition 4 parser (strict character validation)
+FnXML.Parser.parse(xml, edition: 4)
 
-# Force pure Elixir (no NIF dependency)
-FnXML.Parser.parse(xml, parser: :elixir)
+# Use fast parser (no position tracking, faster)
+FnXML.Parser.parse(xml, parser: :fast)
+
+# Use legacy parser
+FnXML.Parser.parse(xml, parser: :legacy)
 ```
 
 ---
