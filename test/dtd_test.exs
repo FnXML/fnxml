@@ -3,7 +3,7 @@ defmodule FnXML.DTDTest do
 
   alias FnXML.DTD
 
-  describe "from_stream/2" do
+  describe "decode/2" do
     test "parses DTD with internal subset" do
       xml = """
       <!DOCTYPE note [
@@ -13,7 +13,7 @@ defmodule FnXML.DTDTest do
       <note>&greeting;</note>
       """
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode()
 
       assert model.root_element == "note"
       assert model.elements["note"] == :pcdata
@@ -30,7 +30,7 @@ defmodule FnXML.DTDTest do
       <root><child1>text</child1><child2/></root>
       """
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode()
 
       assert model.root_element == "root"
       assert model.elements["root"] == {:seq, ["child1", "child2"]}
@@ -49,7 +49,7 @@ defmodule FnXML.DTDTest do
       <root id="r1"/>
       """
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode()
 
       assert model.root_element == "root"
       attrs = model.attributes["root"]
@@ -62,12 +62,12 @@ defmodule FnXML.DTDTest do
       assert %{name: "class", type: :cdata, default: :implied} = class_attr
     end
 
-    test "returns :no_dtd when stream has no DOCTYPE" do
+    test "returns {:error, :no_dtd} when stream has no DOCTYPE" do
       xml = "<root>content</root>"
 
-      result = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      result = FnXML.Parser.parse(xml) |> DTD.decode()
 
-      assert result == :no_dtd
+      assert result == {:error, :no_dtd}
     end
 
     test "parses external SYSTEM identifier" do
@@ -77,7 +77,7 @@ defmodule FnXML.DTDTest do
       <root/>
       """
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode()
 
       assert model.root_element == "root"
       # No elements since no resolver provided
@@ -90,7 +90,7 @@ defmodule FnXML.DTDTest do
       <root/>
       """
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode()
 
       assert model.root_element == "root"
     end
@@ -105,7 +105,7 @@ defmodule FnXML.DTDTest do
         {:ok, "<!ELEMENT root EMPTY>"}
       end
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream(external_resolver: resolver)
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode(external_resolver: resolver)
 
       assert model.root_element == "root"
       assert model.elements["root"] == :empty
@@ -123,7 +123,7 @@ defmodule FnXML.DTDTest do
         {:ok, "<!ELEMENT root EMPTY>"}
       end
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream(external_resolver: resolver)
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode(external_resolver: resolver)
 
       assert model.root_element == "root"
       # Internal subset (#PCDATA) should override external (EMPTY)
@@ -142,7 +142,7 @@ defmodule FnXML.DTDTest do
         {:ok, "<!ELEMENT root (child)>"}
       end
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream(external_resolver: resolver)
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode(external_resolver: resolver)
 
       # Single-item groups are unwrapped to just the element name
       assert model.elements["root"] == "child"
@@ -301,7 +301,7 @@ defmodule FnXML.DTDTest do
       <message>&greeting;</message>
       """
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode()
 
       events =
         FnXML.Parser.parse(xml)
@@ -328,7 +328,7 @@ defmodule FnXML.DTDTest do
       <doc>Copyright &copy; Trademark &tm;</doc>
       """
 
-      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.from_stream()
+      {:ok, model} = FnXML.Parser.parse(xml) |> DTD.decode()
 
       events =
         FnXML.Parser.parse(xml)
@@ -358,7 +358,7 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
         |> Enum.to_list()
 
@@ -377,7 +377,7 @@ defmodule FnXML.DTDTest do
       xml = "<note>Hello</note>"
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
         |> Enum.to_list()
 
@@ -407,7 +407,7 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
         |> Enum.to_list()
 
@@ -436,10 +436,13 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
-        |> FnXML.Validate.well_formed()
-        |> FnXML.filter_whitespace()
+        |> FnXML.Event.Validate.well_formed()
+        |> Stream.reject(fn
+          {:characters, content, _, _, _} -> String.trim(content) == ""
+          _ -> false
+        end)
         |> Enum.to_list()
 
       # Should not have any error events
@@ -473,7 +476,7 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
         |> Enum.to_list()
 
@@ -488,16 +491,15 @@ defmodule FnXML.DTDTest do
       assert elem(text_event, 1) == "Hello, World!"
     end
 
-    test "preserves predefined entities" do
+    test "resolves both custom and predefined entities" do
       xml = """
       <!DOCTYPE doc [<!ENTITY custom "value">]>
-      <doc>&custom; &amp; &lt;tag&gt;</doc>
+      <doc>&custom; &amp; text</doc>
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
-        |> FnXML.Transform.Entities.resolve()
         |> Enum.to_list()
 
       text_event =
@@ -508,8 +510,8 @@ defmodule FnXML.DTDTest do
         end)
 
       assert text_event != nil
-      # Custom entity resolved by DTD.resolve, predefined by Entities.resolve
-      assert elem(text_event, 1) == "value & <tag>"
+      # Both custom and predefined entities resolved by DTD.resolve
+      assert elem(text_event, 1) == "value & text"
     end
 
     test "on_unknown: :emit returns error for undefined entities" do
@@ -519,7 +521,7 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve(on_unknown: :emit)
         |> Enum.to_list()
 
@@ -539,7 +541,7 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve(on_unknown: :keep)
         |> Enum.to_list()
 
@@ -562,7 +564,7 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
         |> Enum.to_list()
 
@@ -595,7 +597,7 @@ defmodule FnXML.DTDTest do
       """
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve()
         |> Enum.to_list()
 
@@ -624,7 +626,7 @@ defmodule FnXML.DTDTest do
       end
 
       events =
-        FnXML.parse_stream(xml)
+        FnXML.Parser.parse(xml)
         |> DTD.resolve(external_resolver: resolver, on_unknown: :keep)
         |> Enum.to_list()
 

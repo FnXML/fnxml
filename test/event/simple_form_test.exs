@@ -1,76 +1,17 @@
-defmodule FnXML.Transform.Stream.SimpleFormTest do
+defmodule FnXML.Event.SimpleFormTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Transform.Stream.SimpleForm
+  alias FnXML.Event.SimpleForm
   alias FnXML.API.DOM.Element
 
   describe "decode/2" do
-    test "decodes simple element" do
-      assert {"root", [], []} = SimpleForm.decode("<root/>")
-    end
-
-    test "decodes element with attributes" do
-      assert {"root", [{"id", "1"}], []} = SimpleForm.decode("<root id=\"1\"/>")
-    end
-
-    test "decodes element with text content" do
-      assert {"root", [], ["text"]} = SimpleForm.decode("<root>text</root>")
-    end
-
-    test "decodes nested elements" do
-      result = SimpleForm.decode("<a><b/></a>")
-      assert {"a", [], [{"b", [], []}]} = result
-    end
-
-    test "ignores comments by default" do
-      result = SimpleForm.decode("<root><!-- comment --><child/></root>")
-      assert {"root", [], [{"child", [], []}]} = result
-    end
-
-    test "includes comments when option set" do
-      result = SimpleForm.decode("<root><!-- comment --></root>", include_comments: true)
-      assert {"root", [], [{:comment, " comment "}]} = result
-    end
-
-    test "includes prolog when option set" do
-      xml = "<?xml version=\"1.0\"?><root/>"
-      result = SimpleForm.decode(xml, include_prolog: true)
-      assert {:prolog, attrs, {"root", [], []}} = result
-      assert {"version", "1.0"} in attrs
-    end
-  end
-
-  describe "encode/2" do
-    test "encodes simple element" do
-      result = SimpleForm.encode({"root", [], []})
-      # May be <root/> or <root></root>
-      assert result =~ "<root"
-    end
-
-    test "encodes element with attributes" do
-      result = SimpleForm.encode({"root", [{"id", "1"}], []})
-      assert result =~ "id=\"1\""
-    end
-
-    test "encodes element with text content" do
-      assert "<root>text</root>" = SimpleForm.encode({"root", [], ["text"]})
-    end
-
-    test "encodes nested elements" do
-      result = SimpleForm.encode({"a", [], [{"b", [], []}]})
-      # Empty elements may be rendered as <b/> or <b></b>
-      assert result =~ "<a>" and result =~ "</a>" and result =~ "<b"
-    end
-  end
-
-  describe "from_stream/2" do
-    test "converts stream to SimpleForm" do
-      result = FnXML.Parser.parse("<root/>") |> SimpleForm.from_stream()
+    test "decodes stream to SimpleForm" do
+      result = FnXML.Parser.parse("<root/>") |> SimpleForm.decode()
       assert {"root", [], []} = result
     end
 
     test "handles empty stream" do
-      result = [] |> SimpleForm.from_stream()
+      result = [] |> SimpleForm.decode()
       assert result == nil
     end
 
@@ -85,7 +26,7 @@ defmodule FnXML.Transform.Stream.SimpleFormTest do
         {:end_document, nil}
       ]
 
-      result = stream |> SimpleForm.from_stream()
+      result = stream |> SimpleForm.decode()
       # Result may be a single tuple (last element) or a list
       assert is_tuple(result) or is_list(result)
     end
@@ -100,7 +41,7 @@ defmodule FnXML.Transform.Stream.SimpleFormTest do
         {:end_document, nil}
       ]
 
-      result = stream |> SimpleForm.from_stream()
+      result = stream |> SimpleForm.decode()
       assert {"root", [], []} = result
     end
 
@@ -111,37 +52,37 @@ defmodule FnXML.Transform.Stream.SimpleFormTest do
         {:end_document, nil}
       ]
 
-      result = stream |> SimpleForm.from_stream()
+      result = stream |> SimpleForm.decode()
       assert "text" in List.wrap(result)
     end
 
     test "handles processing instructions" do
-      result = FnXML.Parser.parse("<?php echo?><root/>") |> SimpleForm.from_stream()
+      result = FnXML.Parser.parse("<?php echo?><root/>") |> SimpleForm.decode()
       # PIs are ignored in SimpleForm
       assert {"root", [], []} = result
     end
 
     test "handles errors in stream" do
-      result = FnXML.Parser.parse("<root><unclosed") |> SimpleForm.from_stream()
+      result = FnXML.Parser.parse("<root><unclosed") |> SimpleForm.decode()
       # Errors are ignored, partial result returned
       assert is_tuple(result) or is_list(result) or is_nil(result)
     end
   end
 
-  describe "to_stream/1" do
-    test "converts SimpleForm to stream" do
-      events = {"root", [], []} |> SimpleForm.to_stream() |> Enum.to_list()
+  describe "encode/1" do
+    test "encodes SimpleForm to stream" do
+      events = {"root", [], []} |> SimpleForm.encode() |> Enum.to_list()
       assert {:start_element, "root", [], 1, 0, 0} in events
       assert {:end_element, "root", 1, 0, 0} in events
     end
 
     test "includes text content" do
-      events = {"root", [], ["text"]} |> SimpleForm.to_stream() |> Enum.to_list()
+      events = {"root", [], ["text"]} |> SimpleForm.encode() |> Enum.to_list()
       assert {:characters, "text", 1, 0, 0} in events
     end
 
     test "handles nested elements" do
-      events = {"a", [], [{"b", [], []}]} |> SimpleForm.to_stream() |> Enum.to_list()
+      events = {"a", [], [{"b", [], []}]} |> SimpleForm.encode() |> Enum.to_list()
 
       tags =
         events
@@ -153,7 +94,7 @@ defmodule FnXML.Transform.Stream.SimpleFormTest do
     end
 
     test "handles comments" do
-      events = {"root", [], [{:comment, "text"}]} |> SimpleForm.to_stream() |> Enum.to_list()
+      events = {"root", [], [{:comment, "text"}]} |> SimpleForm.encode() |> Enum.to_list()
       assert {:comment, "text", 1, 0, 0} in events
     end
   end

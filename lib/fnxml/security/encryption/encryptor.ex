@@ -43,7 +43,8 @@ defmodule FnXML.Security.Encryption.Encryptor do
 
     case find_element_by_id(events, id) do
       {:ok, element_events} ->
-        canonical = C14N.canonicalize(element_events)
+        iodata = C14N.canonicalize(element_events)
+        canonical = IO.iodata_to_binary(iodata)
         {:ok, canonical}
 
       :not_found ->
@@ -57,7 +58,8 @@ defmodule FnXML.Security.Encryption.Encryptor do
 
     case find_element_content_by_id(events, id) do
       {:ok, content_events} ->
-        canonical = C14N.canonicalize(content_events)
+        iodata = C14N.canonicalize(content_events)
+        canonical = IO.iodata_to_binary(iodata)
         {:ok, canonical}
 
       :not_found ->

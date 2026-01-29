@@ -98,14 +98,14 @@ defmodule FnXML.DTD do
       ...> ]>
       ...> <note>Hello</note>
       ...> \"""
-      iex> {:ok, model} = FnXML.Parser.parse(xml) |> FnXML.DTD.from_stream()
+      iex> {:ok, model} = FnXML.Parser.parse(xml) |> FnXML.DTD.decode()
       iex> model.elements["note"]
       :pcdata
 
   """
-  @spec from_stream(Enumerable.t(), keyword()) ::
-          {:ok, Model.t()} | {:error, String.t()} | :no_dtd
-  def from_stream(stream, opts \\ []) do
+  @spec decode(Enumerable.t(), keyword()) ::
+          {:ok, Model.t()} | {:error, term()}
+  def decode(stream, opts \\ []) do
     stream
     |> Enum.find(fn
       {:dtd, _, _, _, _} -> true
@@ -122,8 +122,13 @@ defmodule FnXML.DTD do
         parse_doctype(content, opts)
 
       nil ->
-        :no_dtd
+        {:error, :no_dtd}
     end
+  end
+
+  @doc deprecated: "Use decode/2 instead"
+  def from_stream(stream, opts \\ []) do
+    decode(stream, opts)
   end
 
   @doc """
@@ -671,78 +676,97 @@ defmodule FnXML.DTD do
   # ============================================================================
 
   @doc """
-  Process DTD in a streaming pipeline.
+  Resolve entities in a streaming pipeline.
 
-  Extracts entity definitions from the DTD event and resolves entity
-  references in all subsequent events. Buffers events until DTD is
-  seen, then flushes with resolution applied.
+  This function has two modes:
 
-  This is the recommended way to handle DTD entity resolution in a
-  single-pass streaming pipeline:
+  1. **Single-pass mode** (recommended): Extracts DTD from stream and resolves entities in one pass
+  2. **Two-pass mode**: Uses an explicit DTD model for entity resolution
 
-      FnXML.parse_stream(xml)
+  ## Single-Pass Mode (Stream Only)
+
+  Buffers events until DTD is seen, extracts entity definitions, then flushes
+  buffer with resolution applied. This is the recommended approach:
+
+      FnXML.Parser.parse(xml)
       |> FnXML.DTD.resolve()
-      |> FnXML.Validate.well_formed()
+      |> FnXML.Event.Validate.well_formed()
       |> Enum.to_list()
 
-  ## Options
+  ## Two-Pass Mode (Stream with Model)
+
+  Uses an explicitly extracted DTD model for entity resolution:
+
+      {:ok, model} = FnXML.Parser.parse(xml) |> FnXML.DTD.decode()
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.DTD.resolve(model)
+      |> Enum.to_list()
+
+  ## Options (Single-Pass Mode)
 
   - `:on_unknown` - How to handle unknown entities: `:raise` | `:emit` | `:keep` | `:remove` (default: `:keep`)
+  - `:error_on_no_dtd` - Emit error event if no DTD found (default: `false`)
   - `:edition` - XML edition for re-parsing entity content with markup (default: 5)
   - `:max_expansion_depth` - Maximum entity nesting (default: 10)
   - `:max_total_expansion` - Maximum expanded size (default: 1_000_000)
   - `:external_resolver` - Function `(system_id, public_id) -> {:ok, content} | {:error, reason}`
     to fetch external DTD content (not external entity content)
 
-  ## Examples
+  ## Options (Two-Pass Mode)
 
-      # Basic usage
-      FnXML.parse_stream(xml)
-      |> FnXML.DTD.resolve()
-      |> Enum.to_list()
+  - `:max_expansion_depth` - Maximum nesting depth (default: 10)
+  - `:max_total_expansion` - Maximum expanded size (default: 1_000_000)
+  - `:external_resolver` - Function to resolve external entities
+  - `:on_unknown` - `:raise` | `:emit` | `:keep` | `:remove` (default: :raise)
 
-      # With options
-      FnXML.parse_stream(xml)
-      |> FnXML.DTD.resolve(on_unknown: :emit)
-      |> FnXML.Validate.well_formed()
-      |> Enum.to_list()
-
-  ## How It Works
+  ## How Single-Pass Works
 
   Per XML spec, DTD must appear after the prolog but before the root element.
   This function buffers events until either a DTD or root element is seen:
 
   1. If DTD found: extract internal entities, flush buffer with resolution, continue resolving
-  2. If root element found first: no DTD, flush buffer, continue resolving predefined entities only
+  2. If root element found first: no DTD, flush buffer as-is (unless `:error_on_no_dtd` is true)
 
-  In both cases, predefined XML entities (`&amp;`, `&lt;`, `&gt;`, `&apos;`, `&quot;`)
-  and numeric character references (`&#60;`, `&#x3C;`) are always resolved.
-
-  Entity values containing XML markup (e.g., `<!ENTITY e "<foo/>">`) are re-parsed
-  using the edition-specific parser to validate character classes.
-
-  External entity references (SYSTEM/PUBLIC) are NOT resolved - they are kept as-is
-  when `on_unknown: :keep` is set (the default). Only internal entity definitions
-  from the DTD are used for resolution.
+  When `:error_on_no_dtd` is false (default), the stream passes through unchanged if
+  no DTD is present. Predefined XML entities (`&amp;`, `&lt;`, `&gt;`, `&apos;`, `&quot;`)
+  and numeric character references are still resolved by the parser itself.
 
   The buffer only holds pre-root events (prolog, comments, PIs, whitespace),
   which is typically just a few events.
   """
-  @spec resolve(Enumerable.t(), keyword()) :: Enumerable.t()
-  def resolve(stream, opts \\ []) do
+  @spec resolve(Enumerable.t(), keyword() | Model.t()) :: Enumerable.t()
+  @spec resolve(Enumerable.t(), Model.t(), keyword()) :: Enumerable.t()
+  def resolve(stream, opts_or_model \\ [])
+
+  # Single-pass mode: resolve(stream, opts)
+  def resolve(stream, opts) when is_list(opts) do
     on_unknown = Keyword.get(opts, :on_unknown, :keep)
     edition = Keyword.get(opts, :edition, 5)
+    error_on_no_dtd = Keyword.get(opts, :error_on_no_dtd, false)
 
     # Initial state: {buffer, model}
     # buffer = list of events before DTD (reversed for efficiency)
     # model = nil | {:ok, entities_map} | :no_dtd | {:error, reason}
     Stream.transform(stream, {[], nil}, fn event, {buffer, model} ->
-      resolve_dtd_event(event, buffer, model, on_unknown, edition, opts)
+      resolve_dtd_event(event, buffer, model, on_unknown, edition, error_on_no_dtd, opts)
     end)
   end
 
+  # Two-pass mode: resolve(stream, model)
+  def resolve(stream, %Model{} = model) do
+    resolve(stream, model, [])
+  end
+
+  # Two-pass mode: resolve(stream, model, opts)
+  def resolve(stream, %Model{} = model, opts) when is_list(opts) do
+    alias FnXML.DTD.EntityResolver
+
+    EntityResolver.resolve(stream, model, opts)
+  end
+
   # State: waiting for DTD or root element
-  defp resolve_dtd_event(event, buffer, nil, on_unknown, edition, opts) do
+  defp resolve_dtd_event(event, buffer, nil, on_unknown, edition, error_on_no_dtd, opts) do
     case event do
       # Found DTD - extract entities and flush buffer with resolution
       {:dtd, content, _, _, _} = dtd_event ->
@@ -754,14 +778,10 @@ defmodule FnXML.DTD do
       # Found start_element before DTD - no DTD in document
       # Flush buffer and resolve this event (for predefined entities in attributes)
       {:start_element, _, _, _, _, _} = elem_event ->
-        flushed = Enum.reverse(buffer)
-        resolved_elem = resolve_event(elem_event, %{}, on_unknown, edition)
-        {flushed ++ resolved_elem, {[], :no_dtd}}
+        handle_no_dtd(elem_event, buffer, on_unknown, edition, error_on_no_dtd)
 
       {:start_element, _, _, _} = elem_event ->
-        flushed = Enum.reverse(buffer)
-        resolved_elem = resolve_event(elem_event, %{}, on_unknown, edition)
-        {flushed ++ resolved_elem, {[], :no_dtd}}
+        handle_no_dtd(elem_event, buffer, on_unknown, edition, error_on_no_dtd)
 
       # Error events - flush buffer and pass through error, set state to :no_dtd
       {:error, _, _, _, _, _} = error_event ->
@@ -788,21 +808,45 @@ defmodule FnXML.DTD do
   end
 
   # State: have DTD - resolve entities in events
-  defp resolve_dtd_event(event, [], {:ok, entities}, on_unknown, edition, _opts) do
+  defp resolve_dtd_event(event, [], {:ok, entities}, on_unknown, edition, _error_on_no_dtd, _opts) do
     {resolve_event(event, entities, on_unknown, edition), {[], {:ok, entities}}}
   end
 
   # State: no DTD in document - still resolve predefined entities
-  defp resolve_dtd_event(event, [], :no_dtd, on_unknown, edition, _opts) do
-    # Even without a DTD, we need to resolve predefined entities (&amp;, &lt;, etc.)
-    # and validate entity reference syntax
+  defp resolve_dtd_event(event, [], :no_dtd, on_unknown, edition, _error_on_no_dtd, _opts) do
+    # No DTD but still resolve predefined entities (&amp;, &lt;, etc.)
     {resolve_event(event, %{}, on_unknown, edition), {[], :no_dtd}}
   end
 
   # State: DTD had error - still resolve predefined entities
-  defp resolve_dtd_event(event, [], {:error, _reason}, on_unknown, edition, _opts) do
+  defp resolve_dtd_event(
+         event,
+         [],
+         {:error, _reason},
+         on_unknown,
+         edition,
+         _error_on_no_dtd,
+         _opts
+       ) do
     # Even with a DTD error, we should still resolve predefined entities
     {resolve_event(event, %{}, on_unknown, edition), {[], {:error, :passthrough}}}
+  end
+
+  # Handle no DTD case - emit error if requested, otherwise be passive
+  defp handle_no_dtd(elem_event, buffer, on_unknown, edition, error_on_no_dtd) do
+    flushed = Enum.reverse(buffer)
+
+    if error_on_no_dtd do
+      # Emit error event when DTD is required but not found
+      error_event = {:error, :no_dtd, "No DTD found in document", nil, nil, nil}
+      resolved_elem = resolve_event(elem_event, %{}, on_unknown, edition)
+      {flushed ++ [error_event] ++ resolved_elem, {[], :no_dtd}}
+    else
+      # Passive mode - still resolve predefined entities (&amp;, &lt;, etc.)
+      # even without a DTD by passing empty entities map
+      resolved_elem = resolve_event(elem_event, %{}, on_unknown, edition)
+      {flushed ++ resolved_elem, {[], :no_dtd}}
+    end
   end
 
   defp handle_dtd_found(dtd_event, content, buffer, on_unknown, edition, opts) do
@@ -837,9 +881,26 @@ defmodule FnXML.DTD do
     end
   end
 
+  # Predefined XML entities (always available)
+  @predefined_entities %{
+    "amp" => "&",
+    "lt" => "<",
+    "gt" => ">",
+    "quot" => "\"",
+    "apos" => "'"
+  }
+
+  # Merge predefined entities with DTD entities
+  defp merge_entities(dtd_entities) do
+    Map.merge(@predefined_entities, dtd_entities)
+  end
+
   # Resolve entities in a single event
   defp resolve_event({:characters, text, line, ls, pos}, entities, on_unknown, edition) do
-    case FnXML.Transform.Entities.resolve_text(text, entities, on_unknown) do
+    # Always include predefined entities
+    all_entities = merge_entities(entities)
+
+    case FnXML.Event.Transform.Entities.resolve_text(text, all_entities, on_unknown) do
       {:ok, resolved} ->
         # If resolved content contains markup, re-parse it
         if String.starts_with?(resolved, "<") do
@@ -855,7 +916,10 @@ defmodule FnXML.DTD do
   end
 
   defp resolve_event({:characters, text, loc}, entities, on_unknown, edition) do
-    case FnXML.Transform.Entities.resolve_text(text, entities, on_unknown) do
+    # Always include predefined entities
+    all_entities = merge_entities(entities)
+
+    case FnXML.Event.Transform.Entities.resolve_text(text, all_entities, on_unknown) do
       {:ok, resolved} ->
         # If resolved content contains markup, re-parse it
         if String.starts_with?(resolved, "<") do
@@ -886,9 +950,12 @@ defmodule FnXML.DTD do
 
   # Returns {resolved_attrs, error_events}
   defp resolve_attributes(attrs, entities, on_unknown) do
+    # Always include predefined entities
+    all_entities = merge_entities(entities)
+
     {resolved, errors} =
       Enum.reduce(attrs, {[], []}, fn {name, value}, {acc_attrs, acc_errors} ->
-        case FnXML.Transform.Entities.resolve_text(value, entities, on_unknown) do
+        case FnXML.Event.Transform.Entities.resolve_text(value, all_entities, on_unknown) do
           {:ok, resolved} ->
             {[{name, resolved} | acc_attrs], acc_errors}
 
@@ -909,7 +976,7 @@ defmodule FnXML.DTD do
     expanded = expand_char_refs_in_string(content)
 
     # Re-parse with edition-specific parser
-    parser = FnXML.Parser.parser(edition)
+    parser = FnXML.Parser.generate(edition)
 
     events =
       [expanded]

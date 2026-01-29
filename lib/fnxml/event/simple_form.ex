@@ -1,4 +1,4 @@
-defmodule FnXML.Transform.Stream.SimpleForm do
+defmodule FnXML.Event.SimpleForm do
   @moduledoc """
   Converts between XML stream events and Saxy SimpleForm format.
 
@@ -13,9 +13,38 @@ defmodule FnXML.Transform.Stream.SimpleForm do
   - `attributes` - List of `{name, value}` tuples
   - `content` - List containing text strings and child element tuples
 
+  ## Functions
+
+  - `decode/2` - Convert event stream to SimpleForm
+  - `encode/1` - Convert SimpleForm to event stream
+
+  ## Examples
+
+      # Decode event stream to SimpleForm
+      iex> FnXML.Parser.parse("<a>text</a>")
+      ...> |> FnXML.Event.SimpleForm.decode()
+      {"a", [], ["text"]}
+
+      # Encode SimpleForm to event stream
+      iex> {"a", [], ["text"]}
+      ...> |> FnXML.Event.SimpleForm.encode()
+      ...> |> Enum.to_list()
+      [{:start_element, "a", [], 1, 0, 0}, {:characters, "text", 1, 0, 0}, {:end_element, "a", 1, 0, 0}]
+
+      # Use in pipelines with validation
+      iex> FnXML.Parser.parse(xml)
+      ...> |> FnXML.Event.Validate.well_formed()
+      ...> |> FnXML.Event.SimpleForm.decode()
+
+      # Encode and serialize
+      iex> simple_form
+      ...> |> FnXML.Event.SimpleForm.encode()
+      ...> |> FnXML.Event.to_iodata()
+      ...> |> IO.iodata_to_binary()
+
   ## See Also
 
-  For new code, consider using `FnXML.DOM` instead, which provides:
+  For new code, consider using `FnXML.API.DOM` instead, which provides:
   - Struct-based representation with `%FnXML.API.DOM.Element{}`
   - Document-level metadata with `%FnXML.API.DOM.Document{}`
   - Standard DOM-style API
@@ -29,27 +58,6 @@ defmodule FnXML.Transform.Stream.SimpleForm do
   (https://github.com/qcam/saxy) by Cẩm Huỳnh. This module is provided
   for interoperability with codebases using Saxy's data structures.
 
-  ## Examples
-
-      # Decode XML to SimpleForm
-      iex> FnXML.Transform.Stream.SimpleForm.decode("<root><item id=\"1\">Hello</item></root>")
-      {"root", [], [{"item", [{"id", "1"}], ["Hello"]}]}
-
-      # Encode SimpleForm back to XML
-      iex> FnXML.Transform.Stream.SimpleForm.encode({"root", [], [{"item", [{"id", "1"}], ["Hello"]}]})
-      "<root><item id=\"1\">Hello</item></root>"
-
-      # Convert FnXML stream to SimpleForm
-      iex> FnXML.Parser.parse("<a>text</a>")
-      ...> |> FnXML.Transform.Stream.SimpleForm.from_stream()
-      {"a", [], ["text"]}
-
-      # Convert SimpleForm to FnXML stream
-      iex> {"a", [], ["text"]}
-      ...> |> FnXML.Transform.Stream.SimpleForm.to_stream()
-      ...> |> Enum.to_list()
-      [{:start_element, "a", [], nil}, {:characters, "text", nil}, {:end_element, "a"}]
-
   ## When to Use
 
   Use this module when:
@@ -62,59 +70,11 @@ defmodule FnXML.Transform.Stream.SimpleForm do
   alias FnXML.API.DOM.Element
 
   @doc """
-  Decode an XML string directly to SimpleForm format.
-
-  This is a convenience function that parses XML and converts to SimpleForm
-  in one step.
-
-  ## Options
-
-  - `:include_comments` - Include comments as `{:comment, content}` tuples (default: false)
-  - `:include_prolog` - Return `{:prolog, attrs, simple_form}` if XML prolog present (default: false)
-
-  ## Examples
-
-      iex> FnXML.Transform.Stream.SimpleForm.decode("<root><child>text</child></root>")
-      {"root", [], [{"child", [], ["text"]}]}
-
-      iex> FnXML.Transform.Stream.SimpleForm.decode("<root attr=\"val\"/>")
-      {"root", [{"attr", "val"}], []}
-
-  """
-  def decode(xml, opts \\ []) when is_binary(xml) do
-    FnXML.Parser.parse(xml)
-    |> from_stream(opts)
-  end
-
-  @doc """
-  Encode a SimpleForm tuple to an XML string.
-
-  ## Options
-
-  - `:pretty` - Format with newlines and indentation (default: false)
-  - `:indent` - Number of spaces for indentation when pretty printing (default: 2)
-
-  ## Examples
-
-      iex> FnXML.Transform.Stream.SimpleForm.encode({"root", [], ["text"]})
-      "<root>text</root>"
-
-      iex> FnXML.Transform.Stream.SimpleForm.encode({"div", [{"class", "container"}], []})
-      "<div class=\"container\"></div>"
-
-  """
-  def encode(simple_form, opts \\ []) do
-    simple_form
-    |> to_stream()
-    |> FnXML.Transform.Stream.to_xml(opts)
-    |> Enum.join()
-  end
-
-  @doc """
-  Convert an FnXML event stream to SimpleForm format.
+  Decode an FnXML event stream to SimpleForm format.
 
   Takes a stream of FnXML parser events and builds the nested SimpleForm
-  tuple structure.
+  tuple structure. This is the primary decoding function that enables
+  validation and transformation pipelines before converting to SimpleForm.
 
   ## Options
 
@@ -123,16 +83,24 @@ defmodule FnXML.Transform.Stream.SimpleForm do
 
   ## Examples
 
+      # Basic decoding
       iex> FnXML.Parser.parse("<a><b>text</b></a>")
-      ...> |> FnXML.Transform.Stream.SimpleForm.from_stream()
+      ...> |> FnXML.Event.SimpleForm.decode()
       {"a", [], [{"b", [], ["text"]}]}
 
+      # With validation pipeline
+      iex> FnXML.Parser.parse(xml)
+      ...> |> FnXML.Event.Validate.well_formed()
+      ...> |> FnXML.Namespaces.resolve()
+      ...> |> FnXML.Event.SimpleForm.decode()
+
+      # Include comments
       iex> FnXML.Parser.parse("<root><!-- comment --><child/></root>")
-      ...> |> FnXML.Transform.Stream.SimpleForm.from_stream(include_comments: true)
+      ...> |> FnXML.Event.SimpleForm.decode(include_comments: true)
       {"root", [], [{:comment, " comment "}, {"child", [], []}]}
 
   """
-  def from_stream(stream, opts \\ []) do
+  def decode(stream, opts \\ []) do
     include_comments = Keyword.get(opts, :include_comments, false)
     include_prolog = Keyword.get(opts, :include_prolog, false)
 
@@ -153,6 +121,49 @@ defmodule FnXML.Transform.Stream.SimpleForm do
     else
       simple_form
     end
+  end
+
+  @doc """
+  Encode a SimpleForm tuple to an FnXML event stream.
+
+  Takes a SimpleForm tuple and produces a stream of FnXML parser events.
+  This is the primary encoding function that enables piping SimpleForm data
+  through FnXML stream transformations and validation.
+
+  ## Examples
+
+      # Basic encoding
+      iex> {"root", [], ["text"]}
+      ...> |> FnXML.Event.SimpleForm.encode()
+      ...> |> Enum.to_list()
+      [{:start_element, "root", [], 1, 0, 0}, {:characters, "text", 1, 0, 0}, {:end_element, "root", 1, 0, 0}]
+
+      # Encode and validate
+      iex> simple_form
+      ...> |> FnXML.Event.SimpleForm.encode()
+      ...> |> FnXML.Event.Validate.well_formed()
+      ...> |> FnXML.Event.to_iodata()
+      ...> |> IO.iodata_to_binary()
+
+      # Encode with nested elements
+      iex> {"div", [{"id", "main"}], [{"span", [], ["hello"]}]}
+      ...> |> FnXML.Event.SimpleForm.encode()
+      ...> |> Enum.to_list()
+      [
+        {:start_element, "div", [{"id", "main"}], 1, 0, 0},
+        {:start_element, "span", [], 1, 0, 0},
+        {:characters, "hello", 1, 0, 0},
+        {:end_element, "span", 1, 0, 0},
+        {:end_element, "div", 1, 0, 0}
+      ]
+
+  """
+  def encode(simple_form) do
+    Stream.resource(
+      fn -> [simple_form] end,
+      &emit_next/1,
+      fn _ -> :ok end
+    )
   end
 
   # Handle open tag - push new element onto stack (6-tuple from parser)
@@ -380,40 +391,6 @@ defmodule FnXML.Transform.Stream.SimpleForm do
     {[{parent_tag, parent_attrs, parent_children ++ [completed]} | rest], prolog}
   end
 
-  @doc """
-  Convert a SimpleForm tuple to an FnXML event stream.
-
-  Takes a SimpleForm tuple and produces a stream of FnXML parser events.
-  This is useful for piping SimpleForm data through FnXML stream
-  transformations.
-
-  ## Examples
-
-      iex> {"root", [], ["text"]}
-      ...> |> FnXML.Transform.Stream.SimpleForm.to_stream()
-      ...> |> Enum.to_list()
-      [{:start_element, "root", [], nil}, {:characters, "text", nil}, {:end_element, "root"}]
-
-      iex> {"div", [{"id", "main"}], [{"span", [], ["hello"]}]}
-      ...> |> FnXML.Transform.Stream.SimpleForm.to_stream()
-      ...> |> Enum.to_list()
-      [
-        {:start_element, "div", [{"id", "main"}], nil},
-        {:start_element, "span", [], nil},
-        {:characters, "hello", nil},
-        {:end_element, "span"},
-        {:end_element, "div"}
-      ]
-
-  """
-  def to_stream(simple_form) do
-    Stream.resource(
-      fn -> [simple_form] end,
-      &emit_next/1,
-      fn _ -> :ok end
-    )
-  end
-
   # Nothing left to emit
   defp emit_next([]), do: {:halt, []}
 
@@ -453,7 +430,7 @@ defmodule FnXML.Transform.Stream.SimpleForm do
   ## Examples
 
       iex> [{"a", [], []}, {"b", [], []}]
-      ...> |> FnXML.Transform.Stream.SimpleForm.list_to_stream()
+      ...> |> FnXML.Event.SimpleForm.list_to_stream()
       ...> |> Enum.to_list()
       [{:start_element, "a", [], 1, 0, 0}, {:end_element, "a", 1, 0, 0}, {:start_element, "b", [], 1, 0, 0}, {:end_element, "b", 1, 0, 0}]
 
@@ -472,7 +449,7 @@ defmodule FnXML.Transform.Stream.SimpleForm do
   ## Examples
 
       iex> {"root", [{"id", "1"}], ["text"]}
-      ...> |> FnXML.Transform.Stream.SimpleForm.to_dom()
+      ...> |> FnXML.Event.SimpleForm.to_dom()
       %FnXML.API.DOM.Element{tag: "root", attributes: [{"id", "1"}], children: ["text"]}
 
   """
@@ -499,7 +476,7 @@ defmodule FnXML.Transform.Stream.SimpleForm do
   ## Examples
 
       iex> %FnXML.API.DOM.Element{tag: "root", attributes: [{"id", "1"}], children: ["text"]}
-      ...> |> FnXML.Transform.Stream.SimpleForm.from_dom()
+      ...> |> FnXML.Event.SimpleForm.from_dom()
       {"root", [{"id", "1"}], ["text"]}
 
   """

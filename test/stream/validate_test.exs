@@ -1,7 +1,7 @@
 defmodule FnXML.ValidateTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Validate
+  alias FnXML.Event.Validate
 
   describe "well_formed/2" do
     test "valid nested tags pass" do

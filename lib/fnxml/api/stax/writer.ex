@@ -7,7 +7,8 @@ defmodule FnXML.API.StAX.Writer do
 
   ## Usage
 
-      xml = FnXML.StAX.Writer.new()
+      # Build the document structure
+      writer = FnXML.StAX.Writer.new()
       |> FnXML.StAX.Writer.start_document()
       |> FnXML.StAX.Writer.start_element("root")
       |> FnXML.StAX.Writer.attribute("id", "1")
@@ -16,8 +17,21 @@ defmodule FnXML.API.StAX.Writer do
       |> FnXML.StAX.Writer.end_element()
       |> FnXML.StAX.Writer.end_element()
       |> FnXML.StAX.Writer.end_document()
-      |> FnXML.StAX.Writer.to_string()
 
+      # Get events for further processing
+      events = FnXML.StAX.Writer.to_event(writer)
+      # => [
+      #   {:prolog, "xml", [{"version", "1.0"}], nil},
+      #   {:start_element, "root", [{"id", "1"}], nil},
+      #   {:start_element, "child", [], nil},
+      #   {:characters, "Hello World", nil},
+      #   {:end_element, "child"},
+      #   {:end_element, "root"}
+      # ]
+
+      # Or serialize directly to iodata
+      iodata = FnXML.StAX.Writer.to_iodata(writer)
+      xml = IO.iodata_to_binary(iodata)
       # => "<?xml version=\"1.0\"?><root id=\"1\"><child>Hello World</child></root>"
 
   ## State Transitions
@@ -35,17 +49,22 @@ defmodule FnXML.API.StAX.Writer do
       |> FnXML.StAX.Writer.namespace("ex", "http://example.org")
       |> FnXML.StAX.Writer.attribute("http://example.org", "attr", "value")
 
-  ## Character Escaping
+  ## Output Formats
 
-  The writer automatically escapes special characters:
+  The writer can output in two formats:
 
+  - **Event stream** (`to_event/1`): Returns a list of events that can be further
+    transformed, validated, or serialized using other FnXML modules
+  - **iodata** (`to_iodata/1`): Convenience wrapper that serializes events to iodata
+
+  Character escaping happens automatically during serialization for:
   - Text content: `&`, `<`, `>`
   - Attributes: `&`, `<`, `>`, `"`
   """
 
   defstruct [
-    # iodata accumulator (reversed)
-    output: [],
+    # Event accumulator (reversed)
+    events: [],
     # Stack of open element names
     stack: [],
     # :initial | :prolog | :element | :content
@@ -57,7 +76,7 @@ defmodule FnXML.API.StAX.Writer do
   ]
 
   @type t :: %__MODULE__{
-          output: iodata(),
+          events: list(),
           stack: [String.t()],
           state: :initial | :prolog | :element | :content,
           pending_attrs: [{String.t(), String.t()}],
@@ -77,31 +96,55 @@ defmodule FnXML.API.StAX.Writer do
   end
 
   @doc """
-  Get the XML output as a string.
+  Get the XML output as an event stream.
+
+  Returns a list of events that can be piped to `FnXML.Event.to_iodata/2`
+  or `FnXML.C14N.canonicalize/2`.
 
   ## Examples
 
-      xml = writer |> FnXML.StAX.Writer.to_string()
+      events = writer |> FnXML.StAX.Writer.to_event()
+      # => [
+      #   {:start_element, "root", [{"id", "1"}], nil},
+      #   {:characters, "text", nil},
+      #   {:end_element, "root"}
+      # ]
+
+      # Serialize to XML
+      iodata = events |> FnXML.Event.to_iodata()
+
+      # Or canonicalize
+      iodata = events |> FnXML.C14N.canonicalize()
   """
-  @spec to_string(t()) :: String.t()
-  def to_string(%__MODULE__{} = writer) do
-    writer
-    |> to_iodata()
-    |> IO.iodata_to_binary()
+  @spec to_event(t()) :: [tuple()]
+  def to_event(%__MODULE__{state: :element} = writer) do
+    # Close any pending element tag
+    writer = flush_start_tag(writer)
+    Enum.reverse(writer.events)
+  end
+
+  def to_event(%__MODULE__{events: events}) do
+    Enum.reverse(events)
   end
 
   @doc """
-  Get the XML output as iodata (more efficient for large documents).
+  Get the XML output as iodata.
+
+  Convenience method that calls `to_event/1` then serializes with
+  `FnXML.Event.to_iodata/2`.
+
+  Use `IO.iodata_to_binary/1` to convert to a string if needed.
+
+  ## Examples
+
+      iodata = writer |> FnXML.StAX.Writer.to_iodata()
+      xml = IO.iodata_to_binary(iodata)
   """
   @spec to_iodata(t()) :: iodata()
-  def to_iodata(%__MODULE__{state: :element} = writer) do
-    # Close any pending element tag
-    writer = flush_start_tag(writer)
-    Enum.reverse(writer.output)
-  end
-
-  def to_iodata(%__MODULE__{output: output}) do
-    Enum.reverse(output)
+  def to_iodata(writer) do
+    writer
+    |> to_event()
+    |> FnXML.Event.to_iodata()
   end
 
   @doc """
@@ -121,15 +164,13 @@ defmodule FnXML.API.StAX.Writer do
   def start_document(writer, version \\ "1.0", encoding \\ nil)
 
   def start_document(%__MODULE__{state: :initial} = writer, version, nil) do
-    %{writer | output: ["<?xml version=\"#{version}\"?>" | writer.output], state: :prolog}
+    event = {:prolog, "xml", [{"version", version}], nil, nil, nil}
+    %{writer | events: [event | writer.events], state: :prolog}
   end
 
   def start_document(%__MODULE__{state: :initial} = writer, version, encoding) do
-    %{
-      writer
-      | output: ["<?xml version=\"#{version}\" encoding=\"#{encoding}\"?>" | writer.output],
-        state: :prolog
-    }
+    event = {:prolog, "xml", [{"version", version}, {"encoding", encoding}], nil, nil, nil}
+    %{writer | events: [event | writer.events], state: :prolog}
   end
 
   @doc """
@@ -208,25 +249,29 @@ defmodule FnXML.API.StAX.Writer do
   """
   @spec end_element(t()) :: t()
   def end_element(%__MODULE__{state: :element, stack: [name | rest]} = writer) do
-    # Self-closing tag - include name and any pending attrs/ns
+    # Self-closing tag - emit both start and end events
+    # Build namespace declarations as attributes
     ns_attrs =
       writer.pending_ns
       |> Enum.reverse()
       |> Enum.map(fn
-        {nil, uri} -> [" xmlns=\"", escape_attr(uri), "\""]
-        {prefix, uri} -> [" xmlns:", prefix, "=\"", escape_attr(uri), "\""]
+        {nil, uri} -> {"xmlns", uri}
+        {prefix, uri} -> {"xmlns:#{prefix}", uri}
       end)
 
-    attrs =
-      writer.pending_attrs
-      |> Enum.reverse()
-      |> Enum.map(fn {attr_name, value} ->
-        [" ", attr_name, "=\"", escape_attr(value), "\""]
-      end)
+    # Combine all attributes
+    attrs = Enum.reverse(writer.pending_attrs) ++ ns_attrs
+
+    # Emit start_element followed by end_element (in reverse order since events are reversed)
+    events = [
+      {:end_element, name, nil, nil, nil},
+      {:start_element, name, attrs, nil, nil, nil}
+      | writer.events
+    ]
 
     %{
       writer
-      | output: [["<", name, ns_attrs, attrs, "/>"] | writer.output],
+      | events: events,
         stack: rest,
         state: :content,
         pending_attrs: [],
@@ -237,7 +282,8 @@ defmodule FnXML.API.StAX.Writer do
   def end_element(%__MODULE__{stack: [name | rest]} = writer) do
     writer = flush_start_tag(writer)
 
-    %{writer | output: [["</", name, ">"] | writer.output], stack: rest, state: :content}
+    event = {:end_element, name, nil, nil, nil}
+    %{writer | events: [event | writer.events], stack: rest, state: :content}
   end
 
   @doc """
@@ -311,7 +357,7 @@ defmodule FnXML.API.StAX.Writer do
   @doc """
   Write text content.
 
-  Special characters (`&`, `<`, `>`) are automatically escaped.
+  Special characters (`&`, `<`, `>`) are automatically escaped during serialization.
 
   ## Examples
 
@@ -321,9 +367,9 @@ defmodule FnXML.API.StAX.Writer do
   @spec characters(t(), String.t()) :: t()
   def characters(%__MODULE__{} = writer, text) do
     writer = flush_start_tag(writer)
-    escaped = escape_text(text)
+    event = {:characters, text, nil, nil, nil}
 
-    %{writer | output: [[escaped] | writer.output], state: :content}
+    %{writer | events: [event | writer.events], state: :content}
   end
 
   @doc """
@@ -337,8 +383,9 @@ defmodule FnXML.API.StAX.Writer do
   @spec cdata(t(), String.t()) :: t()
   def cdata(%__MODULE__{} = writer, text) do
     writer = flush_start_tag(writer)
+    event = {:cdata, text, nil, nil, nil}
 
-    %{writer | output: [["<![CDATA[", text, "]]>"] | writer.output], state: :content}
+    %{writer | events: [event | writer.events], state: :content}
   end
 
   @doc """
@@ -352,8 +399,9 @@ defmodule FnXML.API.StAX.Writer do
   @spec comment(t(), String.t()) :: t()
   def comment(%__MODULE__{} = writer, text) do
     writer = flush_start_tag(writer)
+    event = {:comment, text, nil, nil, nil}
 
-    %{writer | output: [["<!--", text, "-->"] | writer.output], state: :content}
+    %{writer | events: [event | writer.events], state: :content}
   end
 
   @doc """
@@ -370,14 +418,16 @@ defmodule FnXML.API.StAX.Writer do
 
   def processing_instruction(%__MODULE__{} = writer, target, nil) do
     writer = flush_start_tag(writer)
+    event = {:processing_instruction, target, nil, nil, nil, nil}
 
-    %{writer | output: [["<?", target, "?>"] | writer.output], state: :content}
+    %{writer | events: [event | writer.events], state: :content}
   end
 
   def processing_instruction(%__MODULE__{} = writer, target, data) do
     writer = flush_start_tag(writer)
+    event = {:processing_instruction, target, data, nil, nil, nil}
 
-    %{writer | output: [["<?", target, " ", data, "?>"] | writer.output], state: :content}
+    %{writer | events: [event | writer.events], state: :content}
   end
 
   @doc """
@@ -391,8 +441,9 @@ defmodule FnXML.API.StAX.Writer do
   @spec dtd(t(), String.t()) :: t()
   def dtd(%__MODULE__{} = writer, content) do
     writer = flush_start_tag(writer)
+    event = {:dtd, content, nil, nil, nil}
 
-    %{writer | output: [["<!DOCTYPE ", content, ">"] | writer.output], state: :content}
+    %{writer | events: [event | writer.events], state: :content}
   end
 
   @doc """
@@ -406,32 +457,30 @@ defmodule FnXML.API.StAX.Writer do
   @spec entity_ref(t(), String.t()) :: t()
   def entity_ref(%__MODULE__{} = writer, name) do
     writer = flush_start_tag(writer)
+    event = {:entity_ref, name, nil, nil, nil}
 
-    %{writer | output: [["&", name, ";"] | writer.output], state: :content}
+    %{writer | events: [event | writer.events], state: :content}
   end
 
   # Flush pending start tag with attributes and namespaces
   defp flush_start_tag(%__MODULE__{state: :element, stack: [name | _]} = writer) do
-    # Build namespace declarations
+    # Build namespace declarations as attributes
     ns_attrs =
       writer.pending_ns
       |> Enum.reverse()
       |> Enum.map(fn
-        {nil, uri} -> [" xmlns=\"", escape_attr(uri), "\""]
-        {prefix, uri} -> [" xmlns:", prefix, "=\"", escape_attr(uri), "\""]
+        {nil, uri} -> {"xmlns", uri}
+        {prefix, uri} -> {"xmlns:#{prefix}", uri}
       end)
 
-    # Build attributes
-    attrs =
-      writer.pending_attrs
-      |> Enum.reverse()
-      |> Enum.map(fn {attr_name, value} ->
-        [" ", attr_name, "=\"", escape_attr(value), "\""]
-      end)
+    # Combine all attributes
+    attrs = Enum.reverse(writer.pending_attrs) ++ ns_attrs
+
+    event = {:start_element, name, attrs, nil, nil, nil}
 
     %{
       writer
-      | output: [["<", name, ns_attrs, attrs, ">"] | writer.output],
+      | events: [event | writer.events],
         state: :content,
         pending_attrs: [],
         pending_ns: []
@@ -439,21 +488,4 @@ defmodule FnXML.API.StAX.Writer do
   end
 
   defp flush_start_tag(writer), do: writer
-
-  # Escape text content
-  defp escape_text(text) do
-    text
-    |> String.replace("&", "&amp;")
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-  end
-
-  # Escape attribute values
-  defp escape_attr(value) do
-    value
-    |> String.replace("&", "&amp;")
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-    |> String.replace("\"", "&quot;")
-  end
 end

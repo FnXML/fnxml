@@ -106,8 +106,8 @@ Key optimizations:
 |----------|-------------|
 | Maximum speed, full document | `FnXML.Legacy.FastExBlkParser.parse(xml)` |
 | Minimum memory, large files | `FnXML.Legacy.FastExBlkParser.stream(chunks)` |
-| Auto NIF/Elixir selection | `FnXML.Parser.stream(xml)` |
-| File streaming | `File.stream!(path, [], 65536) \|> FnXML.Parser.stream()` |
+| Auto NIF/Elixir selection | `FnXML.Parser.parse(xml)` |
+| File streaming | `File.stream!(path, [], 65536) \|> FnXML.Parser.parse()` |
 
 ---
 

@@ -50,7 +50,7 @@ defmodule FnXML.MixProject do
       main: "FnXML",
       extras: ["README.md", "quick_start_guide.md", "usage-rules.md"],
       groups_for_modules: [
-        Core: [FnXML, FnXML.Parser, FnXML.Transform.Stream],
+        Core: [FnXML, FnXML.Parser, FnXML.Event, FnXML.Event.Filter],
         "DOM API": [
           FnXML.DOM,
           FnXML.DOM.Document,
@@ -60,22 +60,30 @@ defmodule FnXML.MixProject do
         ],
         "SAX API": [FnXML.SAX, FnXML.SAX.Handler],
         "StAX API": [FnXML.StAX, FnXML.StAX.Reader, FnXML.StAX.Writer],
+        Transform: [
+          FnXML.Event.Transform.Normalize,
+          FnXML.Event.Transform.Entities,
+          FnXML.Event.Transform.Utf16
+        ],
+        Validate: [
+          FnXML.Event.Validate,
+          FnXML.Event.Validate.Namespaces
+        ],
+        Canonicalization: [FnXML.C14N, FnXML.C14N.Serializer],
         Security: [
-          FnXML.Security.C14N,
           FnXML.Security.Signature,
           FnXML.Security.Encryption,
           FnXML.Security.Algorithms,
           FnXML.Security.Namespaces
         ],
         Namespaces: [
-          FnXML.Transform.Namespaces,
-          FnXML.Transform.Namespaces.Context,
-          FnXML.Transform.Namespaces.QName,
-          FnXML.Transform.Namespaces.Resolver,
-          FnXML.Validate.Namespaces
+          FnXML.Namespaces,
+          FnXML.Namespaces.Context,
+          FnXML.Namespaces.QName,
+          FnXML.Namespaces.Resolver
         ],
         DTD: [FnXML.DTD, FnXML.DTD.Model, FnXML.DTD.Parser],
-        Utilities: [FnXML.Element, FnXML.Transform.Stream.SimpleForm]
+        Utilities: [FnXML.Element, FnXML.Event.SimpleForm]
       ]
     ]
   end

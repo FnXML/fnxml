@@ -209,7 +209,7 @@ defmodule FnXML.API.SAX do
       # With validation and transforms
       {:ok, state} = File.stream!("data.xml")
                      |> FnXML.Parser.parse()
-                     |> FnXML.Validate.well_formed()
+                     |> FnXML.Event.Validate.well_formed()
                      |> FnXML.API.SAX.dispatch(MyHandler, %{count: 0})
 
       # Without namespace resolution

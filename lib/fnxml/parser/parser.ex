@@ -9,31 +9,23 @@ defmodule FnXML.Parser do
   - `:fast` - Optimized parser without position tracking (`FnXML.Legacy.FastExBlkParser`)
   - `:legacy` - Legacy runtime parser (`FnXML.Legacy.ExBlkParser`)
 
-  ## Options
-
-  - `:parser` - Parser selection: `:default`, `:fast`, or `:legacy` (default: `:default`)
-  - `:edition` - XML 1.0 edition (4 or 5, default: 5) - only applies to `:default` parser
-
-  ## Usage
+  ## Basic Usage
 
       # Default parser (Edition 5)
-      events = FnXML.Parser.stream("<root/>") |> Enum.to_list()
+      events = FnXML.Parser.parse("<root/>") |> Enum.to_list()
 
       # Fast parser (no position tracking, faster)
-      events = FnXML.Parser.stream(xml, parser: :fast) |> Enum.to_list()
+      events = FnXML.Parser.parse(xml, parser: :fast) |> Enum.to_list()
 
       # Legacy parser (Legacy.ExBlkParser)
-      events = FnXML.Parser.stream(xml, parser: :legacy) |> Enum.to_list()
+      events = FnXML.Parser.parse(xml, parser: :legacy) |> Enum.to_list()
 
       # Edition 4 parser
-      events = FnXML.Parser.stream(xml, edition: 4) |> Enum.to_list()
+      events = FnXML.Parser.parse(xml, edition: 4) |> Enum.to_list()
 
-      # Parse to list directly
-      events = FnXML.Parser.parse("<root><child/></root>")
-
-      # Stream from file
+      # Parse from file stream
       events = File.stream!("large.xml", [], 65536)
-               |> FnXML.Parser.stream()
+               |> FnXML.Parser.parse()
                |> Enum.to_list()
 
       # Direct access to edition-specific parsers for maximum performance
@@ -63,6 +55,210 @@ defmodule FnXML.Parser do
   - `pos` - Absolute byte position
 
   Note: The fast parser emits `nil` for all location fields.
+
+  ## Custom Parsers
+
+  FnXML allows you to create custom parser modules at compile time with specific
+  event filtering and options for improved performance.
+
+  ### Quick Start
+
+      defmodule MyApp.MinimalParser do
+        use FnXML.Parser.Generator,
+          edition: 5,
+          disable: [:space, :comment]
+      end
+
+      # Use your custom parser
+      MyApp.MinimalParser.parse("<root>  text  </root>")
+      |> Enum.to_list()
+      # Events: no :space or :comment events
+
+  ### Generator Options
+
+  When using `FnXML.Parser.Generator`, the following options are available:
+
+  **Required:**
+  - `:edition` - XML 1.0 edition (4 or 5)
+    - Edition 5: Permissive character validation (recommended)
+    - Edition 4: Strict character validation per XML 1.0 spec Appendix B
+
+  **Optional:**
+  - `:disable` - List of event types to skip at compile time:
+    - `:space` - Skip whitespace-only text nodes
+    - `:comment` - Skip XML comments (`<!-- ... -->`)
+    - `:cdata` - Skip CDATA sections (`<![CDATA[...]]>`)
+    - `:prolog` - Skip XML declarations (`<?xml ...?>`)
+    - `:characters` - Skip all text content
+    - `:processing_instruction` - Skip processing instructions (`<?target data?>`)
+
+  - `:positions` - Position tracking mode:
+    - `:full` (default) - Include line, ls, and abs_pos
+    - `:line_only` - Include only line numbers
+    - `:none` - No position data (fastest)
+
+  ### Common Use Cases
+
+  #### 1. Minimal Parser (Configuration Files)
+
+  Skip whitespace and comments for parsing configuration files where formatting doesn't matter:
+
+      defmodule MyApp.ConfigParser do
+        use FnXML.Parser.Generator,
+          edition: 5,
+          disable: [:space, :comment]
+      end
+
+  **Performance:** ~40% faster than standard parser
+
+  #### 2. Structure-Only Parser (Schema Validation)
+
+  Parse only element structure, ignoring all text content:
+
+      defmodule MyApp.StructureParser do
+        use FnXML.Parser.Generator,
+          edition: 5,
+          disable: [:characters, :space, :comment, :cdata]
+      end
+
+  **Use cases:**
+  - Schema validation
+  - Document structure analysis
+  - Element counting and statistics
+
+  #### 3. Fast Parser (Large Files)
+
+  Maximum performance when you don't need position tracking:
+
+      defmodule MyApp.FastParser do
+        use FnXML.Parser.Generator,
+          edition: 5,
+          positions: :none
+      end
+
+  **Performance:** ~50% faster than standard parser with position tracking
+
+  #### 4. Content Parser (Text Extraction)
+
+  Extract elements and text while skipping metadata:
+
+      defmodule MyApp.ContentParser do
+        use FnXML.Parser.Generator,
+          edition: 5,
+          disable: [:space, :comment, :prolog, :processing_instruction]
+      end
+
+  **Use cases:**
+  - Content extraction
+  - Text indexing
+  - Data migration
+
+  #### 5. Strict Parser (Edition 4)
+
+  Use XML 1.0 Fourth Edition for strict character validation:
+
+      defmodule MyApp.StrictParser do
+        use FnXML.Parser.Generator,
+          edition: 4
+      end
+
+  **Use cases:**
+  - Validating legacy XML documents
+  - Ensuring maximum compatibility
+  - Standards compliance testing
+
+  ### Performance Comparison
+
+  Based on parsing a document with 100 elements:
+
+  | Parser Configuration | Relative Performance | Use Case |
+  |---------------------|---------------------|----------|
+  | Standard (full) | 100% (baseline) | General purpose |
+  | Minimal (no space/comments) | ~60% | Config files |
+  | Fast (no positions) | ~60% | Large files, no errors |
+  | Structure only | ~55% | Schema validation |
+  | Combined (minimal + fast) | ~40% | Maximum performance |
+
+  ### Integration with Pipelines
+
+  Custom parsers work seamlessly with all FnXML APIs:
+
+      # With DOM
+      doc = MyApp.MinimalParser.parse(xml)
+            |> FnXML.API.DOM.build()
+
+      # With SAX
+      {:ok, result} = MyApp.MinimalParser.stream([xml])
+                      |> FnXML.API.SAX.dispatch(MyHandler, [])
+
+      # With StAX
+      reader = MyApp.MinimalParser.stream([xml])
+               |> FnXML.API.StAX.Reader.new()
+
+      # With validation
+      events = MyApp.MinimalParser.parse(xml)
+               |> FnXML.Event.Validate.well_formed()
+               |> FnXML.Namespaces.resolve()
+               |> Enum.to_list()
+
+  ### Introspection
+
+  Custom parsers expose their configuration:
+
+      defmodule MyParser do
+        use FnXML.Parser.Generator,
+          edition: 5,
+          disable: [:space, :comment]
+      end
+
+      MyParser.edition()        # => 5
+      MyParser.disabled()       # => [:space, :comment]
+      MyParser.position_mode()  # => :full
+
+  ### Best Practices
+
+  1. **Profile First**: Use the standard parser first, then create custom parsers if performance is an issue
+
+  2. **Match Use Case**: Choose options that match your specific use case:
+     - Config files → disable `:space`, `:comment`
+     - Schema validation → disable all content events
+     - Large files → set `positions: :none`
+
+  3. **Module Naming**: Use descriptive names like `ConfigParser`, `StructureParser`, `FastParser`
+
+  4. **Document Purpose**: Add `@moduledoc` explaining why the parser has specific options
+
+  5. **Test Both**: Test with both standard and custom parsers during development
+
+  ### Complete Example
+
+      defmodule MyApp.Parsers.Minimal do
+        @moduledoc \"\"\"
+        Optimized XML parser for configuration files.
+
+        Skips whitespace-only text nodes and comments for faster parsing
+        of configuration files where formatting and documentation don't matter.
+
+        Approximately 40% faster than the standard parser.
+        \"\"\"
+
+        use FnXML.Parser.Generator,
+          edition: 5,
+          disable: [:space, :comment]
+
+        @doc \"\"\"
+        Parse XML configuration file.
+
+        ## Example
+
+            iex> xml = "<config><setting>value</setting></config>"
+            iex> #{__MODULE__}.parse(xml) |> Enum.to_list()
+            # Only structural and content events
+        \"\"\"
+        def parse(xml) when is_binary(xml) do
+          stream([xml])
+        end
+      end
   """
 
   # ===========================================================================
@@ -101,27 +297,24 @@ defmodule FnXML.Parser do
   Returns the module that can be used for all parsing operations
   without per-call edition dispatch.
 
-  ## Example
+  ## Examples
 
-      parser = FnXML.Parser.parser(5)
+      # Get Edition 5 parser
+      parser = FnXML.Parser.generate(5)
       parser.parse("<root/>")
       parser.stream(File.stream!("large.xml"))
-  """
-  @spec parser(edition()) :: module()
-  def parser(5), do: __MODULE__.Edition5
-  def parser(4), do: __MODULE__.Edition4
-  def parser(_), do: __MODULE__.Edition5
 
-  @doc """
-  Check if a name is valid in BOTH Edition 4 and Edition 5.
+      # Get Edition 4 parser
+      parser = FnXML.Parser.generate(4)
 
-  Useful for ensuring maximum interoperability when generating XML.
+  Note: `generate/1` returns pre-compiled parser modules (Edition4 or Edition5).
+  For custom parsers with specific options, use `FnXML.Parser.Generator` directly
+  at compile time. See the "Custom Parsers" section in the module documentation.
   """
-  @spec interoperable_name?(String.t()) :: boolean()
-  def interoperable_name?(name) do
-    FnXML.Char.valid_name_ed4?(name)
-    # If valid in Ed4, automatically valid in Ed5 (Ed5 is superset)
-  end
+  @spec generate(edition()) :: module()
+  def generate(5), do: __MODULE__.Edition5
+  def generate(4), do: __MODULE__.Edition4
+  def generate(_), do: __MODULE__.Edition5
 
   @doc """
   Parse XML from a string or stream.
@@ -149,7 +342,7 @@ defmodule FnXML.Parser do
       # With validation pipeline
       File.stream!("large.xml")
       |> FnXML.Parser.parse()
-      |> FnXML.Validate.well_formed()
+      |> FnXML.Event.Validate.well_formed()
       |> FnXML.Namespaces.resolve()
       |> FnXML.API.DOM.build()
 
@@ -182,7 +375,7 @@ defmodule FnXML.Parser do
       _ ->
         # Use Edition 5 as default
         edition = Keyword.get(opts, :edition, 5)
-        parser(edition).stream(source)
+        generate(edition).stream(source)
     end
   end
 
@@ -195,19 +388,9 @@ defmodule FnXML.Parser do
   end
 
   @doc """
-  Alias for `parse/2` for backward compatibility.
-
-  Use `parse/2` directly in new code.
-  """
-  def stream(source, opts \\ []) do
-    parse(source, opts)
-  end
-
-  @doc """
   Low-level: parse a single block of XML.
 
-  This is used internally for streaming. Most users should use `stream/2`
-  or `parse/2` instead.
+  This is used internally for streaming. Most users should use `parse/2` instead.
 
   ## Parameters
 

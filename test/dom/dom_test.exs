@@ -79,13 +79,13 @@ defmodule FnXML.DOMTest do
 
   describe "build/2" do
     test "builds DOM from parser stream" do
-      doc = FnXML.parse_stream("<root>text</root>") |> DOM.build()
+      doc = FnXML.Parser.parse("<root>text</root>") |> DOM.build()
       assert doc.root.tag == "root"
       assert doc.root.children == ["text"]
     end
 
     test "builds DOM with nested elements from stream" do
-      doc = FnXML.parse_stream("<a><b><c/></b></a>") |> DOM.build()
+      doc = FnXML.Parser.parse("<a><b><c/></b></a>") |> DOM.build()
       assert doc.root.tag == "a"
       [b] = doc.root.children
       assert b.tag == "b"
@@ -93,19 +93,19 @@ defmodule FnXML.DOMTest do
   end
 
   # ==========================================================================
-  # DOM.to_iodata/2
+  # Serialization via FnXML.Stream
   # ==========================================================================
 
-  describe "to_iodata/2" do
+  describe "serialization to iodata via FnXML.Stream" do
     test "converts document to iodata" do
       doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
-      iodata = DOM.to_iodata(doc)
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
       assert IO.iodata_to_binary(iodata) == "<root><child/></root>"
     end
 
     test "converts element to iodata" do
       elem = DOM.element("div", [{"id", "1"}], ["text"])
-      iodata = DOM.to_iodata(elem)
+      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata()
       assert IO.iodata_to_binary(iodata) == "<div id=\"1\">text</div>"
     end
   end
@@ -157,7 +157,9 @@ defmodule FnXML.DOMTest do
     end
 
     test "parses comments when enabled" do
-      doc = FnXML.Parser.parse("<root><!-- comment --></root>") |> DOM.build(include_comments: true)
+      doc =
+        FnXML.Parser.parse("<root><!-- comment --></root>") |> DOM.build(include_comments: true)
+
       assert [{:comment, " comment "}] = doc.root.children
     end
 
@@ -167,44 +169,50 @@ defmodule FnXML.DOMTest do
     end
   end
 
-  describe "to_string/2" do
+  describe "serialization to string via FnXML.Stream" do
     test "serializes simple element" do
       doc = FnXML.Parser.parse("<root/>") |> DOM.build()
-      assert DOM.to_string(doc) == "<root/>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root/>"
     end
 
     test "serializes element with attributes" do
       doc = FnXML.Parser.parse("<root id=\"1\"/>") |> DOM.build()
-      assert DOM.to_string(doc) == "<root id=\"1\"/>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root id=\"1\"/>"
     end
 
     test "serializes nested elements" do
       doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
-      assert DOM.to_string(doc) == "<root><child/></root>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root><child/></root>"
     end
 
     test "serializes text content" do
       doc = FnXML.Parser.parse("<root>Hello</root>") |> DOM.build()
-      assert DOM.to_string(doc) == "<root>Hello</root>"
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root>Hello</root>"
     end
 
     test "escapes special characters" do
       elem = Element.new("root", [], ["<>&"])
-      assert DOM.to_string(elem) == "<root>&lt;&gt;&amp;</root>"
+      iodata = DOM.to_event(elem) |> FnXML.Event.to_iodata()
+      assert IO.iodata_to_binary(iodata) == "<root>&lt;&gt;&amp;</root>"
     end
 
     test "pretty prints when enabled" do
       doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
-      result = DOM.to_string(doc, pretty: true)
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata(pretty: true)
+      result = IO.iodata_to_binary(iodata)
       assert result =~ "\n"
       assert result =~ "  <child/>"
     end
   end
 
-  describe "to_stream/1" do
+  describe "to_event/1" do
     test "converts element to event stream" do
       elem = Element.new("root", [{"id", "1"}], ["text"])
-      events = DOM.to_stream(elem) |> Enum.to_list()
+      events = DOM.to_event(elem) |> Enum.to_list()
 
       assert [
                {:start_element, "root", [{"id", "1"}], nil},
@@ -215,7 +223,7 @@ defmodule FnXML.DOMTest do
 
     test "converts document to event stream" do
       doc = FnXML.Parser.parse("<root><child/></root>") |> DOM.build()
-      events = DOM.to_stream(doc) |> Enum.to_list()
+      events = DOM.to_event(doc) |> Enum.to_list()
 
       assert [
                {:start_element, "root", [], nil},
@@ -230,7 +238,8 @@ defmodule FnXML.DOMTest do
     test "parse and serialize produce equivalent output" do
       original = "<root id=\"1\"><child>text</child></root>"
       doc = FnXML.Parser.parse(original) |> DOM.build()
-      result = DOM.to_string(doc)
+      iodata = DOM.to_event(doc) |> FnXML.Event.to_iodata()
+      result = IO.iodata_to_binary(iodata)
       assert result == original
     end
   end

@@ -1,4 +1,4 @@
-defmodule FnXML.Transform.Utf16 do
+defmodule FnXML.Event.Transform.Utf16 do
   @moduledoc """
   UTF-16 to UTF-8 conversion for XML parsing.
 
@@ -9,11 +9,11 @@ defmodule FnXML.Transform.Utf16 do
 
       # With streams
       File.stream!("document.xml", [], 65536)
-      |> FnXML.Transform.Utf16.to_utf8()
-      |> FnXML.ParserStream.parse()
+      |> FnXML.Event.Transform.Utf16.to_utf8()
+      |> FnXML.Parser.parse()
 
       # With binaries
-      xml = File.read!("document.xml") |> FnXML.Transform.Utf16.to_utf8()
+      xml = File.read!("document.xml") |> FnXML.Event.Transform.Utf16.to_utf8()
       FnXML.Parser.parse(xml)
 
   ## Supported Encodings
@@ -41,11 +41,11 @@ defmodule FnXML.Transform.Utf16 do
 
       # Stream input
       File.stream!("file.xml")
-      |> FnXML.Transform.Utf16.to_utf8()
-      |> FnXML.ParserStream.parse()
+      |> FnXML.Event.Transform.Utf16.to_utf8()
+      |> FnXML.Parser.parse()
 
       # Binary input
-      xml = File.read!("file.xml") |> FnXML.Transform.Utf16.to_utf8()
+      xml = File.read!("file.xml") |> FnXML.Event.Transform.Utf16.to_utf8()
       FnXML.Parser.parse(xml)
 
   """
@@ -71,8 +71,8 @@ defmodule FnXML.Transform.Utf16 do
 
       # Known UTF-16 LE file without BOM
       File.stream!("utf16le_no_bom.xml")
-      |> FnXML.Transform.Utf16.to_utf8(encoding: :utf16_le)
-      |> FnXML.ParserStream.parse()
+      |> FnXML.Event.Transform.Utf16.to_utf8(encoding: :utf16_le)
+      |> FnXML.Parser.parse()
 
   """
   @spec to_utf8(binary() | Enumerable.t(), keyword()) :: binary() | Enumerable.t()
@@ -106,13 +106,13 @@ defmodule FnXML.Transform.Utf16 do
 
   ## Examples
 
-      iex> FnXML.Transform.Utf16.detect_encoding(<<0xFF, 0xFE, 0x3C, 0x00>>)
+      iex> FnXML.Event.Transform.Utf16.detect_encoding(<<0xFF, 0xFE, 0x3C, 0x00>>)
       {:utf16_le, <<0x3C, 0x00>>}
 
-      iex> FnXML.Transform.Utf16.detect_encoding(<<0xFE, 0xFF, 0x00, 0x3C>>)
+      iex> FnXML.Event.Transform.Utf16.detect_encoding(<<0xFE, 0xFF, 0x00, 0x3C>>)
       {:utf16_be, <<0x00, 0x3C>>}
 
-      iex> FnXML.Transform.Utf16.detect_encoding("<root/>")
+      iex> FnXML.Event.Transform.Utf16.detect_encoding("<root/>")
       {:utf8, "<root/>"}
 
   """

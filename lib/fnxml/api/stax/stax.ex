@@ -175,7 +175,7 @@ defmodule FnXML.API.StAX do
 
       # With validation
       reader = FnXML.Parser.parse(xml)
-               |> FnXML.Validate.well_formed()
+               |> FnXML.Event.Validate.well_formed()
                |> FnXML.API.StAX.reader()
   """
   @spec reader(Enumerable.t(), keyword()) :: FnXML.API.StAX.Reader.t()

@@ -15,10 +15,10 @@ A functional XML library for Elixir with streaming support and three standard AP
  │                    FnXML.Security                               │
  │     C14N (Canonicalization) │ Signatures │ Encryption           │
  ├─────────────────────────────────────────────────────────────────┤
- │                     FnXML.Transform.Stream                                │
+ │                     FnXML.Event.Transform.Stream                                │
  │            Event stream transformations & formatting            │
  ├─────────────────────────────────────────────────────────────────┤
- │  FnXML.Namespaces          │  FnXML.Transform.Stream.SimpleForm           │
+ │  FnXML.Namespaces          │  FnXML.Event.Transform.Stream.SimpleForm           │
  │  Namespace resolution      │  Saxy compatibility                │
  ├─────────────────────────────────────────────────────────────────┤
  │                      FnXML.Parser                               │
@@ -77,7 +77,7 @@ doc = FnXML.Parser.parse("<root><child id=\"1\">text</child></root>")
 # With validation/transformation pipeline
 doc = File.stream!("large.xml")
       |> FnXML.Parser.parse()
-      |> FnXML.Validate.well_formed()
+      |> FnXML.Event.Validate.well_formed()
       |> FnXML.Namespaces.resolve()
       |> FnXML.API.DOM.build()
 
@@ -126,7 +126,7 @@ end
 # With validation/transforms
 {:ok, result} = File.stream!("large.xml")
                 |> FnXML.Parser.parse()
-                |> FnXML.Validate.well_formed()
+                |> FnXML.Event.Validate.well_formed()
                 |> FnXML.API.SAX.dispatch(MyHandler, [])
 ```
 
@@ -146,7 +146,7 @@ reader = FnXML.Parser.parse(xml)
 # With validation/transforms
 reader = File.stream!("large.xml")
          |> FnXML.Parser.parse()
-         |> FnXML.Validate.well_formed()
+         |> FnXML.Event.Validate.well_formed()
          |> FnXML.API.StAX.Reader.new()
 
 # Pull events one at a time (lazy - O(1) memory)
@@ -208,9 +208,8 @@ FnXML.Parser.parse("<root xmlns=\"http://example.org\"><child/></root>")
 # => [{:start_element, {"http://example.org", "root"}, [...], ...}, ...]
 
 # Convert stream to XML
-events
-|> FnXML.Transform.Stream.to_xml()
-|> Enum.join()
+iodata = events |> FnXML.Event.to_iodata()
+xml = IO.iodata_to_binary(iodata)
 ```
 
 **Parser Options:**
@@ -227,20 +226,83 @@ events
 - `{:prolog, "xml", attrs, location}` - XML declaration
 - `{:processing_instruction, target, data, location}` - Processing instruction
 
+### Custom Parsers
+
+Create specialized parser modules with compile-time event filtering for improved performance:
+
+```elixir
+# Define a custom parser that skips whitespace and comments
+defmodule MyApp.MinimalParser do
+  use FnXML.Parser.Generator,
+    edition: 5,
+    disable: [:space, :comment]
+end
+
+# Use your custom parser
+MyApp.MinimalParser.parse("<root>text</root>")
+|> Enum.to_list()
+# => Only structure and content events, no whitespace or comments
+```
+
+**Generator Options:**
+- `:edition` - Required. XML 1.0 edition (4 or 5)
+- `:disable` - List of event types to skip:
+  - `:space` - Whitespace-only text nodes
+  - `:comment` - XML comments
+  - `:cdata` - CDATA sections
+  - `:prolog` - XML declarations
+  - `:characters` - Text content
+  - `:processing_instruction` - Processing instructions
+- `:positions` - Position tracking:
+  - `:full` (default) - Line, column, and byte offset
+  - `:line_only` - Only line numbers
+  - `:none` - No position data (fastest)
+
+**Example Parsers:**
+
+```elixir
+# Structure-only parser (elements only)
+defmodule StructureParser do
+  use FnXML.Parser.Generator,
+    edition: 5,
+    disable: [:characters, :space, :comment, :cdata]
+end
+
+# Fast parser (no position tracking)
+defmodule FastParser do
+  use FnXML.Parser.Generator,
+    edition: 5,
+    positions: :none
+end
+```
+
+**Runtime Access:**
+
+Get pre-built parser modules at runtime:
+
+```elixir
+# Get Edition 5 parser
+parser = FnXML.Parser.generate(5)
+parser.parse("<root/>")
+
+# Get Edition 4 parser (strict character validation)
+parser = FnXML.Parser.generate(4)
+```
+
 ### Saxy Compatibility
 
 For codebases using Saxy's SimpleForm format:
 
 ```elixir
 # Decode to SimpleForm tuple
-{"root", attrs, children} = FnXML.Transform.Stream.SimpleForm.decode("<root><child/></root>")
+{"root", attrs, children} = FnXML.Event.Transform.Stream.SimpleForm.decode("<root><child/></root>")
 
 # Encode back to XML
-FnXML.Transform.Stream.SimpleForm.encode({"root", [], ["text"]})
+FnXML.Event.Transform.Stream.SimpleForm.encode({"root", [], ["text"]})
 
 # Convert between SimpleForm and DOM
-elem = FnXML.Transform.Stream.SimpleForm.to_dom({"root", [{"id", "1"}], ["text"]})
-tuple = FnXML.Transform.Stream.SimpleForm.from_dom(elem)
+elem = FnXML.Event.Transform.Stream.SimpleForm.to_dom({"root", [{"id", "1"}], ["text"]})
+tuple = FnXML.Event.Transform.Stream.SimpleForm.from_dom(elem)
 ```
 
 ## Choosing an API
@@ -264,13 +326,13 @@ Transform XML to a canonical form for signing and comparison.
 
 ```elixir
 # Canonical XML 1.0
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml)
 
 # Exclusive Canonical XML (for signing document subsets)
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml, algorithm: :exc_c14n)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml, algorithm: :exc_c14n)
 
 # With comments preserved
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml, algorithm: :c14n_with_comments)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml, algorithm: :c14n_with_comments)
 ```
 
 ### XML Signatures

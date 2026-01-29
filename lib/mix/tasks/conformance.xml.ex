@@ -355,7 +355,7 @@ defmodule Mix.Tasks.Conformance.Xml do
         # For XML 1.1, also normalize NEL and LS to LF
         utf8_content =
           content
-          |> FnXML.Transform.Utf16.to_utf8()
+          |> FnXML.Event.Transform.Utf16.to_utf8()
           |> convert_iso8859_if_declared()
 
         # Detect XML version for line-end normalization
@@ -363,7 +363,7 @@ defmodule Mix.Tasks.Conformance.Xml do
 
         normalized_content =
           utf8_content
-          |> FnXML.Transform.Normalize.line_endings()
+          |> FnXML.Event.Transform.Normalize.line_endings()
           |> maybe_normalize_xml11_line_ends(xml_version)
 
         # Check for encoding mismatch (e.g., UTF-16 declared but no BOM)
@@ -438,25 +438,25 @@ defmodule Mix.Tasks.Conformance.Xml do
         external_resolver = build_external_resolver(test.uri)
 
         # Use edition-specific parser for proper character validation
-        parser = FnXML.Parser.parser(edition)
+        parser = FnXML.Parser.generate(edition)
 
         events =
           normalized_content
           |> wrap_as_list()
           |> parser.stream()
           |> wrap_with_document_events()
-          |> FnXML.Validate.conformant()
-          |> FnXML.Validate.root_boundary()
+          |> FnXML.Event.Validate.conformant()
+          |> FnXML.Event.Validate.root_boundary()
           # Validate XML declaration attributes and values
-          |> FnXML.Validate.xml_declaration()
+          |> FnXML.Event.Validate.xml_declaration()
           # Validate character references are well-formed
-          |> FnXML.Validate.character_references()
+          |> FnXML.Event.Validate.character_references()
           # Validate entity references are defined (predefined or DTD-declared)
           # Skip entity validation for tests with external DTD references
           |> maybe_validate_entities(dtd_entities)
           # Validate attribute values don't contain forbidden '<' character
           # Must be BEFORE entity resolution so &lt; is still an entity ref
-          |> FnXML.Validate.attribute_values()
+          |> FnXML.Event.Validate.attribute_values()
           # Use FnXML.DTD.resolve() for pipeline-friendly DTD entity resolution
           # This extracts entities from the DTD event and resolves them in one pass
           # Use :keep for unknown entities since we may not have all external entities
@@ -523,7 +523,7 @@ defmodule Mix.Tasks.Conformance.Xml do
         # (e.g., xmlns:a="urn:x" and xmlns:b=" urn:x " with NMTOKEN type)
         ns_normalization_error =
           if test.namespace do
-            case FnXML.DTD.from_stream(events, edition: edition) do
+            case FnXML.DTD.decode(events, edition: edition) do
               {:ok, model} -> check_dtd_namespace_normalization(events, model)
               _ -> nil
             end
@@ -568,7 +568,7 @@ defmodule Mix.Tasks.Conformance.Xml do
   # Validate DTD syntax if present in the event stream
   # namespace_enabled: true if namespace validation should be applied
   defp validate_dtd(events, edition, namespace_enabled) do
-    case FnXML.DTD.from_stream(events, edition: edition) do
+    case FnXML.DTD.decode(events, edition: edition) do
       {:ok, model} ->
         # Check for circular entity references
         case FnXML.DTD.check_circular_entities(model) do
@@ -599,11 +599,11 @@ defmodule Mix.Tasks.Conformance.Xml do
             reason
         end
 
+      {:error, :no_dtd} ->
+        nil
+
       {:error, reason} ->
         reason
-
-      :no_dtd ->
-        nil
     end
   end
 
@@ -1050,7 +1050,7 @@ defmodule Mix.Tasks.Conformance.Xml do
   defp maybe_validate_entities(stream, :skip), do: stream
 
   defp maybe_validate_entities(stream, {entities, unparsed, external}) do
-    FnXML.Validate.entity_references(stream,
+    FnXML.Event.Validate.entity_references(stream,
       entities: entities,
       unparsed_entities: unparsed,
       external_entities: external
@@ -1058,7 +1058,7 @@ defmodule Mix.Tasks.Conformance.Xml do
   end
 
   defp maybe_validate_entities(stream, entities) when is_struct(entities, MapSet) do
-    FnXML.Validate.entity_references(stream, entities: entities)
+    FnXML.Event.Validate.entity_references(stream, entities: entities)
   end
 
   # Check if content has external DTD reference without internal subset
@@ -1660,7 +1660,7 @@ defmodule Mix.Tasks.Conformance.Xml do
   # but doesn't have a BOM and is actually ASCII/UTF-8.
   defp check_encoding_mismatch(raw_content, normalized_content) do
     # Detect actual encoding from BOM
-    actual_encoding = FnXML.Transform.Utf16.detect_encoding(raw_content) |> elem(0)
+    actual_encoding = FnXML.Event.Transform.Utf16.detect_encoding(raw_content) |> elem(0)
 
     # Extract declared encoding from XML declaration (if present)
     declared_encoding = extract_declared_encoding(normalized_content)

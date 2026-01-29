@@ -4086,7 +4086,8 @@ defmodule FnXML.Parser.Generator do
             el_ls,
             el_abs_pos,
             target,
-            abs_pos,  # content_start_abs_pos - content starts after target name
+            # content_start_abs_pos - content starts after target name
+            abs_pos,
             elem_start
           )
         end

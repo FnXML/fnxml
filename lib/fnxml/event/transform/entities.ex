@@ -1,4 +1,4 @@
-defmodule FnXML.Transform.Entities do
+defmodule FnXML.Event.Transform.Entities do
   @moduledoc """
   Resolves XML entities in text content and attribute values.
 
@@ -15,7 +15,7 @@ defmodule FnXML.Transform.Entities do
   ## Usage
 
       FnXML.Parser.parse(xml)
-      |> FnXML.Transform.Entities.resolve()
+      |> FnXML.Event.Transform.Entities.resolve()
       |> Enum.to_list()
 
   ## Options
@@ -32,7 +32,7 @@ defmodule FnXML.Transform.Entities do
       # Basic entity resolution
       iex> "<a>Tom &amp; Jerry</a>"
       ...> |> FnXML.Parser.parse()
-      ...> |> FnXML.Transform.Entities.resolve()
+      ...> |> FnXML.Event.Transform.Entities.resolve()
       ...> |> Enum.to_list()
       ...> |> Enum.find(&match?({:characters, _, _, _, _}, &1))
       ...> |> elem(1)
@@ -41,7 +41,7 @@ defmodule FnXML.Transform.Entities do
       # Custom entities
       iex> "<a>&copy;</a>"
       ...> |> FnXML.Parser.parse()
-      ...> |> FnXML.Transform.Entities.resolve(entities: %{"copy" => "©"})
+      ...> |> FnXML.Event.Transform.Entities.resolve(entities: %{"copy" => "©"})
       ...> |> Enum.to_list()
       ...> |> Enum.find(&match?({:characters, _, _, _, _}, &1))
       ...> |> elem(1)
@@ -162,7 +162,7 @@ defmodule FnXML.Transform.Entities do
     expanded = expand_char_refs_in_string(content)
 
     # Re-parse with edition-specific parser
-    parser = FnXML.Parser.parser(edition)
+    parser = FnXML.Parser.generate(edition)
 
     events =
       [expanded]
@@ -521,10 +521,10 @@ defmodule FnXML.Transform.Entities do
 
   ## Examples
 
-      iex> FnXML.Transform.Entities.encode("Tom & Jerry")
+      iex> FnXML.Event.Transform.Entities.encode("Tom & Jerry")
       "Tom &amp; Jerry"
 
-      iex> FnXML.Transform.Entities.encode("<tag>")
+      iex> FnXML.Event.Transform.Entities.encode("<tag>")
       "&lt;tag&gt;"
   """
   def encode(text) when is_binary(text) do
@@ -541,7 +541,7 @@ defmodule FnXML.Transform.Entities do
 
   ## Examples
 
-      iex> FnXML.Transform.Entities.encode_attr("value with \"quotes\"")
+      iex> FnXML.Event.Transform.Entities.encode_attr("value with \"quotes\"")
       "value with &quot;quotes&quot;"
   """
   def encode_attr(text) when is_binary(text) do

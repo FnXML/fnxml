@@ -1,7 +1,7 @@
 defmodule FnXML.ValidateCharsTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Validate
+  alias FnXML.Event.Validate
 
   describe "comments/2" do
     test "passes valid comments through unchanged" do

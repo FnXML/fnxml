@@ -213,13 +213,18 @@ defmodule FnXML.NamespacesTest do
   end
 
   # ==========================================================================
-  # Process stream (validate + resolve)
+  # Validate + Resolve pipeline
   # ==========================================================================
 
-  describe "process/2" do
-    test "validates and resolves in single pass" do
+  describe "validate + resolve pipeline" do
+    test "validates and resolves when piped" do
       xml = ~s(<root xmlns="http://example.org"><child/></root>)
-      events = FnXML.Parser.parse(xml) |> Namespaces.process() |> Enum.to_list()
+
+      events =
+        FnXML.Parser.parse(xml)
+        |> Namespaces.validate()
+        |> Namespaces.resolve()
+        |> Enum.to_list()
 
       # Should have no errors
       assert Namespaces.errors?(events) == false
@@ -236,7 +241,12 @@ defmodule FnXML.NamespacesTest do
 
     test "includes validation errors in output" do
       xml = ~s(<foo:bar/>)
-      events = FnXML.Parser.parse(xml) |> Namespaces.process() |> Enum.to_list()
+
+      events =
+        FnXML.Parser.parse(xml)
+        |> Namespaces.validate()
+        |> Namespaces.resolve()
+        |> Enum.to_list()
 
       assert Namespaces.errors?(events) == true
     end

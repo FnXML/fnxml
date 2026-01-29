@@ -42,7 +42,8 @@ defmodule FnXML.Namespaces do
 
       # Both validate and resolve
       FnXML.Parser.parse(xml)
-      |> FnXML.Namespaces.process()
+      |> FnXML.Namespaces.validate()
+      |> FnXML.Namespaces.resolve()
       |> Enum.to_list()
 
   ## Event Transformation
@@ -73,7 +74,7 @@ defmodule FnXML.Namespaces do
   """
 
   alias FnXML.Namespaces.{Context, QName, Resolver}
-  alias FnXML.Validate.Namespaces, as: Validator
+  alias FnXML.Event.Validate.Namespaces, as: Validator
 
   @xml_namespace "http://www.w3.org/XML/1998/namespace"
   @xmlns_namespace "http://www.w3.org/2000/xmlns/"
@@ -130,38 +131,6 @@ defmodule FnXML.Namespaces do
   """
   @spec resolve(Enumerable.t(), keyword()) :: Enumerable.t()
   defdelegate resolve(stream, opts \\ []), to: Resolver
-
-  @doc """
-  Validate and resolve namespaces in a single pass.
-
-  This is equivalent to piping through `validate/2` then `resolve/2`,
-  but more efficient as it only traverses the stream once.
-
-  ## Options
-
-  Same as `resolve/2`.
-  """
-  @spec process(Enumerable.t(), keyword()) :: Enumerable.t()
-  def process(stream, opts \\ []) do
-    Stream.transform(stream, Context.new(), fn event, ctx ->
-      # First validate
-      {validated_events, ctx_after_validate} = Validator.validate_event(event, ctx, opts)
-
-      # Then resolve (only the original event, not errors)
-      case List.last(validated_events) do
-        {:ns_error, _, _, _} ->
-          # Last event is an error, so original wasn't added
-          {validated_events, ctx_after_validate}
-
-        original_event ->
-          {resolved_events, final_ctx} = Resolver.resolve_event(original_event, ctx, opts)
-
-          # Prepend any validation errors to resolved events
-          error_events = Enum.filter(validated_events, &match?({:ns_error, _, _, _}, &1))
-          {error_events ++ resolved_events, final_ctx}
-      end
-    end)
-  end
 
   # ============================================================================
   # Utility Functions

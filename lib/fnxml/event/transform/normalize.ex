@@ -1,4 +1,4 @@
-defmodule FnXML.Transform.Normalize do
+defmodule FnXML.Event.Transform.Normalize do
   @moduledoc """
   XML input normalization per W3C XML 1.0 specification.
 
@@ -14,18 +14,18 @@ defmodule FnXML.Transform.Normalize do
 
   ## Examples
 
-      iex> FnXML.Transform.Normalize.line_endings("a\\r\\nb")
+      iex> FnXML.Event.Transform.Normalize.line_endings("a\\r\\nb")
       "a\\nb"
 
-      iex> FnXML.Transform.Normalize.line_endings("a\\rb")
+      iex> FnXML.Event.Transform.Normalize.line_endings("a\\rb")
       "a\\nb"
 
-      iex> FnXML.Transform.Normalize.line_endings("a\\nb")
+      iex> FnXML.Event.Transform.Normalize.line_endings("a\\nb")
       "a\\nb"
 
   ## Usage
 
-      xml = File.read!("input.xml") |> FnXML.Transform.Normalize.line_endings()
+      xml = File.read!("input.xml") |> FnXML.Event.Transform.Normalize.line_endings()
       FnXML.Parser.parse(xml) |> Enum.to_list()
 
   """
@@ -45,8 +45,8 @@ defmodule FnXML.Transform.Normalize do
   ## Examples
 
       File.stream!("large.xml", [], 65536)
-      |> FnXML.Transform.Normalize.line_endings_stream()
-      |> FnXML.ParserStream.parse()
+      |> FnXML.Event.Transform.Normalize.line_endings_stream()
+      |> FnXML.Parser.parse()
       |> Enum.to_list()
 
   """

@@ -1095,33 +1095,34 @@ end
 7. Build attribute nodes
 8. Return complete Document
 
-### Phase 4: DOM Serializer (Tree to Stream/Text)
+### Phase 4: DOM to Events (Tree to Stream)
 
-**Goal:** Convert DOM tree back to XML text or event stream.
+**Goal:** Convert DOM tree to event stream for serialization.
 
-#### Module: `FnXML.API.DOM.Serializer`
+#### Module: `FnXML.API.DOM`
 
 ```elixir
-defmodule FnXML.API.DOM.Serializer do
-  @moduledoc """
-  Serialize DOM tree to XML.
-  """
-
-  # To string
-  def to_string(node, opts \\ [])
-
-  # To iodata (more efficient)
-  def to_iodata(node, opts \\ [])
-
-  # To event stream (for pipeline processing)
-  def to_stream(node, opts \\ [])
-
-  # Options:
-  # - :indent - pretty print with indentation
-  # - :encoding - output encoding
-  # - :xml_declaration - include <?xml ...?>
-  # - :standalone - standalone declaration
+defmodule FnXML.API.DOM do
+  # Convert DOM to event stream
+  def to_event(node)
 end
+
+# Serialization usage examples:
+# To string
+node
+|> FnXML.API.DOM.to_event()
+|> FnXML.Stream.to_string()
+
+# To iodata (more efficient)
+node
+|> FnXML.API.DOM.to_event()
+|> FnXML.Stream.to_iodata()
+
+# FnXML.Stream provides serialization options:
+# - :indent - pretty print with indentation
+# - :encoding - output encoding
+# - :xml_declaration - include <?xml ...?>
+# - :standalone - standalone declaration
 ```
 
 ### Phase 5: DOM Navigation (Zipper)

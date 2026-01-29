@@ -1,7 +1,7 @@
-defmodule FnXML.Transform.EntitiesTest do
+defmodule FnXML.Event.Transform.EntitiesTest do
   use ExUnit.Case, async: true
 
-  alias FnXML.Transform.Entities, as: Entities
+  alias FnXML.Event.Transform.Entities, as: Entities
   alias FnXML.Error
 
   # Helper to extract text content from parsed XML

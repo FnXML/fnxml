@@ -1,4 +1,4 @@
-defmodule FnXML.Validate do
+defmodule FnXML.Event.Validate do
   @moduledoc """
   Composable validation functions for XML event streams.
 
@@ -8,9 +8,9 @@ defmodule FnXML.Validate do
   ## Usage
 
       FnXML.Parser.parse(xml)
-      |> FnXML.Validate.well_formed()
-      |> FnXML.Validate.attributes()
-      |> FnXML.Validate.namespaces()
+      |> FnXML.Event.Validate.well_formed()
+      |> FnXML.Event.Validate.attributes()
+      |> FnXML.Event.Validate.namespaces()
       |> Enum.to_list()
 
   Each validator can be used independently or combined. By default,
@@ -48,12 +48,12 @@ defmodule FnXML.Validate do
   ## Examples
 
       iex> FnXML.Parser.parse("<a><b></b></a>")
-      ...> |> FnXML.Validate.well_formed()
+      ...> |> FnXML.Event.Validate.well_formed()
       ...> |> Enum.to_list()
       [{:start_element, "a", [], _}, {:start_element, "b", [], _}, {:end_element, "b"}, {:end_element, "a"}]
 
       iex> FnXML.Parser.parse("<a></b>")
-      ...> |> FnXML.Validate.well_formed()
+      ...> |> FnXML.Event.Validate.well_formed()
       ...> |> Enum.to_list()
       ** (FnXML.Error) [tag_mismatch] Expected </a>, got </b>
   """
@@ -183,12 +183,12 @@ defmodule FnXML.Validate do
   ## Examples
 
       iex> FnXML.Parser.parse(~s(<a x="1" y="2"/>))
-      ...> |> FnXML.Validate.attributes()
+      ...> |> FnXML.Event.Validate.attributes()
       ...> |> Enum.to_list()
       [{:start_element, "a", [{"x", "1"}, {"y", "2"}], _}, {:end_element, "a"}]
 
       iex> FnXML.Parser.parse(~s(<a x="1" x="2"/>))
-      ...> |> FnXML.Validate.attributes()
+      ...> |> FnXML.Event.Validate.attributes()
       ...> |> Enum.to_list()
       ** (FnXML.Error) [duplicate_attr] Duplicate attribute 'x'
   """
@@ -240,12 +240,12 @@ defmodule FnXML.Validate do
   ## Examples
 
       iex> FnXML.Parser.parse(~s(<a x="valid"/>))
-      ...> |> FnXML.Validate.attribute_values()
+      ...> |> FnXML.Event.Validate.attribute_values()
       ...> |> Enum.to_list()
       [{:start_element, "a", [{"x", "valid"}], _}, {:end_element, "a"}]
 
       iex> FnXML.Parser.parse(~s(<a x="has < char"/>))
-      ...> |> FnXML.Validate.attribute_values()
+      ...> |> FnXML.Event.Validate.attribute_values()
       ...> |> Enum.to_list()
       ** (FnXML.Error) '<' not allowed in attribute value
   """
@@ -309,12 +309,12 @@ defmodule FnXML.Validate do
   ## Examples
 
       iex> FnXML.Parser.parse(~s(<root xmlns:ns="http://example.com"><ns:child/></root>))
-      ...> |> FnXML.Validate.namespaces()
+      ...> |> FnXML.Event.Validate.namespaces()
       ...> |> Enum.to_list()
       [{:start_element, "root", _, _}, {:start_element, "ns:child", [], _}, {:end_element, "ns:child"}, {:end_element, "root"}]
 
       iex> FnXML.Parser.parse("<ns:root/>")
-      ...> |> FnXML.Validate.namespaces()
+      ...> |> FnXML.Event.Validate.namespaces()
       ...> |> Enum.to_list()
       ** (FnXML.Error) [undeclared_namespace] Undeclared namespace prefix 'ns'
   """
@@ -457,7 +457,7 @@ defmodule FnXML.Validate do
   ## Examples
 
       FnXML.Parser.parse(xml)
-      |> FnXML.Validate.all(validators: [:structure, :attributes])
+      |> FnXML.Event.Validate.all(validators: [:structure, :attributes])
       |> Enum.to_list()
   """
   def all(stream, opts \\ []) do
@@ -493,13 +493,13 @@ defmodule FnXML.Validate do
 
       # Valid comments pass through
       iex> FnXML.Parser.parse("<!-- single - hyphen ok -->")
-      ...> |> FnXML.Validate.comments()
+      ...> |> FnXML.Event.Validate.comments()
       ...> |> Enum.to_list()
       [{:start_document, nil}, {:comment, " single - hyphen ok ", _}, {:end_document, nil}]
 
       # Invalid comment with --
       iex> FnXML.Parser.parse("<!-- invalid -- comment -->")
-      ...> |> FnXML.Validate.comments()
+      ...> |> FnXML.Event.Validate.comments()
       ...> |> Enum.to_list()
       # Returns error event for '--' in comment
   """
@@ -574,14 +574,14 @@ defmodule FnXML.Validate do
 
       # Valid PI
       iex> FnXML.Parser.parse("<?target data?>")
-      ...> |> FnXML.Validate.processing_instructions()
+      ...> |> FnXML.Event.Validate.processing_instructions()
       ...> |> Enum.to_list()
       ...> |> Enum.any?(fn {:error, _, _} -> true; _ -> false end)
       false
 
       # Invalid - empty target
       iex> FnXML.Parser.parse("<? ?>")
-      ...> |> FnXML.Validate.processing_instructions()
+      ...> |> FnXML.Event.Validate.processing_instructions()
       ...> |> Enum.to_list()
       ...> |> Enum.any?(fn {:error, _, _} -> true; _ -> false end)
       true
@@ -643,13 +643,13 @@ defmodule FnXML.Validate do
   ## Examples
 
       FnXML.parse_stream(xml)
-      |> FnXML.Validate.conformant()
+      |> FnXML.Event.Validate.conformant()
       |> Enum.to_list()
 
       # For conformance testing with entities
       FnXML.parse_stream(xml)
-      |> FnXML.Validate.conformant()
-      |> FnXML.Transform.Entities.resolve(on_unknown: :keep)
+      |> FnXML.Event.Validate.conformant()
+      |> FnXML.Event.Transform.Entities.resolve(on_unknown: :keep)
       |> Enum.to_list()
   """
   def conformant(stream, opts \\ []) do
@@ -691,12 +691,12 @@ defmodule FnXML.Validate do
 
       # Valid - only whitespace before/after root
       FnXML.parse_stream("<root/>")
-      |> FnXML.Validate.root_boundary()
+      |> FnXML.Event.Validate.root_boundary()
       |> Enum.to_list()
 
       # Invalid - text after root
       FnXML.parse_stream("<root/>extra text")
-      |> FnXML.Validate.root_boundary()
+      |> FnXML.Event.Validate.root_boundary()
       |> Enum.to_list()
       # Returns error event for content after root
   """
@@ -841,12 +841,12 @@ defmodule FnXML.Validate do
 
       # Valid - predefined entity
       FnXML.parse_stream("<doc>&amp;</doc>")
-      |> FnXML.Validate.entity_references()
+      |> FnXML.Event.Validate.entity_references()
       |> Enum.to_list()
 
       # Invalid - undefined entity
       FnXML.parse_stream("<doc>&foo;</doc>")
-      |> FnXML.Validate.entity_references()
+      |> FnXML.Event.Validate.entity_references()
       |> Enum.to_list()
       # Returns error event for undefined entity
   """
@@ -1051,12 +1051,12 @@ defmodule FnXML.Validate do
 
       # Valid XML declaration
       FnXML.parse_stream(~s[<?xml version="1.0"?><doc/>])
-      |> FnXML.Validate.xml_declaration()
+      |> FnXML.Event.Validate.xml_declaration()
       |> Enum.to_list()
 
       # Invalid - uppercase VERSION
       FnXML.parse_stream(~s[<?xml VERSION="1.0"?><doc/>])
-      |> FnXML.Validate.xml_declaration()
+      |> FnXML.Event.Validate.xml_declaration()
       |> Enum.to_list()
       # Returns error event
   """
@@ -1203,12 +1203,12 @@ defmodule FnXML.Validate do
 
       # Valid character reference
       FnXML.parse_stream("<doc>&#65;</doc>")
-      |> FnXML.Validate.character_references()
+      |> FnXML.Event.Validate.character_references()
       |> Enum.to_list()
 
       # Invalid - non-numeric
       FnXML.parse_stream("<doc>&#RE;</doc>")
-      |> FnXML.Validate.character_references()
+      |> FnXML.Event.Validate.character_references()
       |> Enum.to_list()
       # Returns error event
   """

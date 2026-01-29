@@ -22,7 +22,7 @@ defmodule FnXML.API.StAX.Reader do
       # With validation pipeline
       reader = File.stream!("data.xml")
                |> FnXML.Parser.parse()
-               |> FnXML.Validate.well_formed()
+               |> FnXML.Event.Validate.well_formed()
                |> FnXML.API.StAX.Reader.new()
 
       # Quick create from string (convenience)
@@ -108,7 +108,7 @@ defmodule FnXML.API.StAX.Reader do
 
       # With transforms/validators
       reader = FnXML.Parser.parse(xml)
-               |> FnXML.Validate.well_formed()
+               |> FnXML.Event.Validate.well_formed()
                |> FnXML.Namespaces.resolve()
                |> FnXML.API.StAX.Reader.new()
 

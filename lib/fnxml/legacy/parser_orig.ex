@@ -35,8 +35,8 @@ defmodule FnXML.Legacy.ParserOrig do
 
       # Pipe through stream transformations
       FnXML.Parser.parse(xml)
-      |> FnXML.Transform.Stream.filter_ws()           # Remove whitespace-only text
-      |> FnXML.Transform.Stream.resolve_entities()    # Expand &amp; etc.
+      |> FnXML.Event.Transform.Stream.filter_ws()           # Remove whitespace-only text
+      |> FnXML.Event.Transform.Stream.resolve_entities()    # Expand &amp; etc.
       |> Enum.to_list()
 
   ### Callback Mode (Eager, Zero Allocation)
@@ -102,7 +102,7 @@ defmodule FnXML.Legacy.ParserOrig do
       {:characters, "  whitespace  ", {2, 20, 25}}
 
   Note: Whitespace-only text between elements is preserved. Use
-  `FnXML.Transform.Stream.filter_ws/1` to remove it.
+  `FnXML.Event.Transform.Stream.filter_ws/1` to remove it.
 
   ### Comment: `{:comment, content, loc}`
 
@@ -300,7 +300,7 @@ defmodule FnXML.Legacy.ParserOrig do
 
     FnXML.Parser expects UTF-8 input. Convert first:
 
-        xml = File.read!("file.xml") |> FnXML.Transform.Utf16.to_utf8()
+        xml = File.read!("file.xml") |> FnXML.Event.Transform.Utf16.to_utf8()
         FnXML.Parser.parse(xml)
     """
   end
@@ -311,7 +311,7 @@ defmodule FnXML.Legacy.ParserOrig do
 
     FnXML.Parser expects UTF-8 input. Convert first:
 
-        xml = File.read!("file.xml") |> FnXML.Transform.Utf16.to_utf8()
+        xml = File.read!("file.xml") |> FnXML.Event.Transform.Utf16.to_utf8()
         FnXML.Parser.parse(xml)
     """
   end

@@ -19,11 +19,12 @@ defmodule FnXML.C14N do
 
       # Basic canonicalization
       xml = "<root b='2' a='1'><child/></root>"
-      canonical = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize()
+      iodata = FnXML.Parser.parse(xml) |> FnXML.C14N.canonicalize()
+      canonical = IO.iodata_to_binary(iodata)
       # => "<root a=\"1\" b=\"2\"><child></child></root>"
 
       # Exclusive C14N with inclusive namespaces
-      FnXML.Parser.parse(xml)
+      iodata = FnXML.Parser.parse(xml)
       |> FnXML.C14N.canonicalize(
         algorithm: :exc_c14n,
         inclusive_namespaces: ["ns1", "ns2"]
@@ -49,7 +50,10 @@ defmodule FnXML.C14N do
   @type algorithm :: :c14n | :c14n_with_comments | :exc_c14n | :exc_c14n_with_comments
 
   @doc """
-  Canonicalize an XML event stream to a binary string.
+  Canonicalize an XML event stream to iodata.
+
+  Collects the canonicalized stream into iodata. Use `IO.iodata_to_binary/1`
+  to convert to a string if needed.
 
   ## Options
 
@@ -63,19 +67,20 @@ defmodule FnXML.C14N do
 
   ## Examples
 
-      iex> FnXML.Parser.parse("<root/>") |> FnXML.C14N.canonicalize()
+      iex> iodata = FnXML.Parser.parse("<root/>") |> FnXML.C14N.canonicalize()
+      iex> IO.iodata_to_binary(iodata)
       "<root></root>"
 
-      iex> FnXML.Parser.parse("<root b='2' a='1'/>") |> FnXML.C14N.canonicalize()
-      "<root a=\"1\" b=\"2\"></root>"
+      iex> iodata = FnXML.Parser.parse("<root b='2' a='1'/>") |> FnXML.C14N.canonicalize()
+      iex> IO.iodata_to_binary(iodata)
+      "<root a=\\"1\\" b=\\"2\\"></root>"
 
   """
-  @spec canonicalize(Enumerable.t(), keyword()) :: binary()
+  @spec canonicalize(Enumerable.t(), keyword()) :: iodata()
   def canonicalize(stream, opts \\ []) do
     stream
     |> canonicalize_stream(opts)
     |> Enum.to_list()
-    |> IO.iodata_to_binary()
   end
 
   @doc """

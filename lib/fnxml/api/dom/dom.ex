@@ -26,7 +26,7 @@ defmodule FnXML.API.DOM do
       # With validation/transformation pipeline
       doc = File.stream!("data.xml")
             |> FnXML.Parser.parse()
-            |> FnXML.Validate.well_formed()
+            |> FnXML.Event.Validate.well_formed()
             |> FnXML.Namespaces.resolve()
             |> FnXML.API.DOM.build()
 
@@ -36,7 +36,8 @@ defmodule FnXML.API.DOM do
       # Serialize back to XML (convert to events, then to string)
       doc
       |> FnXML.API.DOM.to_event()
-      |> FnXML.Stream.to_string()
+      |> FnXML.Event.to_iodata()
+      |> IO.iodata_to_binary()
       # => "<root><child id=\"1\">text</child></root>"
 
   ## Node Types
@@ -58,7 +59,7 @@ defmodule FnXML.API.DOM do
 
   ## Comparison with SimpleForm
 
-  `FnXML.API.DOM` uses structs while `FnXML.Stream.SimpleForm` uses tuples:
+  `FnXML.API.DOM` uses structs while `FnXML.Event.SimpleForm` uses tuples:
 
       # DOM
       %FnXML.API.DOM.Element{tag: "div", attributes: [{"id", "1"}], children: ["text"]}
@@ -118,7 +119,7 @@ defmodule FnXML.API.DOM do
 
       # With validation
       FnXML.Parser.parse(xml)
-      |> FnXML.Validate.well_formed()
+      |> FnXML.Event.Validate.well_formed()
       |> FnXML.API.DOM.build()
 
       # With namespace resolution
@@ -134,8 +135,8 @@ defmodule FnXML.API.DOM do
   @doc """
   Convert DOM to an FnXML event stream.
 
-  Generates XML events from a DOM tree. Use with `FnXML.Stream` functions
-  for serialization to string or iodata.
+  Generates XML events from a DOM tree. Use with `FnXML.Event.to_iodata/2`
+  for serialization to iodata/string.
 
   ## Examples
 
@@ -149,12 +150,13 @@ defmodule FnXML.API.DOM do
       # Serialize to string
       doc
       |> FnXML.API.DOM.to_event()
-      |> FnXML.Stream.to_string()
+      |> FnXML.Event.to_iodata()
+      |> IO.iodata_to_binary()
 
-      # Serialize to iodata (more efficient)
+      # Serialize to iodata (more efficient for I/O)
       doc
       |> FnXML.API.DOM.to_event()
-      |> FnXML.Stream.to_iodata()
+      |> FnXML.Event.to_iodata()
   """
   @spec to_event(Document.t() | Element.t()) :: Enumerable.t()
   def to_event(node) do

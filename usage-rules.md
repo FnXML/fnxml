@@ -9,8 +9,8 @@ Concise rules for using the FnXML library correctly.
 | Build tree, query/modify nodes | `FnXML.API.DOM` |
 | Large file, extract specific data | `FnXML.API.SAX` |
 | Large file, stateful processing | `FnXML.API.StAX` |
-| Custom stream transformations | `FnXML.Parser` + `FnXML.Transform.Stream` |
-| Canonicalization for signing | `FnXML.Security.C14N` |
+| Custom stream transformations | `FnXML.Parser` + `FnXML.Event.Transform.Stream` |
+| Canonicalization for signing | `FnXML.C14N` |
 | Sign/verify XML documents | `FnXML.Security.Signature` |
 | Encrypt/decrypt XML content | `FnXML.Security.Encryption` |
 
@@ -24,7 +24,7 @@ doc = FnXML.Parser.parse(xml_string)
 # CORRECT: With validation/transforms
 doc = File.stream!("data.xml")
       |> FnXML.Parser.parse()
-      |> FnXML.Validate.well_formed()
+      |> FnXML.Event.Validate.well_formed()
       |> FnXML.Namespaces.resolve()
       |> FnXML.API.DOM.build()
 
@@ -63,7 +63,7 @@ end
 # CORRECT: With validation/transforms
 {:ok, result} = File.stream!("large.xml")
                 |> FnXML.Parser.parse()
-                |> FnXML.Validate.well_formed()
+                |> FnXML.Event.Validate.well_formed()
                 |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
 
 # CORRECT: With options
@@ -92,7 +92,7 @@ reader = FnXML.Parser.parse(xml_string)
 # CORRECT: With validation/transforms
 reader = File.stream!("large.xml")
          |> FnXML.Parser.parse()
-         |> FnXML.Validate.well_formed()
+         |> FnXML.Event.Validate.well_formed()
          |> FnXML.API.StAX.Reader.new()
 
 # CORRECT: Pull events
@@ -141,7 +141,8 @@ stream = FnXML.Parser.parse(xml_string)
 stream = FnXML.Parser.parse(xml_string) |> FnXML.Namespaces.resolve()
 
 # CORRECT: Convert to XML
-xml = stream |> FnXML.Stream.to_xml() |> Enum.join()
+iodata = stream |> FnXML.Event.to_iodata()
+xml = IO.iodata_to_binary(iodata)
 
 # Event tuple formats (W3C StAX-compatible):
 {:start_element, "tag", [{"attr", "val"}], {line, line_start, byte_offset}}
@@ -161,14 +162,14 @@ xml = stream |> FnXML.Stream.to_xml() |> Enum.join()
 {"root", [{"id", "1"}], ["text", {"child", [], []}]}
 
 # CORRECT: Parse to SimpleForm
-simple = FnXML.Transform.Stream.SimpleForm.decode(xml_string)
+simple = FnXML.Event.Transform.Stream.SimpleForm.decode(xml_string)
 
 # CORRECT: Encode to XML
-xml = FnXML.Transform.Stream.SimpleForm.encode(simple_form_tuple)
+xml = FnXML.Event.Transform.Stream.SimpleForm.encode(simple_form_tuple)
 
 # CORRECT: Convert to/from DOM
-element = FnXML.Transform.Stream.SimpleForm.to_dom(simple_form_tuple)
-tuple = FnXML.Transform.Stream.SimpleForm.from_dom(element)
+element = FnXML.Event.Transform.Stream.SimpleForm.to_dom(simple_form_tuple)
+tuple = FnXML.Event.Transform.Stream.SimpleForm.from_dom(element)
 ```
 
 ## Common Mistakes
@@ -242,13 +243,13 @@ FnXML.Parser.parse(xml) |> FnXML.Namespaces.resolve()
 
 ```elixir
 # CORRECT: Basic canonicalization
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml)
 
 # CORRECT: Exclusive C14N for document subsets
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml, algorithm: :exc_c14n)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml, algorithm: :exc_c14n)
 
 # CORRECT: Preserve comments
-{:ok, canonical} = FnXML.Security.C14N.canonicalize(xml, algorithm: :c14n_with_comments)
+{:ok, canonical} = FnXML.C14N.canonicalize(xml, algorithm: :c14n_with_comments)
 
 # Algorithms: :c14n, :c14n_with_comments, :exc_c14n, :exc_c14n_with_comments
 ```

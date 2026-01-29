@@ -1,4 +1,4 @@
-defmodule FnXML.Validate.Namespaces do
+defmodule FnXML.Event.Validate.Namespaces do
   @moduledoc """
   Namespace constraint validation for XML Namespaces.
 
@@ -13,7 +13,7 @@ defmodule FnXML.Validate.Namespaces do
   ## Usage
 
       FnXML.Parser.parse(xml)
-      |> FnXML.Validate.Namespaces.validate()
+      |> FnXML.Event.Validate.Namespaces.validate()
       |> Enum.to_list()
 
   Errors are emitted as `{:ns_error, reason, name, loc}` events.

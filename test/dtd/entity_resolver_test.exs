@@ -87,7 +87,7 @@ defmodule FnXML.DTD.EntityResolverTest do
 
       {:ok, entities} = EntityResolver.extract_and_expand_entities(model)
 
-      # Character references should be preserved for FnXML.Transform.Entities to handle
+      # Character references should be preserved for FnXML.Event.Transform.Entities to handle
       assert entities["copy"] == "&#169;"
       assert entities["euro"] == "&#x20AC;"
     end
@@ -125,7 +125,7 @@ defmodule FnXML.DTD.EntityResolverTest do
 
       {:ok, entities} = EntityResolver.extract_and_expand_entities(model)
 
-      # Unknown references preserved for FnXML.Transform.Entities to handle
+      # Unknown references preserved for FnXML.Event.Transform.Entities to handle
       assert entities["known"] == "value &unknown; here"
     end
   end

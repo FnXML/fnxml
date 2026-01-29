@@ -1,9 +1,9 @@
 defmodule FnXML.DTD.EntityResolver do
   @moduledoc """
-  DTD-aware entity resolution using composition with `FnXML.Transform.Entities`.
+  DTD-aware entity resolution using composition with `FnXML.Event.Transform.Entities`.
 
   This module extracts entity definitions from a `FnXML.DTD.Model` and delegates
-  the actual resolution to `FnXML.Transform.Entities`, adding DTD-specific features
+  the actual resolution to `FnXML.Event.Transform.Entities`, adding DTD-specific features
   like security limits and external entity handling.
 
   ## Usage
@@ -27,7 +27,7 @@ defmodule FnXML.DTD.EntityResolver do
   - `:max_expansion_depth` - Limit recursive entity expansion (default: 10)
   - `:max_total_expansion` - Limit total expanded content size (default: 1_000_000)
   - `:external_resolver` - Function to fetch external entities: `(system_id, public_id) -> {:ok, content} | {:error, reason}`
-  - `:on_unknown` - How to handle unknown entities (passed to FnXML.Transform.Entities)
+  - `:on_unknown` - How to handle unknown entities (passed to FnXML.Event.Transform.Entities)
 
   ## Examples
 
@@ -41,17 +41,18 @@ defmodule FnXML.DTD.EntityResolver do
   """
 
   alias FnXML.DTD.Model
-  alias FnXML.Transform.Entities
+  alias FnXML.Event.Transform.Entities
 
   @default_max_depth 10
   @default_max_expansion 1_000_000
 
+  @doc deprecated: "Use FnXML.DTD.resolve(stream, model, opts) instead"
   @doc """
   Resolve entities in the stream using definitions from the DTD model.
 
   Extracts entity definitions from the model, expands any nested entity
   references within the definitions (respecting security limits), then
-  delegates to `FnXML.Transform.Entities.resolve/2`.
+  delegates to `FnXML.Event.Transform.Entities.resolve/2`.
 
   ## Options
 
@@ -59,6 +60,11 @@ defmodule FnXML.DTD.EntityResolver do
   - `:max_total_expansion` - Maximum expanded size (default: 1_000_000)
   - `:external_resolver` - Function to resolve external entities
   - `:on_unknown` - `:raise` | `:emit` | `:keep` | `:remove` (default: :raise)
+
+  ## Deprecated
+
+  Use `FnXML.DTD.resolve(stream, model, opts)` instead. This function is kept
+  for backward compatibility but will be removed in a future version.
   """
   def resolve(stream, %Model{} = model, opts \\ []) do
     case extract_and_expand_entities(model, opts) do
@@ -80,7 +86,7 @@ defmodule FnXML.DTD.EntityResolver do
   Extract entity definitions from a DTD model as a map.
 
   Returns a map of entity name => replacement value suitable for
-  passing to `FnXML.Transform.Entities.resolve/2`.
+  passing to `FnXML.Event.Transform.Entities.resolve/2`.
 
   Only internal entities are included. External entities are skipped
   unless an `:external_resolver` is provided.

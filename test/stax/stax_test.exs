@@ -186,21 +186,24 @@ defmodule FnXML.StAXTest do
   # Writer tests - keeping existing coverage
   describe "Writer basics" do
     test "creates empty writer" do
-      assert Writer.to_string(Writer.new()) == ""
+      iodata = Writer.to_iodata(Writer.new())
+      assert IO.iodata_to_binary(iodata) == ""
     end
 
     test "writes XML declaration" do
-      xml = Writer.new() |> Writer.start_document() |> Writer.to_string()
+      iodata = Writer.new() |> Writer.start_document() |> Writer.to_iodata()
+      xml = IO.iodata_to_binary(iodata)
       assert xml == "<?xml version=\"1.0\"?>"
 
-      xml = Writer.new() |> Writer.start_document("1.0", "UTF-8") |> Writer.to_string()
+      iodata = Writer.new() |> Writer.start_document("1.0", "UTF-8") |> Writer.to_iodata()
+      xml = IO.iodata_to_binary(iodata)
       assert xml == "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
     end
   end
 
   describe "Writer elements and attributes" do
     test "writes elements and attributes" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("root")
         |> Writer.attribute("id", "1")
@@ -208,96 +211,107 @@ defmodule FnXML.StAXTest do
         |> Writer.start_element("child")
         |> Writer.end_element()
         |> Writer.end_element()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml =~ "id=\"1\""
       assert xml =~ "class=\"main\""
       assert xml =~ "<child/>"
     end
 
     test "escapes attribute values" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("root")
         |> Writer.attribute("value", "a<b&c\"d")
         |> Writer.end_element()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml =~ "value=\"a&lt;b&amp;c&quot;d\""
     end
   end
 
   describe "Writer content" do
     test "writes text content with escaping" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("root")
         |> Writer.characters("<>&")
         |> Writer.end_element()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml == "<root>&lt;&gt;&amp;</root>"
     end
 
     test "writes comment and CDATA" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("root")
         |> Writer.comment("comment")
         |> Writer.cdata("<special>")
         |> Writer.end_element()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml =~ "<!--comment-->"
       assert xml =~ "<![CDATA[<special>]]>"
     end
 
     test "writes processing instruction" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.processing_instruction("php", "echo 'hello';")
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml == "<?php echo 'hello';?>"
 
-      xml = Writer.new() |> Writer.processing_instruction("xml-stylesheet") |> Writer.to_string()
+      iodata =
+        Writer.new() |> Writer.processing_instruction("xml-stylesheet") |> Writer.to_iodata()
+
+      xml = IO.iodata_to_binary(iodata)
       assert xml == "<?xml-stylesheet?>"
     end
 
     test "writes empty element" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("root")
         |> Writer.empty_element("br")
         |> Writer.end_element()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml == "<root><br/></root>"
     end
   end
 
   describe "Writer namespaces" do
     test "writes namespace declarations" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("root")
         |> Writer.namespace("ex", "http://example.org")
         |> Writer.default_namespace("http://default.org")
         |> Writer.end_element()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml =~ "xmlns:ex=\"http://example.org\""
       assert xml =~ "xmlns=\"http://default.org\""
     end
 
     test "writes namespaced elements and attributes" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("ex", "root", "http://example.org")
         |> Writer.attribute("http://example.org", "attr", "value")
         |> Writer.end_element()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
+      xml = IO.iodata_to_binary(iodata)
       assert xml =~ "ex:root"
       assert xml =~ "xmlns:ex="
       assert xml =~ "attr=\"value\""
@@ -306,21 +320,22 @@ defmodule FnXML.StAXTest do
 
   describe "Writer end_document and to_iodata" do
     test "end_document closes all open elements" do
-      xml =
+      iodata =
         Writer.new()
         |> Writer.start_element("a")
         |> Writer.start_element("b")
         |> Writer.start_element("c")
         |> Writer.end_document()
-        |> Writer.to_string()
+        |> Writer.to_iodata()
 
-      assert xml =~ "</c>"
-      assert xml =~ "</b>"
-      assert xml =~ "</a>"
+      xml = IO.iodata_to_binary(iodata)
+      # Empty elements are optimized to self-closing tags
+      assert xml == "<a><b><c/></b></a>"
     end
 
     test "end_document handles empty document" do
-      assert Writer.new() |> Writer.end_document() |> Writer.to_string() == ""
+      iodata = Writer.new() |> Writer.end_document() |> Writer.to_iodata()
+      assert IO.iodata_to_binary(iodata) == ""
     end
 
     test "to_iodata returns iodata" do
