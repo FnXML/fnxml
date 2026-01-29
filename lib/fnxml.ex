@@ -25,7 +25,9 @@ defmodule FnXML do
 
   ## Architecture Philosophy
 
-  FnXML uses an **event streaming model** where XML processing flows through stages:
+  FnXML uses an **event streaming model** where XML is parsed into Elixir Streams.
+  **Event streams are the basic format**, which means all Elixir stream tools work
+  with XML:
 
   ```
   XML Input
@@ -33,27 +35,55 @@ defmodule FnXML do
      ▼
   Parser (FnXML.Parser)
      │
-     ├─► Events: {:start_element, "root", [], 1, 0, 1}
-     │           {:characters, "content", 1, 6, 7}
-     │           {:end_element, "root", 1, 13, 14}
-     ▼
-  Transform Components (optional)
+     ├─► Event Stream (Elixir Stream)
+     │   {:start_element, "root", [], 1, 0, 1}
+     │   {:characters, "content", 1, 6, 7}
+     │   {:end_element, "root", 1, 13, 14}
      │
-     ├─► FnXML.Namespaces.resolve()      - Resolve namespace URIs
-     ├─► FnXML.Event.Transform.*         - Normalize, filter, modify
-     ├─► FnXML.Event.Validate.*          - Validation layers
+     ├─► Use all Elixir Stream functions
+     │   Stream.filter/2, Stream.map/2, Stream.take/2, Enum.reduce/3, etc.
+     ▼
+  FnXML.Event (Standard API - optional components)
+     │
+     ├─► FnXML.Event.Filter.*            - Filter events
+     ├─► FnXML.Event.Transform.*         - Transform events
+     ├─► FnXML.Event.Validate.*          - Validate events
+     ├─► FnXML.Namespaces.resolve()      - Resolve namespaces
      ▼
   Consumer (your code)
      │
-     ├─► FnXML.API.DOM.build()           - Build in-memory tree
-     ├─► FnXML.API.SAX.dispatch()        - Callback-based processing
-     ├─► FnXML.API.StAX.Reader.new()     - Cursor-based navigation
-     └─► Enum.to_list() / Enum.reduce()  - Direct stream consumption
+     ├─► Stream.filter() / Enum.reduce() - Direct stream processing (recommended)
+     ├─► FnXML.API.DOM.build()           - Alternative: Build tree
+     ├─► FnXML.API.SAX.dispatch()        - Alternative: Callbacks
+     └─► FnXML.API.StAX.Reader.new()     - Alternative: Cursor
   ```
 
   Each component receives events, processes them, and emits new events downstream.
   This enables building complex XML processing pipelines from simple, focused
-  components.
+  components using standard Elixir stream operations.
+
+  ## APIs
+
+  ### Standard API: FnXML.Event + Elixir Streams
+
+  The recommended way to process XML is using **FnXML.Event** components combined with
+  Elixir's built-in Stream and Enum modules:
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.Event.Filter.filter_ws()       # FnXML component
+      |> Stream.filter(&my_filter/1)          # Elixir Stream
+      |> FnXML.Event.Validate.well_formed()   # FnXML component
+      |> Enum.reduce(acc, &reducer/2)         # Elixir Enum
+
+  ### Alternative APIs: DOM, SAX, StAX
+
+  For developers familiar with traditional XML APIs:
+
+  - `FnXML.API.DOM` - Build an in-memory tree (W3C DOM-like)
+  - `FnXML.API.SAX` - Event callbacks (SAX-like)
+  - `FnXML.API.StAX` - Pull-based cursor (StAX-like)
+
+  These are built on top of the event stream and interoperate with the standard API.
 
   ## Module Overview
 

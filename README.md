@@ -1,6 +1,6 @@
 # FnXML
 
-**A high-performance, streaming XML library for Elixir built on Elixir Streams.**
+**A streaming XML library for Elixir built on Elixir Streams.**
 
 ## What is FnXML?
 
@@ -8,61 +8,63 @@ FnXML is a pure Elixir XML processing library that parses XML into **lazy stream
 
 ### Built on Elixir Streams
 
-FnXML leverages Elixir's Stream module to provide:
+**Event streams are the basic format.** FnXML parses XML directly into Elixir Streams, which means **all Elixir stream tools work with XML**:
+
+```elixir
+FnXML.Parser.parse(xml)
+|> Stream.filter(fn {:start_element, tag, _, _, _, _} -> tag == "book"; _ -> false end)
+|> Stream.take(10)                    # Take first 10 books
+|> Stream.map(&process_event/1)       # Transform events
+|> Stream.chunk_every(5)              # Batch processing
+|> Enum.reduce(acc, &reducer/2)       # Aggregate results
+```
+
+This provides:
 
 - **Lazy evaluation** - Parse only what you consume, stop early when you find what you need
 - **Constant memory** - Process multi-gigabyte files with O(1) memory usage
 - **Composable pipelines** - Connect components together with the pipe operator
 - **Backpressure** - Slow consumers automatically slow the parser
-- **Natural integration** - Works seamlessly with Elixir's Stream and Enum functions
+- **Natural integration** - Use `Stream.filter`, `Stream.map`, `Stream.take`, `Enum.reduce`, etc.
 
-### Component-Based Architecture
+### Standard API: FnXML.Event
 
-Build your XML processing pipeline by connecting components:
+The **FnXML.Event** module provides the standard API for working with XML event streams. Build your XML processing pipeline by connecting components:
 
 ```elixir
 File.stream!("data.xml")
 |> FnXML.Parser.parse()                    # Parse XML to event stream
-|> FnXML.Namespaces.resolve()              # Add namespace resolution (optional)
+|> FnXML.Event.Filter.filter_ws()          # Filter whitespace events
 |> FnXML.Event.Validate.well_formed()      # Add validation (optional)
+|> FnXML.Namespaces.resolve()              # Add namespace resolution (optional)
 |> FnXML.DTD.validate()                    # Add DTD validation (optional)
-|> FnXML.Event.Filter.filter_ws()          # Add whitespace filtering (optional)
-|> FnXML.API.DOM.build()                   # Consume as DOM tree
+|> FnXML.Event.Transform.Normalize.line_endings() # Normalize line endings
+|> Stream.filter(&my_filter/1)             # Your custom filters
+|> Enum.reduce(acc, &my_reducer/2)         # Process events
 ```
 
-**Use only what you need.** Each component is optional—add DTD validation only if you need it, add namespace resolution only if your XML uses namespaces, add custom filters for your specific use case.
+**Use only what you need.** Each component is optional—add DTD validation only if you need it, add namespace resolution only if your XML uses namespaces, add custom filters using standard Elixir Stream functions.
 
-### Three Standard XML APIs
+### Alternative XML APIs: DOM, SAX, StAX
 
-The same event stream can be consumed in different ways:
+For developers familiar with traditional XML APIs, FnXML also provides standard DOM, SAX, and StAX interfaces. These are built on top of the event stream:
 
-- **DOM (Tree)** - Build an in-memory tree for small-to-medium documents with random access
-- **SAX (Push)** - Process events with callbacks for large documents
-- **StAX (Pull)** - Pull events on-demand with a cursor for complex state machines
+- **DOM (Tree)** - `FnXML.API.DOM` - Build an in-memory tree for small-to-medium documents with random access
+- **SAX (Push)** - `FnXML.API.SAX` - Process events with callbacks for large documents
+- **StAX (Pull)** - `FnXML.API.StAX` - Pull events on-demand with a cursor for complex state machines
 
 ```elixir
 events = FnXML.Parser.parse(xml)
 
-# Choose your API
-doc = events |> FnXML.API.DOM.build()                    # DOM
-{:ok, result} = events |> FnXML.API.SAX.dispatch(Handler, state)  # SAX
-reader = events |> FnXML.API.StAX.Reader.new()           # StAX
-```
+# Traditional XML APIs (all built on event streams)
+doc = events |> FnXML.API.DOM.build()                           # DOM
+{:ok, result} = events |> FnXML.API.SAX.dispatch(Handler, state) # SAX
+reader = events |> FnXML.API.StAX.Reader.new()                  # StAX
 
-### Custom Filters and Transforms
-
-Build your own stream transformations using standard Elixir Stream functions or FnXML's built-in transforms:
-
-```elixir
-# Custom filter: extract all book titles
-FnXML.Parser.parse(xml)
-|> Stream.chunk_every(3, 1, :discard)
-|> Stream.filter(fn
-  [{:start_element, "title", _, _, _, _}, {:characters, _, _, _, _}, {:end_element, "title", _, _, _}] -> true
-  _ -> false
-end)
-|> Stream.map(fn [_, {:characters, text, _, _, _}, _] -> text end)
-|> Enum.to_list()
+# Or use the stream directly with Elixir tools (recommended)
+results = events
+|> Stream.filter(&filter_func/1)
+|> Enum.map(&process_func/1)
 ```
 
 ## Architecture
@@ -80,22 +82,30 @@ end)
 │                 Pure Elixir • Zero-copy parsing                 │
 └────────────────────────────┬────────────────────────────────────┘
                              │
-                             ▼ Event Stream
+                             ▼ Event Stream (Elixir Stream)
                     {:start_element, ...}
                     {:characters, ...}
                     {:end_element, ...}
                              │
+                ┌────────────┼────────────┐
+                │ Use all Elixir Stream  │
+                │ functions directly:    │
+                │ • Stream.filter/2      │
+                │ • Stream.map/2         │
+                │ • Stream.take/2        │
+                │ • Enum.reduce/3        │
+                └────────────┼────────────┘
+                             │
         ┌────────────────────┼────────────────────┐
         ▼                    ▼                    ▼
 ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│  Transform       │ │  Validate        │ │  Namespace       │
-│  Components      │ │  Components      │ │  Components      │
-│  (Optional)      │ │  (Optional)      │ │  (Optional)      │
+│  FnXML.Event     │ │  FnXML.Validate  │ │  FnXML.Namespace │
+│  (Standard API)  │ │  (Optional)      │ │  (Optional)      │
 ├──────────────────┤ ├──────────────────┤ ├──────────────────┤
-│ • Normalize      │ │ • Well-formed    │ │ • Resolve        │
-│ • Filter         │ │ • Attributes     │ │ • QName          │
-│ • UTF-16         │ │ • Namespaces     │ │ • Context        │
-│ • Entities       │ │ • Comments       │ │                  │
+│ • Filter         │ │ • Well-formed    │ │ • Resolve        │
+│ • Transform      │ │ • Attributes     │ │ • QName          │
+│ • Normalize      │ │ • Namespaces     │ │ • Context        │
+│ • SimpleForm     │ │ • Comments       │ │                  │
 └────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
          └────────────────────┼────────────────────┘
                               │
@@ -103,7 +113,8 @@ end)
         ▼                     ▼                     ▼
 ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
 │  FnXML.API.DOM   │ │  FnXML.API.SAX   │ │  FnXML.API.StAX  │
-│  (Tree Builder)  │ │  (Event Handler) │ │  (Pull Cursor)   │
+│  (Alternative)   │ │  (Alternative)   │ │  (Alternative)   │
+│  Tree Builder    │ │  Event Handler   │ │  Pull Cursor     │
 │  O(n) memory     │ │  O(1) memory     │ │  O(1) memory     │
 └────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
          │                    │                     │
@@ -111,7 +122,11 @@ end)
     Your Application      Your Handlers      Your State Machine
 ```
 
-**Key Concept:** Each component receives an event stream, processes it, and emits a new event stream. Build custom pipelines by connecting only the components you need.
+**Key Concepts:**
+- **Event streams are the basic format** - Use Elixir's Stream and Enum modules directly
+- **FnXML.Event is the standard API** - Provides stream transformations and filters
+- **DOM/SAX/StAX are alternative APIs** - For traditional XML processing patterns
+- **Component-based** - Connect only the components you need
 
 ## Quick Start
 
