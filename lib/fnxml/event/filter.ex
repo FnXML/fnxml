@@ -41,7 +41,7 @@ defmodule FnXML.Event.Filter do
       |> FnXML.Parser.parse()
       |> FnXML.Event.Filter.filter_ws()
       |> FnXML.Event.to_iodata()
-      |> IO.iodata_to_binary()
+      |> Enum.join()
 
   """
   @spec filter_ws(Enumerable.t()) :: Enumerable.t()

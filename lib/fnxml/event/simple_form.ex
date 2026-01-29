@@ -40,7 +40,7 @@ defmodule FnXML.Event.SimpleForm do
       iex> simple_form
       ...> |> FnXML.Event.SimpleForm.encode()
       ...> |> FnXML.Event.to_iodata()
-      ...> |> IO.iodata_to_binary()
+      ...> |> Enum.join()
 
   ## See Also
 
@@ -143,7 +143,7 @@ defmodule FnXML.Event.SimpleForm do
       ...> |> FnXML.Event.SimpleForm.encode()
       ...> |> FnXML.Event.Validate.well_formed()
       ...> |> FnXML.Event.to_iodata()
-      ...> |> IO.iodata_to_binary()
+      ...> |> Enum.join()
 
       # Encode with nested elements
       iex> {"div", [{"id", "main"}], [{"span", [], ["hello"]}]}
