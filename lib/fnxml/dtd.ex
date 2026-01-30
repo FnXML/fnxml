@@ -902,8 +902,11 @@ defmodule FnXML.DTD do
 
     case FnXML.Event.Transform.Entities.resolve_text(text, all_entities, on_unknown) do
       {:ok, resolved} ->
-        # If resolved content contains markup, re-parse it
-        if String.starts_with?(resolved, "<") do
+        # Only reparse if:
+        # 1. Resolved content starts with < (might be markup)
+        # 2. Original text contained non-predefined entity references
+        # This prevents reparsing &lt; (escaped less-than) as actual markup
+        if String.starts_with?(resolved, "<") and has_non_predefined_entity_refs?(text, entities) do
           reparse_markup(resolved, edition)
         else
           [{:characters, resolved, line, ls, pos}]
@@ -921,8 +924,11 @@ defmodule FnXML.DTD do
 
     case FnXML.Event.Transform.Entities.resolve_text(text, all_entities, on_unknown) do
       {:ok, resolved} ->
-        # If resolved content contains markup, re-parse it
-        if String.starts_with?(resolved, "<") do
+        # Only reparse if:
+        # 1. Resolved content starts with < (might be markup)
+        # 2. Original text contained non-predefined entity references
+        # This prevents reparsing &lt; (escaped less-than) as actual markup
+        if String.starts_with?(resolved, "<") and has_non_predefined_entity_refs?(text, entities) do
           reparse_markup(resolved, edition)
         else
           [{:characters, resolved, loc}]
@@ -946,6 +952,25 @@ defmodule FnXML.DTD do
   defp resolve_event(event, _entities, _on_unknown, _edition) do
     # Pass through other events unchanged (comments, PIs, end_element, etc.)
     [event]
+  end
+
+  # Check if text contains entity references that are NOT predefined entities.
+  # Predefined entities (&lt; &gt; &amp; &quot; &apos;) are for escaping characters
+  # and their resolved values should remain as character data, not be reparsed.
+  @predefined_entity_names MapSet.new(["lt", "gt", "amp", "quot", "apos"])
+
+  defp has_non_predefined_entity_refs?(text, dtd_entities) do
+    # Find all entity references in the text
+    Regex.scan(~r/&([a-zA-Z_][a-zA-Z0-9._-]*);/, text)
+    |> Enum.any?(fn [_, name] ->
+      # Check if this entity is defined in the DTD (not predefined)
+      # and its value starts with < (contains markup)
+      not MapSet.member?(@predefined_entity_names, name) and
+        case Map.get(dtd_entities, name) do
+          nil -> false
+          value -> String.contains?(value, "<")
+        end
+    end)
   end
 
   # Returns {resolved_attrs, error_events}
