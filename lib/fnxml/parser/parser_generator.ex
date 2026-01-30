@@ -3100,7 +3100,19 @@ defmodule FnXML.Parser.Generator do
       # CDATA
       # ============================================================================
 
-      defp parse_cdata(events, <<>>, _xml, _buf_pos, abs_pos, line, ls, _loc, elem_start) do
+      defp parse_cdata(
+             events,
+             <<>>,
+             _xml,
+             _buf_pos,
+             abs_pos,
+             line,
+             ls,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
+             elem_start
+           ) do
         incomplete(events, elem_start, line, ls, abs_pos)
       end
 
