@@ -341,9 +341,9 @@ doc.root.tag                                    # => "root"
 doc.root.children                               # => [%Element{...}]
 FnXML.API.DOM.Element.get_attribute(elem, "id")     # => "1"
 
-# Serialize
-FnXML.API.DOM.to_string(doc)                        # => "<root>..."
-FnXML.API.DOM.to_string(doc, pretty: true)          # => formatted XML
+# Serialize (convert to events, then to iodata)
+FnXML.API.DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
+FnXML.API.DOM.to_event(doc) |> FnXML.Event.to_iodata(pretty: true) |> Enum.join()
 
 # Build programmatically
 alias FnXML.API.DOM.Element
