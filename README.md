@@ -225,6 +225,8 @@ File.stream!("huge.xml", [], 65_536)
 # Only the 100 matching records are kept in memory
 ```
 
+> **Note:** FnXML's core parser and built-in transforms maintain O(1) memory. However, some stream operations may buffer events—for example, grouping, summarization, or finding the last element in a group. Your overall memory usage depends on how you consume the stream.
+
 **2. Composable Transformations**
 
 Build processing pipelines by composing stream transformations:
