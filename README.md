@@ -27,9 +27,26 @@ This provides:
 - **Backpressure** - Slow consumers automatically slow the parser
 - **Natural integration** - Use `Stream.filter`, `Stream.map`, `Stream.take`, `Enum.reduce`, etc.
 
-### Elixir API: FnXML.Event
+### Simple: Full Compliant Processing
 
-The **FnXML.Event** module provides the standard API for working with XML event streams. Build your XML processing pipeline by connecting components:
+For fully XML 1.0 compliant processing, use `FnXML.process/1`:
+
+```elixir
+# Process a string
+FnXML.process("<root><child>text</child></root>")
+|> Enum.to_list()
+
+# Process a file
+File.stream!("data.xml")
+|> FnXML.process()
+|> FnXML.API.DOM.build()
+```
+
+`FnXML.process/1` applies the complete pipeline: preprocessing (UTF-16, line endings), parsing, XML 1.0 validation, and DTD/namespace resolution.
+
+### Granular: Build Your Own Pipeline
+
+For more control, compose individual components:
 
 ```elixir
 File.stream!("data.xml")
@@ -42,7 +59,7 @@ File.stream!("data.xml")
 |> Enum.reduce(acc, &my_reducer/2)         # Process events
 ```
 
-**Use only what you need.** Each component is optional—add DTD validation only if you need it, add namespace resolution only if your XML uses namespaces, add custom filters using standard Elixir Stream functions.
+**Use only what you need.** Each component is optional—skip validation for trusted input, skip namespace resolution if not using namespaces, add custom filters using standard Elixir Stream functions.
 
 ### XML APIs: DOM, SAX, StAX
 
@@ -138,21 +155,25 @@ results = events
 ## Quick Start
 
 ```elixir
-# Parse XML to DOM tree (pipeline style)
-doc = FnXML.Parser.parse("<root><child id=\"1\">Hello</child></root>")
+# Fully compliant processing (recommended)
+events = FnXML.process("<root><child id=\"1\">Hello</child></root>")
+|> Enum.to_list()
+
+# Build DOM tree
+doc = FnXML.process("<root><child id=\"1\">Hello</child></root>")
       |> FnXML.API.DOM.build()
 doc.root.tag  # => "root"
 
-# SAX callback-based parsing (pipeline style)
+# SAX callback-based parsing
 defmodule CountHandler do
   use FnXML.API.SAX.Handler
   def start_element(_uri, _local, _qname, _attrs, count), do: {:ok, count + 1}
 end
-{:ok, 2} = FnXML.Parser.parse("<root><child/></root>")
+{:ok, 2} = FnXML.process("<root><child/></root>")
            |> FnXML.API.SAX.dispatch(CountHandler, 0)
 
-# StAX pull-based parsing (pipeline style)
-reader = FnXML.Parser.parse("<root attr=\"val\"/>")
+# StAX pull-based parsing
+reader = FnXML.process("<root attr=\"val\"/>")
          |> FnXML.API.StAX.Reader.new()
 reader = FnXML.API.StAX.Reader.next(reader)
 FnXML.API.StAX.Reader.local_name(reader)  # => "root"
