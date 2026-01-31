@@ -34,9 +34,9 @@ doc.root.tag
 doc.root.children
 FnXML.API.DOM.Element.get_attribute(element, "attr_name")
 
-# CORRECT: Serialize (convert to events, then to iodata)
-FnXML.API.DOM.to_event(doc) |> FnXML.Event.to_iodata() |> Enum.join()
-FnXML.API.DOM.to_event(doc) |> FnXML.Event.to_iodata(pretty: true) |> Enum.join()
+# CORRECT: Serialize
+FnXML.API.DOM.to_event(doc) |> FnXML.Event.to_string()
+FnXML.API.DOM.to_event(doc) |> FnXML.Event.to_string(pretty: true)
 
 # CORRECT: Build elements
 FnXML.API.DOM.Element.new("tag", [{"attr", "val"}], ["child text"])

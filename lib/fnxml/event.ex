@@ -164,6 +164,41 @@ defmodule FnXML.Event do
   end
 
   @doc """
+  Serialize event stream to a string.
+
+  Convenience function that combines `to_iodata/2` with `Enum.join/1`.
+  Collects the entire output into memory, so use `to_iodata/2` for
+  large documents that should be streamed.
+
+  ## Options
+
+  - `:pretty` - Format with indentation (default: false)
+  - `:indent` - Number of spaces or string for indentation (default: 2)
+
+  ## Examples
+
+      # Serialize to string
+      xml = FnXML.Parser.parse("<root><child/></root>")
+            |> FnXML.Event.to_string()
+      # => "<root><child/></root>"
+
+      # Pretty print
+      xml = FnXML.Parser.parse("<root><child/></root>")
+            |> FnXML.Event.to_string(pretty: true)
+
+      # From DOM
+      xml = FnXML.API.DOM.to_event(doc)
+            |> FnXML.Event.to_string()
+
+  """
+  @spec to_string(Enumerable.t(), keyword()) :: String.t()
+  def to_string(stream, opts \\ []) do
+    stream
+    |> to_iodata(opts)
+    |> Enum.join()
+  end
+
+  @doc """
   Convert an iodata fragment stream to binary chunks of approximately the specified size.
 
   Takes the lazy stream of iodata fragments from `to_iodata/2` and combines them
