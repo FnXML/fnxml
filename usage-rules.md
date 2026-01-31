@@ -21,11 +21,12 @@ Concise rules for using the FnXML library correctly.
 doc = FnXML.Parser.parse(xml_string)
       |> FnXML.API.DOM.build()
 
-# CORRECT: With validation/transforms
+# CORRECT: With full validation and resolution
 doc = File.stream!("data.xml")
+      |> FnXML.preprocess()
       |> FnXML.Parser.parse()
-      |> FnXML.Event.Validate.well_formed()
-      |> FnXML.Namespaces.resolve()
+      |> FnXML.Event.Validate.compliant()
+      |> FnXML.Event.resolve()
       |> FnXML.API.DOM.build()
 
 # CORRECT: Access
@@ -60,10 +61,11 @@ end
 {:ok, final_state} = FnXML.Parser.parse(xml)
                      |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
 
-# CORRECT: With validation/transforms
+# CORRECT: With full validation
 {:ok, result} = File.stream!("large.xml")
+                |> FnXML.preprocess()
                 |> FnXML.Parser.parse()
-                |> FnXML.Event.Validate.well_formed()
+                |> FnXML.Event.Validate.compliant()
                 |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
 
 # CORRECT: With options
@@ -89,10 +91,11 @@ end
 reader = FnXML.Parser.parse(xml_string)
          |> FnXML.API.StAX.Reader.new()
 
-# CORRECT: With validation/transforms
+# CORRECT: With full validation
 reader = File.stream!("large.xml")
+         |> FnXML.preprocess()
          |> FnXML.Parser.parse()
-         |> FnXML.Event.Validate.well_formed()
+         |> FnXML.Event.Validate.compliant()
          |> FnXML.API.StAX.Reader.new()
 
 # CORRECT: Pull events
