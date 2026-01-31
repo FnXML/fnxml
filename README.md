@@ -564,6 +564,8 @@ tuple = FnXML.Event.SimpleForm.from_dom(elem)
 
 ## XML Security
 
+> **Warning:** The XML Security module is still in development and has not undergone a security review. Treat this code as suspect and do not use it in production for security-critical operations until it has been properly audited.
+
 FnXML provides W3C-compliant XML Security support for canonicalization, signatures, and encryption.
 
 ### Canonicalization (C14N)
