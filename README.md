@@ -705,7 +705,7 @@ FnXML implements the following W3C specifications:
 
 | Standard | Version | Status |
 |----------|---------|--------|
-| [XML 1.0](https://www.w3.org/TR/xml/) | Fifth Edition | Supported |
+| [XML 1.0](https://www.w3.org/TR/xml/) (includes DTD) | Fourth & Fifth Edition | Supported |
 | [Namespaces in XML 1.0](https://www.w3.org/TR/xml-names/) | Third Edition | Supported |
 | [Canonical XML 1.0](https://www.w3.org/TR/xml-c14n/) | 1.0 | Supported |
 | [Exclusive XML Canonicalization 1.0](https://www.w3.org/TR/xml-exc-c14n/) | 1.0 | Supported |
