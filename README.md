@@ -562,17 +562,6 @@ elem = FnXML.Event.SimpleForm.to_dom({"root", [{"id", "1"}], ["text"]})
 tuple = FnXML.Event.SimpleForm.from_dom(elem)
 ```
 
-## Choosing an API
-
-| Use Case | Recommended API |
-|----------|-----------------|
-| Small documents, need random access | DOM |
-| Large documents, extract specific data | SAX |
-| Large documents, complex state machine | StAX |
-| Stream transformations | Low-level Stream |
-| Saxy migration/interop | SimpleForm |
-| XML Signatures, Encryption | Security |
-
 ## XML Security
 
 FnXML provides W3C-compliant XML Security support for canonicalization, signatures, and encryption.
