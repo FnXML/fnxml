@@ -896,7 +896,7 @@ defmodule FnXML.Event do
 
   Note: This function transforms the event stream. Run conformance
   validation before resolution if strict XML 1.0 checking is needed.
-  If `conformant()` was called first, `parse_model()` is idempotent
+  If `compliant()` was called first, `parse_model()` is idempotent
   and won't re-parse the DTD.
 
   ## Options
@@ -923,7 +923,7 @@ defmodule FnXML.Event do
 
       # With validation before resolution
       FnXML.Parser.parse(xml)
-      |> FnXML.Event.Validate.conformant()
+      |> FnXML.Event.Validate.compliant()
       |> FnXML.Event.resolve()
       |> Enum.to_list()
 

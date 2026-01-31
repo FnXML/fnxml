@@ -153,7 +153,7 @@ defmodule FnXML do
       stream
       |> FnXML.preprocess()
       |> FnXML.parse()
-      |> FnXML.Event.Validate.conformant()
+      |> FnXML.Event.Validate.compliant()
   """
 
   require Logger
@@ -211,11 +211,11 @@ defmodule FnXML do
       |> FnXML.parse()
       |> Enum.to_list()
 
-      # Full conformant parsing pipeline
+      # Full compliant parsing pipeline
       File.stream!("data.xml")
       |> FnXML.preprocess()
       |> FnXML.parse()
-      |> FnXML.Event.Validate.conformant()
+      |> FnXML.Event.Validate.compliant()
       |> Enum.to_list()
 
   """

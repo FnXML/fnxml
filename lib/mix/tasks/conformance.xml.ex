@@ -445,7 +445,7 @@ defmodule Mix.Tasks.Conformance.Xml do
           |> wrap_as_list()
           |> parser.stream()
           |> wrap_with_document_events()
-          |> FnXML.Event.Validate.conformant()
+          |> FnXML.Event.Validate.compliant()
           |> FnXML.Event.Validate.root_boundary()
           # Validate XML declaration attributes and values
           |> FnXML.Event.Validate.xml_declaration()

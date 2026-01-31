@@ -651,16 +651,16 @@ defmodule FnXML.Event.Validate do
   ## Examples
 
       FnXML.Parser.parse(xml)
-      |> FnXML.Event.Validate.conformant()
+      |> FnXML.Event.Validate.compliant()
       |> Enum.to_list()
 
       # With resolution after validation
       FnXML.Parser.parse(xml)
-      |> FnXML.Event.Validate.conformant()
+      |> FnXML.Event.Validate.compliant()
       |> FnXML.Event.resolve()
       |> Enum.to_list()
   """
-  def conformant(stream, opts \\ []) do
+  def compliant(stream, opts \\ []) do
     stream
     |> xml_declaration(opts)
     |> well_formed(opts)

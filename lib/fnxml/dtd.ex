@@ -690,7 +690,7 @@ defmodule FnXML.DTD do
   be passed through unchanged without re-parsing. This allows safe composition:
 
       FnXML.Parser.parse(xml)
-      |> FnXML.Event.Validate.conformant()    # Calls parse_model internally
+      |> FnXML.Event.Validate.compliant()    # Calls parse_model internally
       |> FnXML.Event.resolve()                # Also calls parse_model - no re-parse
       |> Enum.to_list()
 
@@ -704,7 +704,7 @@ defmodule FnXML.DTD do
 
       FnXML.Parser.parse(xml)
       |> FnXML.DTD.parse_model()              # Emits {:dtd_model, model}
-      |> FnXML.Event.Validate.conformant()    # Uses model from stream
+      |> FnXML.Event.Validate.compliant()    # Uses model from stream
       |> FnXML.Event.resolve()                # Uses model from stream
       |> Enum.to_list()
 
