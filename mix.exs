@@ -61,8 +61,8 @@ defmodule FnXML.MixProject do
         "SAX API": [FnXML.SAX, FnXML.SAX.Handler],
         "StAX API": [FnXML.StAX, FnXML.StAX.Reader, FnXML.StAX.Writer],
         Preprocess: [
-          FnXML.Event.Preprocess.Normalize,
-          FnXML.Event.Preprocess.Utf16
+          FnXML.Preprocess.Normalize,
+          FnXML.Preprocess.Utf16
         ],
         Transform: [
           FnXML.Event.Transform.Entities

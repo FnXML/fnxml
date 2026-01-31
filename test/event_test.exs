@@ -390,47 +390,53 @@ defmodule FnXML.EventTest do
 
   describe "iodata_to_binary_block/2" do
     test "converts iodata stream to binary chunks of specified size" do
-      xml = "<root>" <> (1..50 |> Enum.map(fn i -> "<item>#{i}</item>" end) |> Enum.join()) <> "</root>"
+      xml =
+        "<root>" <>
+          (1..50 |> Enum.map(fn i -> "<item>#{i}</item>" end) |> Enum.join()) <> "</root>"
 
-      chunks = FnXML.Parser.parse(xml)
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block(100)
-      |> Enum.to_list()
+      chunks =
+        FnXML.Parser.parse(xml)
+        |> Event.to_iodata()
+        |> Event.iodata_to_binary_block(100)
+        |> Enum.to_list()
 
       # Should produce multiple chunks
       assert length(chunks) > 1
-      
+
       # All chunks should be binaries
       assert Enum.all?(chunks, &is_binary/1)
-      
+
       # Most chunks should be >= 100 bytes (last one may be smaller)
       {initial_chunks, [_last_chunk]} = Enum.split(chunks, -1)
       assert Enum.all?(initial_chunks, fn chunk -> byte_size(chunk) >= 100 end)
-      
+
       # Reassembled output should match input
       assert Enum.join(chunks) == xml
     end
 
     test "uses default chunk size of 64KB" do
       xml = String.duplicate("<item>test</item>", 1000)
-      
-      chunks = FnXML.Parser.parse(xml)
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block()  # Default 64KB
-      |> Enum.to_list()
-      
+
+      chunks =
+        FnXML.Parser.parse(xml)
+        |> Event.to_iodata()
+        # Default 64KB
+        |> Event.iodata_to_binary_block()
+        |> Enum.to_list()
+
       assert Enum.all?(chunks, &is_binary/1)
       assert Enum.join(chunks) == xml
     end
 
     test "handles small XML that fits in single chunk" do
       xml = "<root><a>1</a></root>"
-      
-      chunks = FnXML.Parser.parse(xml)
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block(1000)
-      |> Enum.to_list()
-      
+
+      chunks =
+        FnXML.Parser.parse(xml)
+        |> Event.to_iodata()
+        |> Event.iodata_to_binary_block(1000)
+        |> Enum.to_list()
+
       assert length(chunks) == 1
       assert hd(chunks) == xml
     end
@@ -438,12 +444,13 @@ defmodule FnXML.EventTest do
     test "produces correct chunk sizes" do
       xml = String.duplicate("x", 1000)
       chunk_size = 100
-      
-      chunks = FnXML.Parser.parse("<root>#{xml}</root>")
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block(chunk_size)
-      |> Enum.to_list()
-      
+
+      chunks =
+        FnXML.Parser.parse("<root>#{xml}</root>")
+        |> Event.to_iodata()
+        |> Event.iodata_to_binary_block(chunk_size)
+        |> Enum.to_list()
+
       # All chunks except the last should be >= chunk_size
       {initial_chunks, [_last]} = Enum.split(chunks, -1)
       assert Enum.all?(initial_chunks, fn chunk -> byte_size(chunk) >= chunk_size end)
@@ -451,13 +458,14 @@ defmodule FnXML.EventTest do
 
     test "streams lazily (doesn't force full evaluation)" do
       large_xml = String.duplicate("<item>test</item>", 5000)
-      
+
       # Take only first 3 chunks - should not process entire stream
-      chunks = FnXML.Parser.parse(large_xml)
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block(1000)
-      |> Enum.take(3)
-      
+      chunks =
+        FnXML.Parser.parse(large_xml)
+        |> Event.to_iodata()
+        |> Event.iodata_to_binary_block(1000)
+        |> Enum.take(3)
+
       assert length(chunks) == 3
       assert Enum.all?(chunks, &is_binary/1)
     end
@@ -465,34 +473,36 @@ defmodule FnXML.EventTest do
     test "works with Stream.into and File.stream!" do
       xml = "<root><a>1</a><b>2</b></root>"
       output_file = "/tmp/test_event_to_stream.xml"
-      
+
       FnXML.Parser.parse(xml)
       |> Event.to_iodata()
       |> Event.iodata_to_binary_block(100)
       |> Stream.into(File.stream!(output_file))
       |> Stream.run()
-      
+
       assert File.read!(output_file) == xml
       File.rm(output_file)
     end
 
     test "handles empty stream" do
-      chunks = []
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block(100)
-      |> Enum.to_list()
-      
+      chunks =
+        []
+        |> Event.to_iodata()
+        |> Event.iodata_to_binary_block(100)
+        |> Enum.to_list()
+
       assert chunks == []
     end
 
     test "handles very small chunk sizes" do
       xml = "<root>test</root>"
-      
-      chunks = FnXML.Parser.parse(xml)
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block(5)
-      |> Enum.to_list()
-      
+
+      chunks =
+        FnXML.Parser.parse(xml)
+        |> Event.to_iodata()
+        |> Event.iodata_to_binary_block(5)
+        |> Enum.to_list()
+
       # Should produce multiple small chunks
       assert length(chunks) > 1
       assert Enum.join(chunks) == xml
@@ -501,10 +511,11 @@ defmodule FnXML.EventTest do
     test "preserves binary content correctly" do
       xml = "<root>Special chars: &lt;&gt;&amp;&quot;</root>"
 
-      chunks = FnXML.Parser.parse(xml)
-      |> Event.to_iodata()
-      |> Event.iodata_to_binary_block(20)
-      |> Enum.to_list()
+      chunks =
+        FnXML.Parser.parse(xml)
+        |> Event.to_iodata()
+        |> Event.iodata_to_binary_block(20)
+        |> Enum.to_list()
 
       # Verify chunking preserves the complete content (roundtrip)
       result = Enum.join(chunks)

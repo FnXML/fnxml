@@ -96,7 +96,8 @@ defmodule FnXML.StreamTest do
           {:end_element, "b", 1, 0, 7},
           {:end_element, "a", 1, 0, 11}
         ]
-        |> FnXML.Event.to_iodata() |> Enum.join()
+        |> FnXML.Event.to_iodata()
+        |> Enum.join()
 
       assert iodata == "<a><b/></a>"
     end

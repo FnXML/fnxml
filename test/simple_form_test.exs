@@ -65,7 +65,8 @@ defmodule FnXML.SimpleFormTest do
       iodata =
         {"root", [{"attr", "val"}], [{"child", [], ["text"]}]}
         |> SimpleForm.encode()
-        |> FnXML.Event.to_iodata() |> Enum.join()
+        |> FnXML.Event.to_iodata()
+        |> Enum.join()
 
       xml = iodata
       assert xml == "<root attr=\"val\"><child>text</child></root>"
