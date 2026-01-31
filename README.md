@@ -95,7 +95,7 @@ File.stream!("data.xml")
 |> Enum.reduce(acc, &my_reducer/2)         # Process events
 ```
 
-**Use only what you need.** Each component is optional—skip validation for trusted input, skip namespace resolution if not using namespaces, add custom filters using standard Elixir Stream functions.
+**Use only what you need.** Each component is optional—skip validation for trusted input, skip namespace resolution if not using namespaces, add custom filters using standard Elixir Stream functions. You can further decompose processing by eliminating UTF-16 conversion, DTD resolution, or namespace handling entirely. For maximum performance, you can even generate a custom parser that eliminates specific event types (comments, whitespace, CDATA) at parse time, reducing events to only those your application needs.
 
 ### XML APIs: DOM, SAX, StAX
 
