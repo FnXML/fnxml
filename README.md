@@ -549,15 +549,17 @@ parser = FnXML.Parser.generate(4)
 For codebases using Saxy's SimpleForm format:
 
 ```elixir
-# Decode to SimpleForm tuple
-{"root", attrs, children} = FnXML.Event.Transform.Stream.SimpleForm.decode("<root><child/></root>")
+# Decode XML to SimpleForm tuple
+{"root", attrs, children} = FnXML.Parser.parse("<root><child/></root>")
+                            |> FnXML.Event.SimpleForm.decode()
 
-# Encode back to XML
-FnXML.Event.Transform.Stream.SimpleForm.encode({"root", [], ["text"]})
+# Encode SimpleForm back to XML
+xml = FnXML.Event.SimpleForm.encode({"root", [], ["text"]})
+      |> FnXML.Event.to_string()
 
 # Convert between SimpleForm and DOM
-elem = FnXML.Event.Transform.Stream.SimpleForm.to_dom({"root", [{"id", "1"}], ["text"]})
-tuple = FnXML.Event.Transform.Stream.SimpleForm.from_dom(elem)
+elem = FnXML.Event.SimpleForm.to_dom({"root", [{"id", "1"}], ["text"]})
+tuple = FnXML.Event.SimpleForm.from_dom(elem)
 ```
 
 ## Choosing an API
