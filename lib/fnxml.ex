@@ -100,6 +100,7 @@ defmodule FnXML do
   | Function | Description |
   |----------|-------------|
   | `parse/1` or `parse/2` | Alias to `FnXML.Parser.parse/2` |
+  | `preprocess/1` | Apply UTF-16 conversion and line ending normalization |
   | `halt_on_error/1` | Stop stream on first parse error |
   | `log_on_error/2` | Log errors while passing through |
   | `check_errors/1` | Check for parse errors in event list |
@@ -150,13 +151,9 @@ defmodule FnXML do
 
       # Fully XML Spec Compliant Parsing
       stream
-      |> FnXML.Preprocess.Utf16.to_utf8()
-      |> FnXML.Preprocess.Normalize.line_endings()
-      |> FnXML.Parser.parse()
-      |> FnXML.Event.Validate.well_formed()
-      |> FnXML.Event.Validate.attributes()
-      |> FnXML.Event.Validate.comments()
-      |> FnXML.Event.Validate.namespaces()
+      |> FnXML.preprocess()
+      |> FnXML.parse()
+      |> FnXML.Event.Validate.conformant()
   """
 
   require Logger
@@ -179,6 +176,55 @@ defmodule FnXML do
   """
   defdelegate parse(source), to: FnXML.Parser
   defdelegate parse(source, opts), to: FnXML.Parser
+
+  @doc """
+  Apply all XML preprocessing transformations.
+
+  Combines UTF-16 to UTF-8 conversion and line ending normalization into
+  a single preprocessing step. This ensures the input conforms to XML 1.0
+  requirements before parsing.
+
+  Preprocessing order:
+  1. `FnXML.Preprocess.Utf16.to_utf8/1` - Convert UTF-16 (with BOM detection) to UTF-8
+  2. `FnXML.Preprocess.Normalize.line_endings/1` - Normalize CR/CRLF to LF
+
+  Works with both binary strings and streams.
+
+  ## Parameters
+
+  - `input` - Binary string or stream of binary chunks
+
+  ## Returns
+
+  - Binary if input was binary
+  - Stream if input was stream
+
+  ## Examples
+
+      # Preprocess a binary
+      xml = File.read!("data.xml") |> FnXML.preprocess()
+      FnXML.parse(xml) |> Enum.to_list()
+
+      # Preprocess a stream
+      File.stream!("data.xml")
+      |> FnXML.preprocess()
+      |> FnXML.parse()
+      |> Enum.to_list()
+
+      # Full conformant parsing pipeline
+      File.stream!("data.xml")
+      |> FnXML.preprocess()
+      |> FnXML.parse()
+      |> FnXML.Event.Validate.conformant()
+      |> Enum.to_list()
+
+  """
+  @spec preprocess(binary() | Enumerable.t()) :: binary() | Enumerable.t()
+  def preprocess(input) do
+    input
+    |> FnXML.Preprocess.Utf16.to_utf8()
+    |> FnXML.Preprocess.Normalize.line_endings()
+  end
 
   @doc """
   Halt the stream when an error event is encountered.
