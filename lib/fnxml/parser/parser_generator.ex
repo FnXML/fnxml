@@ -1,17 +1,38 @@
 defmodule FnXML.Parser.Generator do
   @moduledoc """
-  Macro-based XML block parser generator for Edition 4 and Edition 5.
+  Macro-based XML/HTML block parser generator for Edition 4 and Edition 5.
 
   Generates edition-specific parsers from shared code, with character
   validation guards inlined at compile time for maximum performance.
 
   ## Usage
 
-      # Generates parser with Edition 5 character validation
+      # Generates parser with Edition 5 character validation (XML mode)
       use FnXML.Parser.Generator, edition: 5
 
-      # Generates parser with Edition 4 character validation
+      # Generates parser with Edition 4 character validation (XML mode)
       use FnXML.Parser.Generator, edition: 4
+
+      # Generates HTML5 parser with Edition 5 character validation
+      use FnXML.Parser.Generator, edition: 5, mode: :html
+
+  ## Modes
+
+  ### XML Mode (default)
+
+  Strict XML 1.0 parsing with full spec compliance:
+  - Attributes require `=` and quoted values
+  - All content is parsed as XML markup or character data
+
+  ### HTML Mode
+
+  HTML5-style tokenization with relaxed attribute syntax:
+  - **Boolean attributes**: `<input disabled>` (valueless attributes)
+  - **Unquoted attribute values**: `<div class=container>`
+  - **Raw text elements**: `<script>` and `<style>` content is not parsed as XML
+
+  Raw text elements allow `<` and `>` characters in their content without
+  being treated as markup. The end tag is matched case-insensitively.
 
   ## Architecture
 
@@ -28,6 +49,7 @@ defmodule FnXML.Parser.Generator do
   Generates an edition-specific block parser module.
 
   ## Options
+
   - `:edition` - Required. Either `4` or `5`.
   - `:disable` - Optional. List of event types to disable (compile-time filtering).
                  Valid values: `:space`, `:comment`, `:cdata`, `:prolog`, `:characters`,
@@ -36,6 +58,44 @@ defmodule FnXML.Parser.Generator do
                   - `:full` (default) - Include line, ls, abs_pos
                   - `:line_only` - Include only line number
                   - `:none` - No position data
+  - `:mode` - Optional. Parsing mode. Default `:xml`.
+                  - `:xml` - Strict XML parsing
+                  - `:html` - HTML5 tokenization (see HTML Mode below)
+  - `:raw_text_elements` - Optional. List of element names (atoms) whose content should be
+                           treated as raw text (not parsed). Default `[:script, :style]`.
+                           Only used when mode is `:html`.
+
+  ## HTML Mode
+
+  When `mode: :html` is set, the parser supports HTML5-style tokenization:
+
+  ### Boolean Attributes
+
+  Attributes without values are treated as boolean attributes with an empty string value:
+
+      <input disabled>        → {"disabled", ""}
+      <input disabled checked> → [{"disabled", ""}, {"checked", ""}]
+
+  ### Unquoted Attribute Values
+
+  Attribute values don't require quotes if they contain no special characters:
+
+      <div class=container>   → {"class", "container"}
+      <div data-id=123>       → {"data-id", "123"}
+
+  Unquoted values terminate on whitespace, `>`, tab, newline, or form feed.
+  The characters `"`, `'`, `<`, `=`, and `` ` `` emit an `:invalid_unquoted_attr_char`
+  error but parsing continues.
+
+  ### Raw Text Elements
+
+  Elements in the `:raw_text_elements` list (default: `[:script, :style]`) have their
+  content parsed as raw text, not XML:
+
+      <script>if (a < b) { alert('hi'); }</script>
+
+  The `<` and `>` characters are preserved as content, not treated as markup.
+  End tags are matched case-insensitively (`</SCRIPT>` closes `<script>`).
 
   ## Examples
 
@@ -50,11 +110,32 @@ defmodule FnXML.Parser.Generator do
       # Structure only - no text content
       use FnXML.Parser.Generator, edition: 5,
         disable: [:characters, :space, :comment, :cdata]
+
+      # HTML5 parser with custom raw text elements
+      use FnXML.Parser.Generator, edition: 5,
+        mode: :html,
+        raw_text_elements: [:script, :style, :textarea]
+
+  ## Generated Functions
+
+  The generated module includes these introspection functions:
+
+  - `edition/0` - Returns the XML edition (4 or 5)
+  - `disabled/0` - Returns the list of disabled event types
+  - `position_mode/0` - Returns the position mode
+  - `mode/0` - Returns the parsing mode (:xml or :html)
+  - `raw_text_elements/0` - Returns the raw text element list (HTML mode only)
   """
   defmacro __using__(opts) do
     edition = Keyword.fetch!(opts, :edition)
     disabled = Keyword.get(opts, :disable, [])
     positions = Keyword.get(opts, :positions, :full)
+    mode = Keyword.get(opts, :mode, :xml)
+    raw_text_elements = Keyword.get(opts, :raw_text_elements, [:script, :style])
+
+    unless mode in [:xml, :html] do
+      raise ArgumentError, "Invalid mode: #{inspect(mode)}. Must be :xml or :html"
+    end
 
     quote do
       @moduledoc """
@@ -63,8 +144,13 @@ defmodule FnXML.Parser.Generator do
       Auto-generated with edition-specific character validation inlined
       for maximum performance. No runtime edition dispatch.
 
-      Disabled events: #{inspect(unquote(disabled))}
-      Position mode: #{unquote(positions)}
+      ## Configuration
+
+      - Edition: #{unquote(edition)}
+      - Mode: #{unquote(mode)}
+      - Disabled events: #{inspect(unquote(disabled))}
+      - Position mode: #{unquote(positions)}
+      #{if unquote(mode) == :html, do: "- Raw text elements: #{inspect(unquote(raw_text_elements))}", else: ""}
       """
 
       # Inline frequently called helper functions
@@ -81,10 +167,57 @@ defmodule FnXML.Parser.Generator do
       @edition unquote(edition)
       @disabled unquote(disabled)
       @position_mode unquote(positions)
+      @mode unquote(mode)
+      @raw_text_elements unquote(raw_text_elements)
+      @raw_text_element_names Enum.map(unquote(raw_text_elements), &Atom.to_string/1)
 
+      @doc "Returns the XML edition (4 or 5) this parser was generated for."
       def edition, do: @edition
+
+      @doc "Returns the list of disabled event types."
       def disabled, do: @disabled
+
+      @doc "Returns the position mode (:full, :line_only, or :none)."
       def position_mode, do: @position_mode
+
+      @doc "Returns the parsing mode (:xml or :html)."
+      def mode, do: @mode
+
+      @doc "Returns the list of raw text element names (atoms). Only relevant in :html mode."
+      def raw_text_elements, do: @raw_text_elements
+
+      # Helper to decide what to do after emitting start_element
+      # For HTML mode, check if this is a raw text element
+      if @mode == :html do
+        defp is_raw_text_element?(name) do
+          String.downcase(name) in @raw_text_element_names
+        end
+
+        defp after_start_element(events, rest, xml, buf_pos, abs_pos, line, ls, name) do
+          if is_raw_text_element?(name) do
+            parse_raw_text(
+              events,
+              rest,
+              xml,
+              buf_pos,
+              abs_pos,
+              line,
+              ls,
+              String.downcase(name),
+              buf_pos,
+              line,
+              ls,
+              abs_pos
+            )
+          else
+            parse_content(events, rest, xml, buf_pos, abs_pos, line, ls)
+          end
+        end
+      else
+        defp after_start_element(events, rest, xml, buf_pos, abs_pos, line, ls, _name) do
+          parse_content(events, rest, xml, buf_pos, abs_pos, line, ls)
+        end
+      end
 
       # ==================================================================
       # Character Guards (edition-specific, inlined at compile time)
@@ -975,8 +1108,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
-             _start
+             _el_line,
+             _el_ls,
+             _el_abs_pos
            )
            when byte >= 0x80 do
         error(
@@ -1357,7 +1491,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -1526,7 +1662,7 @@ defmodule FnXML.Parser.Generator do
              _elem_start
            ) do
         new_events = new_event(events, :start_element, name, attrs, el_line, el_ls, el_abs_pos)
-        parse_content(new_events, rest, xml, buf_pos + 1, abs_pos + 1, line, ls)
+        after_start_element(new_events, rest, xml, buf_pos + 1, abs_pos + 1, line, ls, name)
       end
 
       defp finish_open_tag(
@@ -1609,7 +1745,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _elem_start
            )
            when is_name_start(c) do
@@ -1628,7 +1766,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -1645,7 +1785,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _elem_start
            ) do
         new_events = error(events, :expected_gt_or_attr, nil, line, ls, abs_pos)
@@ -1663,7 +1805,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -1714,9 +1858,8 @@ defmodule FnXML.Parser.Generator do
              el_abs_pos,
              _elem_start
            ) do
-        events
-        |> new_event(:start_element, name, attrs, el_line, el_ls, el_abs_pos)
-        |> parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls)
+        new_events = new_event(events, :start_element, name, attrs, el_line, el_ls, el_abs_pos)
+        after_start_element(new_events, rest, xml, buf_pos + 1, abs_pos + 1, line, ls, name)
       end
 
       defp finish_open_tag_ws(
@@ -1834,7 +1977,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -1851,7 +1996,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _elem_start
            ) do
         events
@@ -1874,7 +2021,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -2001,7 +2150,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _attr_name,
              elem_start
            ) do
@@ -2117,6 +2268,102 @@ defmodule FnXML.Parser.Generator do
         )
       end
 
+      # HTML mode: attribute without value (boolean attribute)
+      # When we see a non-= character in HTML mode, treat as boolean attribute
+      if @mode == :html do
+        defp parse_attr_eq(
+               events,
+               <<c::utf8, _rest::binary>> = binary,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               name,
+               attrs,
+               seen,
+               el_line,
+               el_ls,
+               el_abs_pos,
+               attr_name,
+               elem_start
+             )
+             when c != ?= and is_name_start(c) do
+          # Add attribute with empty value
+          {new_attrs, new_seen, events} =
+            if attr_name in seen do
+              {[{attr_name, ""} | attrs], seen,
+               error(events, :duplicate_attribute, attr_name, line, ls, abs_pos)}
+            else
+              {[{attr_name, ""} | attrs], [attr_name | seen], events}
+            end
+
+          # Next char is a name start - directly parse next attribute
+          parse_attr_name(
+            events,
+            binary,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            name,
+            new_attrs,
+            new_seen,
+            line,
+            ls,
+            abs_pos,
+            elem_start
+          )
+        end
+
+        defp parse_attr_eq(
+               events,
+               <<c, _rest::binary>> = binary,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               name,
+               attrs,
+               seen,
+               el_line,
+               el_ls,
+               el_abs_pos,
+               attr_name,
+               elem_start
+             )
+             when c != ?= and c in [?>, ?/] do
+          # Add attribute with empty value
+          {new_attrs, new_seen, events} =
+            if attr_name in seen do
+              {[{attr_name, ""} | attrs], seen,
+               error(events, :duplicate_attribute, attr_name, line, ls, abs_pos)}
+            else
+              {[{attr_name, ""} | attrs], [attr_name | seen], events}
+            end
+
+          # > or / - go to finish_open_tag
+          finish_open_tag(
+            events,
+            binary,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            name,
+            new_attrs,
+            new_seen,
+            el_line,
+            el_ls,
+            el_abs_pos,
+            elem_start
+          )
+        end
+      end
+
       defp parse_attr_eq(
              events,
              _,
@@ -2128,7 +2375,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _attr_name,
              _elem_start
            ) do
@@ -2148,7 +2397,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _attr_name,
              elem_start
            ) do
@@ -2266,6 +2517,47 @@ defmodule FnXML.Parser.Generator do
         )
       end
 
+      # HTML mode: unquoted attribute value
+      # When we see a non-quote character in HTML mode after =, parse unquoted value
+      if @mode == :html do
+        defp parse_attr_quote(
+               events,
+               <<c, _rest::binary>> = binary,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               name,
+               attrs,
+               seen,
+               el_line,
+               el_ls,
+               el_abs_pos,
+               attr_name,
+               elem_start
+             )
+             when c not in [?", ?', ?\s, ?\t, ?\n, ?\r] do
+          parse_attr_value_unquoted(
+            events,
+            binary,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            name,
+            attrs,
+            seen,
+            line,
+            ls,
+            abs_pos,
+            attr_name,
+            elem_start
+          )
+        end
+      end
+
       defp parse_attr_quote(
              events,
              _,
@@ -2277,7 +2569,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _attr_name,
              _elem_start
            ) do
@@ -2528,7 +2822,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _attr_name,
              _quote,
              _elem_start
@@ -2558,7 +2854,9 @@ defmodule FnXML.Parser.Generator do
              _name,
              _attrs,
              _seen,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _attr_name,
              _quote,
              _elem_start
@@ -2578,6 +2876,617 @@ defmodule FnXML.Parser.Generator do
       end
 
       # ============================================================================
+      # HTML mode: Unquoted attribute value parsing
+      # ============================================================================
+
+      if @mode == :html do
+        # Characters that terminate unquoted attribute values
+        @unquoted_terminators [?\t, ?\n, 0x0C, ?\s, ?>]
+        # Characters that are errors in unquoted values (but we continue)
+        @unquoted_error_chars [?", ?', ?<, ?=, ?`]
+
+        # Empty input - incomplete
+        defp parse_attr_value_unquoted(
+               events,
+               <<>>,
+               _xml,
+               _buf_pos,
+               abs_pos,
+               line,
+               ls,
+               _name,
+               _attrs,
+               _seen,
+               _val_line,
+               _val_ls,
+               _val_abs_pos,
+               _attr_name,
+               elem_start
+             ) do
+          incomplete(events, elem_start, line, ls, abs_pos)
+        end
+
+        # Terminator character - finish the attribute
+        defp parse_attr_value_unquoted(
+               events,
+               <<c, _rest::binary>> = binary,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               name,
+               attrs,
+               seen,
+               val_line,
+               val_ls,
+               val_abs_pos,
+               attr_name,
+               elem_start
+             )
+             when c in @unquoted_terminators do
+          value = binary_part(xml, buf_start(buf_pos, abs_pos, val_abs_pos), abs_pos - val_abs_pos)
+
+          {new_attrs, new_seen, events} =
+            if attr_name in seen do
+              {[{attr_name, value} | attrs], seen,
+               error(events, :duplicate_attribute, attr_name, val_line, val_ls, val_abs_pos)}
+            else
+              {[{attr_name, value} | attrs], [attr_name | seen], events}
+            end
+
+          finish_open_tag(
+            events,
+            binary,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            name,
+            new_attrs,
+            new_seen,
+            line,
+            ls,
+            abs_pos,
+            elem_start
+          )
+        end
+
+        # Error character - emit error but continue parsing
+        defp parse_attr_value_unquoted(
+               events,
+               <<c, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               name,
+               attrs,
+               seen,
+               val_line,
+               val_ls,
+               val_abs_pos,
+               attr_name,
+               elem_start
+             )
+             when c in @unquoted_error_chars do
+          events = error(events, :invalid_unquoted_attr_char, <<c>>, line, ls, abs_pos)
+
+          parse_attr_value_unquoted(
+            events,
+            rest,
+            xml,
+            buf_pos + 1,
+            abs_pos + 1,
+            line,
+            ls,
+            name,
+            attrs,
+            seen,
+            val_line,
+            val_ls,
+            val_abs_pos,
+            attr_name,
+            elem_start
+          )
+        end
+
+        # Regular ASCII character - continue accumulating
+        defp parse_attr_value_unquoted(
+               events,
+               <<c, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               name,
+               attrs,
+               seen,
+               val_line,
+               val_ls,
+               val_abs_pos,
+               attr_name,
+               elem_start
+             )
+             when c < 0x80 do
+          parse_attr_value_unquoted(
+            events,
+            rest,
+            xml,
+            buf_pos + 1,
+            abs_pos + 1,
+            line,
+            ls,
+            name,
+            attrs,
+            seen,
+            val_line,
+            val_ls,
+            val_abs_pos,
+            attr_name,
+            elem_start
+          )
+        end
+
+        # Multi-byte UTF-8 character - continue accumulating
+        defp parse_attr_value_unquoted(
+               events,
+               <<c::utf8, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               name,
+               attrs,
+               seen,
+               val_line,
+               val_ls,
+               val_abs_pos,
+               attr_name,
+               elem_start
+             ) do
+          byte_size = utf8_size(c)
+
+          parse_attr_value_unquoted(
+            events,
+            rest,
+            xml,
+            buf_pos + byte_size,
+            abs_pos + byte_size,
+            line,
+            ls,
+            name,
+            attrs,
+            seen,
+            val_line,
+            val_ls,
+            val_abs_pos,
+            attr_name,
+            elem_start
+          )
+        end
+
+        # ============================================================================
+        # Raw text element parsing (script, style, etc.)
+        # ============================================================================
+
+        # Empty input - incomplete
+        defp parse_raw_text(
+               events,
+               <<>>,
+               _xml,
+               _buf_pos,
+               abs_pos,
+               line,
+               ls,
+               _tag_name,
+               _text_start,
+               _text_line,
+               _text_ls,
+               text_abs_pos
+             ) do
+          incomplete(events, text_abs_pos, line, ls, abs_pos)
+        end
+
+        # Potential end tag - check for </tagname
+        defp parse_raw_text(
+               events,
+               <<"</", rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos
+             ) do
+          parse_raw_text_end_tag(
+            events,
+            rest,
+            xml,
+            buf_pos + 2,
+            abs_pos + 2,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos,
+            ""
+          )
+        end
+
+        # Newline - update line tracking
+        defp parse_raw_text(
+               events,
+               <<?\n, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               _ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos
+             ) do
+          parse_raw_text(
+            events,
+            rest,
+            xml,
+            buf_pos + 1,
+            abs_pos + 1,
+            line + 1,
+            abs_pos + 1,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
+        end
+
+        # ASCII fast path for valid XML chars (tab, CR, space through DEL)
+        defp parse_raw_text(
+               events,
+               <<c, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos
+             )
+             when c in 0x20..0x7F or c == 0x09 or c == 0x0D do
+          parse_raw_text(
+            events,
+            rest,
+            xml,
+            buf_pos + 1,
+            abs_pos + 1,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
+        end
+
+        # Non-ASCII UTF-8: validate with is_xml_char guard
+        defp parse_raw_text(
+               events,
+               <<c::utf8, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos
+             )
+             when is_xml_char(c) do
+          size = utf8_size(c)
+
+          parse_raw_text(
+            events,
+            rest,
+            xml,
+            buf_pos + size,
+            abs_pos + size,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
+        end
+
+        # Invalid XML character - emit error and stop
+        defp parse_raw_text(
+               events,
+               <<c::utf8, _rest::binary>>,
+               _xml,
+               _buf_pos,
+               abs_pos,
+               line,
+               ls,
+               _tag_name,
+               _text_start,
+               _text_line,
+               _text_ls,
+               _text_abs_pos
+             ) do
+          error(
+            events,
+            :invalid_char,
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in raw text content",
+            line,
+            ls,
+            abs_pos
+          )
+          |> complete(line, ls, abs_pos)
+        end
+
+        # Malformed UTF-8 byte sequence
+        defp parse_raw_text(
+               events,
+               <<byte, _rest::binary>>,
+               _xml,
+               _buf_pos,
+               abs_pos,
+               line,
+               ls,
+               _tag_name,
+               _text_start,
+               _text_line,
+               _text_ls,
+               _text_abs_pos
+             )
+             when byte >= 0x80 do
+          error(
+            events,
+            :invalid_utf8,
+            "Invalid UTF-8 byte sequence in raw text content",
+            line,
+            ls,
+            abs_pos
+          )
+          |> complete(line, ls, abs_pos)
+        end
+
+        # Parse potential end tag name
+        # Empty input - incomplete
+        defp parse_raw_text_end_tag(
+               events,
+               <<>>,
+               _xml,
+               _buf_pos,
+               abs_pos,
+               line,
+               ls,
+               _tag_name,
+               _text_start,
+               _text_line,
+               _text_ls,
+               text_abs_pos,
+               _acc
+             ) do
+          incomplete(events, text_abs_pos, line, ls, abs_pos)
+        end
+
+        # End of tag name - check if it matches
+        defp parse_raw_text_end_tag(
+               events,
+               <<c, rest::binary>> = binary,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos,
+               acc
+             )
+             when c in [?>, ?\s, ?\t, ?\n, ?\r, ?/] do
+          if String.downcase(acc) == tag_name do
+            # Match! Emit characters event (if any content), then end_element
+            text_length = abs_pos - 2 - byte_size(acc) - text_abs_pos
+
+            events =
+              if text_length > 0 do
+                text = binary_part(xml, text_start, text_length)
+                new_event(events, :characters, text, text_line, text_ls, text_abs_pos)
+              else
+                events
+              end
+
+            # Now parse through any whitespace and the >
+            parse_raw_text_close(events, binary, xml, buf_pos, abs_pos, line, ls, tag_name)
+          else
+            # Not a match - continue raw text parsing
+            # We need to continue from after the </
+            parse_raw_text(
+              events,
+              binary,
+              xml,
+              buf_pos,
+              abs_pos,
+              line,
+              ls,
+              tag_name,
+              text_start,
+              text_line,
+              text_ls,
+              text_abs_pos
+            )
+          end
+        end
+
+        # Accumulate tag name character
+        defp parse_raw_text_end_tag(
+               events,
+               <<c, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos,
+               acc
+             )
+             when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?- or c == ?_ do
+          parse_raw_text_end_tag(
+            events,
+            rest,
+            xml,
+            buf_pos + 1,
+            abs_pos + 1,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos,
+            acc <> <<c>>
+          )
+        end
+
+        # Non-tag character after </ - not a valid end tag, continue raw text
+        defp parse_raw_text_end_tag(
+               events,
+               binary,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos,
+               _acc
+             ) do
+          parse_raw_text(
+            events,
+            binary,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
+        end
+
+        # Skip whitespace before > in end tag
+        defp parse_raw_text_close(
+               events,
+               <<c, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name
+             )
+             when c in [?\s, ?\t, ?\r] do
+          parse_raw_text_close(events, rest, xml, buf_pos + 1, abs_pos + 1, line, ls, tag_name)
+        end
+
+        defp parse_raw_text_close(
+               events,
+               <<?\n, rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               _ls,
+               tag_name
+             ) do
+          parse_raw_text_close(events, rest, xml, buf_pos + 1, abs_pos + 1, line + 1, abs_pos + 1, tag_name)
+        end
+
+        # Found > - emit end_element and continue normal parsing
+        defp parse_raw_text_close(
+               events,
+               <<">", rest::binary>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name
+             ) do
+          events
+          |> new_event(:end_element, tag_name, line, ls, abs_pos)
+          |> parse_content(rest, xml, buf_pos + 1, abs_pos + 1, line, ls)
+        end
+
+        # Empty - incomplete
+        defp parse_raw_text_close(
+               events,
+               <<>>,
+               _xml,
+               _buf_pos,
+               abs_pos,
+               line,
+               ls,
+               _tag_name
+             ) do
+          incomplete(events, abs_pos, line, ls, abs_pos)
+        end
+
+        # Unexpected character - this shouldn't happen with valid HTML
+        defp parse_raw_text_close(
+               events,
+               _binary,
+               _xml,
+               _buf_pos,
+               abs_pos,
+               line,
+               ls,
+               _tag_name
+             ) do
+          events
+          |> error(:invalid_end_tag, nil, line, ls, abs_pos)
+          |> complete(line, ls, abs_pos)
+        end
+      end
+
+      # ============================================================================
       # Close tag
       # ============================================================================
 
@@ -2589,7 +3498,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -2696,7 +3607,9 @@ defmodule FnXML.Parser.Generator do
              line,
              ls,
              _name,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -2791,7 +3704,9 @@ defmodule FnXML.Parser.Generator do
              line,
              ls,
              _name,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _elem_start
            ) do
         events
@@ -2811,7 +3726,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _has_double_dash,
              elem_start
            ) do
@@ -2908,8 +3825,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
-             _start,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _has_double_dash,
              elem_start
            ) do
@@ -3052,7 +3970,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _has_double_dash,
              _elem_start
            ) do
@@ -3078,7 +3998,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _has_double_dash,
              _elem_start
            )
@@ -3145,7 +4067,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -3159,7 +4083,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              elem_start
            ) do
         incomplete(events, elem_start, line, ls, abs_pos)
@@ -3293,7 +4219,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _elem_start
            ) do
         events =
@@ -3318,7 +4246,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _elem_start
            )
            when byte >= 0x80 do
@@ -4524,7 +5454,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              elem_start
            ) do
@@ -4656,7 +5588,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _attr_name,
              elem_start
@@ -4769,7 +5703,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _attr_name,
              _elem_start
@@ -4787,7 +5723,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _attr_name,
              elem_start
@@ -4902,7 +5840,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _attr_name,
              _elem_start
@@ -4920,7 +5860,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _attr_name,
              _quote,
@@ -5082,7 +6024,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _attr_name,
              _quote,
@@ -5110,7 +6054,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _attr_name,
              _quote,
@@ -5138,7 +6084,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              elem_start
            ) do
@@ -5233,7 +6181,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _elem_start
            )
@@ -5251,7 +6201,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _elem_start
            ) do
@@ -5268,7 +6220,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              elem_start
            ) do
@@ -5394,7 +6348,9 @@ defmodule FnXML.Parser.Generator do
              abs_pos,
              line,
              ls,
-             _loc,
+             _el_line,
+             _el_ls,
+             _el_abs_pos,
              _prolog_attrs,
              _elem_start
            ) do
