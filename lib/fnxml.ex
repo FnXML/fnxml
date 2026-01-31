@@ -99,6 +99,7 @@ defmodule FnXML do
 
   | Function | Description |
   |----------|-------------|
+  | `process/1` or `process/2` | Full pipeline: preprocess, parse, validate, resolve |
   | `parse/1` or `parse/2` | Alias to `FnXML.Parser.parse/2` |
   | `preprocess/1` | Apply UTF-16 conversion and line ending normalization |
   | `halt_on_error/1` | Stop stream on first parse error |
@@ -224,6 +225,75 @@ defmodule FnXML do
     input
     |> FnXML.Preprocess.Utf16.to_utf8()
     |> FnXML.Preprocess.Normalize.line_endings()
+  end
+
+  @doc """
+  Process XML with full preprocessing, parsing, validation, and resolution.
+
+  This is the recommended entry point for fully compliant XML processing.
+  Combines all processing steps into a single pipeline:
+
+  1. `preprocess/1` - UTF-16 to UTF-8 conversion and line ending normalization
+  2. `parse/2` - Parse XML to event stream
+  3. `FnXML.Event.Validate.compliant/2` - Full XML 1.0 validation
+  4. `FnXML.Event.resolve/2` - DTD entity and namespace resolution
+
+  Works with both binary strings and streams.
+
+  ## Parameters
+
+  - `input` - Binary string or stream of binary chunks
+  - `opts` - Options passed to underlying functions (optional)
+
+  ## Options
+
+  Parser options:
+  - `:edition` - XML 1.0 edition: `4` (strict) or `5` (permissive, default)
+
+  Validation options:
+  - `:on_error` - How to handle errors: `:error` (default), `:raise`
+
+  Resolution options:
+  - `:on_unknown` - How to handle unknown entities: `:keep` (default), `:error`, `:skip`
+  - `:strip_declarations` - Remove xmlns attributes (default: false)
+
+  ## Returns
+
+  A lazy stream of XML events with validation errors (if any) included.
+
+  ## Examples
+
+      # Process a binary string
+      FnXML.process("<root><child>text</child></root>")
+      |> Enum.to_list()
+
+      # Process a file stream
+      File.stream!("data.xml")
+      |> FnXML.process()
+      |> Enum.to_list()
+
+      # With options
+      File.stream!("data.xml")
+      |> FnXML.process(edition: 4, on_error: :raise)
+      |> Enum.to_list()
+
+      # Build DOM from fully processed stream
+      doc = File.stream!("data.xml")
+            |> FnXML.process()
+            |> FnXML.API.DOM.build()
+
+      # Extract data with SAX
+      {:ok, result} = FnXML.process(xml)
+                      |> FnXML.API.SAX.dispatch(MyHandler, initial_state)
+
+  """
+  @spec process(binary() | Enumerable.t(), keyword()) :: Enumerable.t()
+  def process(input, opts \\ []) do
+    input
+    |> preprocess()
+    |> FnXML.Parser.parse(opts)
+    |> FnXML.Event.Validate.compliant(opts)
+    |> FnXML.Event.resolve(opts)
   end
 
   @doc """
