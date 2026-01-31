@@ -672,6 +672,124 @@ defmodule FnXML.DTD do
   end
 
   # ============================================================================
+  # DTD Model Parsing (Emits State Event)
+  # ============================================================================
+
+  @doc """
+  Parse DTD and emit model as a stream event.
+
+  This function watches for `{:dtd, ...}` events, parses the DTD content,
+  and emits a `{:dtd_model, %FnXML.DTD.Model{}}` event BEFORE the original
+  `{:dtd, ...}` event. Downstream processors can use this model for
+  validation and resolution without re-parsing.
+
+  ## Idempotent Operation
+
+  This function is idempotent - if a `{:dtd_model, ...}` event is already
+  present in the stream (from an earlier call to `parse_model/2`), it will
+  be passed through unchanged without re-parsing. This allows safe composition:
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.Event.Validate.conformant()    # Calls parse_model internally
+      |> FnXML.Event.resolve()                # Also calls parse_model - no re-parse
+      |> Enum.to_list()
+
+  ## Event Order
+
+  When a DTD is found:
+  1. `{:dtd_model, %Model{}}` - Parsed DTD model (emitted first)
+  2. `{:dtd, content, ...}` - Original DTD event (passed through)
+
+  ## Usage
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.DTD.parse_model()              # Emits {:dtd_model, model}
+      |> FnXML.Event.Validate.conformant()    # Uses model from stream
+      |> FnXML.Event.resolve()                # Uses model from stream
+      |> Enum.to_list()
+
+  ## Pipeline Validation
+
+  Downstream processors that require the DTD model should check:
+  - If they see `{:dtd_model, model}`, store and use it
+  - If they see `{:dtd, ...}` without prior `{:dtd_model, ...}`, emit error:
+    `{:error, :no_dtd_model, "DTD parser missing from pipeline"}`
+
+  ## Options
+
+  - `:on_error` - How to handle DTD parse errors:
+    - `:emit` (default) - Emit `{:error, ...}` event and continue
+    - `:raise` - Raise exception
+    - `:skip` - Skip model emission on error, pass DTD through
+
+  ## Examples
+
+      # Basic usage
+      FnXML.Parser.parse(xml)
+      |> FnXML.DTD.parse_model()
+      |> Enum.to_list()
+      # => [{:dtd_model, %Model{...}}, {:dtd, "...", ...}, ...]
+
+      # With error handling
+      FnXML.Parser.parse(xml)
+      |> FnXML.DTD.parse_model(on_error: :emit)
+      |> Enum.to_list()
+  """
+  @spec parse_model(Enumerable.t(), keyword()) :: Enumerable.t()
+  def parse_model(stream, opts \\ []) do
+    on_error = Keyword.get(opts, :on_error, :emit)
+
+    # State: :waiting | :has_model
+    # Idempotent: if we see {:dtd_model, ...} already in stream, pass through unchanged
+    Stream.transform(stream, :waiting, fn
+      # Already have model in stream - pass through everything
+      event, :has_model ->
+        {[event], :has_model}
+
+      # Existing model found - mark as having model and pass through
+      {:dtd_model, _} = event, :waiting ->
+        {[event], :has_model}
+
+      # DTD found, emit model before it
+      {:dtd, content, line, ls, pos} = event, :waiting ->
+        {emit_dtd_model(content, event, {line, ls, pos}, on_error), :has_model}
+
+      {:dtd, content, loc} = event, :waiting ->
+        {emit_dtd_model(content, event, loc, on_error), :has_model}
+
+      {:dtd, content} = event, :waiting ->
+        {emit_dtd_model(content, event, nil, on_error), :has_model}
+
+      # Other events while waiting - pass through
+      event, :waiting ->
+        {[event], :waiting}
+    end)
+  end
+
+  defp emit_dtd_model(content, dtd_event, loc, on_error) do
+    case parse_doctype(content) do
+      {:ok, model} ->
+        [{:dtd_model, model}, dtd_event]
+
+      {:error, reason} ->
+        handle_dtd_parse_error(reason, dtd_event, loc, on_error)
+    end
+  end
+
+  defp handle_dtd_parse_error(_reason, dtd_event, _loc, :skip) do
+    [dtd_event]
+  end
+
+  defp handle_dtd_parse_error(reason, _dtd_event, loc, :raise) do
+    raise "DTD parse error: #{inspect(reason)} at #{inspect(loc)}"
+  end
+
+  defp handle_dtd_parse_error(reason, dtd_event, loc, :emit) do
+    error_event = {:error, :dtd_parse_error, "Failed to parse DTD: #{inspect(reason)}", loc}
+    [error_event, dtd_event]
+  end
+
+  # ============================================================================
   # Pipeline-Friendly DTD Resolution
   # ============================================================================
 

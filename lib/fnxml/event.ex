@@ -477,11 +477,20 @@ defmodule FnXML.Event do
   ## Parameters
 
   - `stream` - The XML event stream
-  - `acc` - Initial accumulator value (default: [])
+  - `acc` - Initial accumulator value (default: `[]`)
+  - `opts` - Options keyword list (optional, see Options section)
   - `fun` - Transform function that receives:
     - `element` - Current event, e.g., `{:start_element, "foo", [], 1, 0, 1}`
     - `path` - Stack of open tags, e.g., `[{"bar", ""}, {"foo", ""}]`
     - `acc` - Current accumulator value
+
+  ## Function Signatures
+
+  The function supports multiple call patterns:
+
+      transform(stream, fun)                    # Just stream and function
+      transform(stream, acc, fun)               # Stream, accumulator, and function
+      transform(stream, acc, opts, fun)         # All arguments with options
 
   ## Return Value
 
@@ -494,6 +503,16 @@ defmodule FnXML.Event do
   The path is a list of tuples where:
   - First element is the tag name
   - Second element is the namespace URI (empty string if none)
+
+  ## Options
+
+  - `:event_mode` - How to handle unknown/metadata events (default: `:pass`):
+    - `:pass` - Pass unknown events through to the callback function
+    - `:discard` - Silently discard unknown events without calling the callback
+    - `:strict` - Emit `{:error, :validation, ...}` for unknown events
+
+  Unknown events include custom events injected into the stream (e.g., `{:dtd_model, ...}`)
+  that are not standard XML parser events.
 
   ## Examples
 
@@ -514,6 +533,22 @@ defmodule FnXML.Event do
       end)
       |> Enum.to_list()
 
+      # Discard custom metadata events injected by upstream processors
+      FnXML.Parser.parse(xml)
+      |> FnXML.DTD.parse_model()                # Injects {:dtd_model, ...} events
+      |> FnXML.Event.transform([], [event_mode: :discard], fn event, _path, acc ->
+        # Only receives standard XML events, not {:dtd_model, ...}
+        {event, acc}
+      end)
+      |> Enum.to_list()
+
+      # Strict mode - error on unexpected events
+      FnXML.Parser.parse(xml)
+      |> FnXML.Event.transform([], [event_mode: :strict], fn event, _path, acc ->
+        {event, acc}
+      end)
+      |> Enum.to_list()
+
   ## Validation
 
   This function validates XML structure as it processes events:
@@ -530,42 +565,64 @@ defmodule FnXML.Event do
   @valid_element_id FnXML.Element.id_list()
 
   @spec transform(Enumerable.t(), any(), function()) :: Enumerable.t()
-  def transform(stream, acc \\ [], fun) do
-    stream
-    |> Stream.chunk_while(initial_acc(acc, fun), &process_item/2, &after_fn/1)
+  @spec transform(Enumerable.t(), any(), keyword(), function()) :: Enumerable.t()
+  def transform(stream, acc \\ [], opts_or_fun, fun \\ nil)
+
+  # transform(stream, fun) - just function, no acc or opts
+  def transform(stream, fun, nil, nil) when is_function(fun) do
+    do_transform(stream, [], fun, :pass)
   end
 
-  defp initial_acc(acc, fun), do: {[], acc, fun}
+  # transform(stream, acc, fun) - acc and function, no opts
+  def transform(stream, acc, fun, nil) when is_function(fun) do
+    do_transform(stream, acc, fun, :pass)
+  end
+
+  # transform(stream, acc, opts, fun) - all arguments
+  def transform(stream, acc, opts, fun) when is_list(opts) and is_function(fun) do
+    event_mode = Keyword.get(opts, :event_mode, :pass)
+    do_transform(stream, acc, fun, event_mode)
+  end
+
+  defp do_transform(stream, acc, fun, event_mode) do
+    stream
+    |> Stream.chunk_while(initial_acc(acc, fun, event_mode), &process_item/2, &after_fn/1)
+  end
+
+  defp initial_acc(acc, fun, event_mode), do: {[], acc, fun, event_mode}
 
   # 6-element start_element: {:start_element, tag, attrs, line, ls, pos}
-  defp process_item({:start_element, tag, _attrs, _line, _ls, _pos} = element, {stack, acc, fun}) do
+  defp process_item(
+         {:start_element, tag, _attrs, _line, _ls, _pos} = element,
+         {stack, acc, fun, mode}
+       ) do
     tag_tuple = FnXML.Element.tag(tag)
     new_stack = [tag_tuple | stack]
-    fun.(element, new_stack, acc) |> next(new_stack, fun)
+    fun.(element, new_stack, acc) |> next(new_stack, fun, mode)
   end
 
   # 4-element start_element (no location): {:start_element, tag, attrs, nil}
-  defp process_item({:start_element, tag, _attrs, nil} = element, {stack, acc, fun}) do
+  defp process_item({:start_element, tag, _attrs, nil} = element, {stack, acc, fun, mode}) do
     tag_tuple = FnXML.Element.tag(tag)
     new_stack = [tag_tuple | stack]
-    fun.(element, new_stack, acc) |> next(new_stack, fun)
+    fun.(element, new_stack, acc) |> next(new_stack, fun, mode)
   end
 
   # 5-element end_element: {:end_element, tag, line, ls, pos}
-  defp process_item({:end_element, _tag, _line, _ls, _pos} = element, {[], acc, fun}) do
+  defp process_item({:end_element, _tag, _line, _ls, _pos} = element, {[], acc, fun, mode}) do
     tag_str = FnXML.Element.tag_string(element)
-    error(element, "unexpected close tag #{tag_str}, missing open tag", [], acc, fun)
+    error(element, "unexpected close tag #{tag_str}, missing open tag", [], acc, fun, mode)
   end
 
   defp process_item(
          {:end_element, tag, _line, _ls, _pos} = element,
-         {[head | new_stack] = stack, acc, fun}
+         {[head | new_stack] = stack, acc, fun, mode}
        ) do
     tag_tuple = FnXML.Element.tag(tag)
 
     cond do
       tag_tuple == head ->
-        fun.(element, stack, acc) |> next(new_stack, fun)
+        fun.(element, stack, acc) |> next(new_stack, fun, mode)
 
       tag_tuple != head ->
         error(
@@ -573,22 +630,23 @@ defmodule FnXML.Event do
           "mis-matched close tag #{inspect(tag_tuple)}, expecting: #{FnXML.Element.tag_name(head)}",
           stack,
           acc,
-          fun
+          fun,
+          mode
         )
     end
   end
 
   # 2-element end_element (no location): {:end_element, tag}
-  defp process_item({:end_element, tag} = element, {[], acc, fun}) do
-    error(element, "unexpected close tag #{tag}, missing open tag", [], acc, fun)
+  defp process_item({:end_element, tag} = element, {[], acc, fun, mode}) do
+    error(element, "unexpected close tag #{tag}, missing open tag", [], acc, fun, mode)
   end
 
-  defp process_item({:end_element, tag} = element, {[head | new_stack] = stack, acc, fun}) do
+  defp process_item({:end_element, tag} = element, {[head | new_stack] = stack, acc, fun, mode}) do
     tag_tuple = FnXML.Element.tag(tag)
 
     cond do
       tag_tuple == head ->
-        fun.(element, stack, acc) |> next(new_stack, fun)
+        fun.(element, stack, acc) |> next(new_stack, fun, mode)
 
       tag_tuple != head ->
         error(
@@ -596,66 +654,82 @@ defmodule FnXML.Event do
           "mis-matched close tag #{inspect(tag_tuple)}, expecting: #{FnXML.Element.tag_name(head)}",
           stack,
           acc,
-          fun
+          fun,
+          mode
         )
     end
   end
 
   # 5-element characters: {:characters, content, line, ls, pos}
-  defp process_item({:characters, content, _line, _ls, _pos} = element, {[], acc, fun}) do
+  defp process_item({:characters, content, _line, _ls, _pos} = element, {[], acc, fun, mode}) do
     if String.match?(content, ~r/^[\s\n]*$/) do
-      acc |> next([], fun)
+      acc |> next([], fun, mode)
     else
       error(
         element,
         "Text element outside root element",
         [],
         acc,
-        fun
+        fun,
+        mode
       )
     end
   end
 
   # 5-element space: {:space, content, line, ls, pos}
-  defp process_item({:space, _content, _line, _ls, _pos}, {[], acc, fun}) do
+  defp process_item({:space, _content, _line, _ls, _pos}, {[], acc, fun, mode}) do
     # Whitespace outside root element is ignored
-    acc |> next([], fun)
+    acc |> next([], fun, mode)
   end
 
   # Generic handlers for 3-element, 5-element, and 6-element events
-  defp process_item({id, _, nil} = element, {stack, acc, fun}) when id in @valid_element_id do
-    fun.(element, stack, acc) |> next(stack, fun)
-  end
-
-  defp process_item({id, _, _, _, _} = element, {stack, acc, fun}) when id in @valid_element_id do
-    fun.(element, stack, acc) |> next(stack, fun)
-  end
-
-  defp process_item({id, _, _, _, _, _} = element, {stack, acc, fun})
+  defp process_item({id, _, nil} = element, {stack, acc, fun, mode})
        when id in @valid_element_id do
-    fun.(element, stack, acc) |> next(stack, fun)
+    fun.(element, stack, acc) |> next(stack, fun, mode)
+  end
+
+  defp process_item({id, _, _, _, _} = element, {stack, acc, fun, mode})
+       when id in @valid_element_id do
+    fun.(element, stack, acc) |> next(stack, fun, mode)
+  end
+
+  defp process_item({id, _, _, _, _, _} = element, {stack, acc, fun, mode})
+       when id in @valid_element_id do
+    fun.(element, stack, acc) |> next(stack, fun, mode)
   end
 
   # Document start/end markers - pass through without modifying stack
-  defp process_item({:start_document, _} = element, {stack, acc, fun}) do
-    fun.(element, stack, acc) |> next(stack, fun)
+  defp process_item({:start_document, _} = element, {stack, acc, fun, mode}) do
+    fun.(element, stack, acc) |> next(stack, fun, mode)
   end
 
-  defp process_item({:end_document, _} = element, {stack, acc, fun}) do
-    fun.(element, stack, acc) |> next(stack, fun)
+  defp process_item({:end_document, _} = element, {stack, acc, fun, mode}) do
+    fun.(element, stack, acc) |> next(stack, fun, mode)
   end
 
-  defp process_item(element, {stack, acc, fun}) do
-    error(element, "unknown element type #{inspect(element)}", stack, acc, fun)
+  # Unknown/metadata events - behavior controlled by event_mode option
+  defp process_item(element, {stack, acc, fun, :pass}) do
+    # Pass through to callback
+    fun.(element, stack, acc) |> next(stack, fun, :pass)
   end
 
-  defp next({element, acc}, stack, fun), do: {:cont, element, {stack, acc, fun}}
-  defp next(acc, stack, fun), do: {:cont, {stack, acc, fun}}
+  defp process_item(_element, {stack, acc, fun, :discard}) do
+    # Silently discard
+    {:cont, {stack, acc, fun, :discard}}
+  end
+
+  defp process_item(element, {stack, acc, fun, :strict}) do
+    # Emit error for unknown events
+    error(element, "unknown event type #{inspect(element)}", stack, acc, fun, :strict)
+  end
+
+  defp next({element, acc}, stack, fun, mode), do: {:cont, element, {stack, acc, fun, mode}}
+  defp next(acc, stack, fun, mode), do: {:cont, {stack, acc, fun, mode}}
 
   defp after_fn([]), do: {:cont, []}
   defp after_fn(acc), do: {:cont, acc}
 
-  defp error(element, msg, stack, acc, fun) do
+  defp error(element, msg, stack, acc, fun, mode) do
     # Extract position information from the element if available
     error_event =
       case element do
@@ -669,7 +743,7 @@ defmodule FnXML.Event do
           {:error, :validation, msg}
       end
 
-    {:cont, error_event, {stack, acc, fun}}
+    {:cont, error_event, {stack, acc, fun, mode}}
   end
 
   @doc """
@@ -802,5 +876,68 @@ defmodule FnXML.Event do
           end
       end
     )
+  end
+
+  # ============================================================================
+  # Resolution
+  # ============================================================================
+
+  @doc """
+  Resolve DTD entities and namespace prefixes in an event stream.
+
+  This is a convenience function that combines DTD validation and resolution
+  with namespace prefix expansion into a single pipeline step.
+
+  Includes (in order):
+  1. `FnXML.DTD.parse_model/2` - Parse DTD and emit model event (idempotent)
+  2. `FnXML.DTD.Validator.validate/2` - DTD constraint validation
+  3. `FnXML.DTD.resolve/2` - Resolves DTD entity references
+  4. `FnXML.Namespaces.Resolver.resolve/2` - Expands namespace prefixes
+
+  Note: This function transforms the event stream. Run conformance
+  validation before resolution if strict XML 1.0 checking is needed.
+  If `conformant()` was called first, `parse_model()` is idempotent
+  and won't re-parse the DTD.
+
+  ## Options
+
+  DTD validation options:
+  - `:on_error` - How to handle errors: `:emit` (default), `:raise`, `:skip`
+  - `:normalize_attributes` - Apply DTD-based attribute normalization (default: true)
+
+  DTD resolution options:
+  - `:on_unknown` - How to handle unknown entities: `:keep` (default), `:error`, `:skip`
+  - `:edition` - XML edition for character validation: `4` or `5` (default)
+  - `:error_on_no_dtd` - Emit error if no DTD found (default: false)
+
+  Namespace resolution options:
+  - `:strip_declarations` - Remove xmlns attributes from output (default: false)
+  - `:include_prefix` - Include original prefix in output (default: false)
+
+  ## Examples
+
+      # Basic resolution
+      FnXML.Parser.parse(xml)
+      |> FnXML.Event.resolve()
+      |> Enum.to_list()
+
+      # With validation before resolution
+      FnXML.Parser.parse(xml)
+      |> FnXML.Event.Validate.conformant()
+      |> FnXML.Event.resolve()
+      |> Enum.to_list()
+
+      # With options
+      FnXML.Parser.parse(xml)
+      |> FnXML.Event.resolve(on_unknown: :error, strip_declarations: true)
+      |> Enum.to_list()
+  """
+  @spec resolve(Enumerable.t(), keyword()) :: Enumerable.t()
+  def resolve(stream, opts \\ []) do
+    stream
+    |> FnXML.DTD.parse_model(opts)
+    |> FnXML.DTD.Validator.validate(opts)
+    |> FnXML.DTD.resolve(opts)
+    |> FnXML.Namespaces.Resolver.resolve(opts)
   end
 end

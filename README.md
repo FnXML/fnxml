@@ -33,7 +33,7 @@ The **FnXML.Event** module provides the standard API for working with XML event 
 
 ```elixir
 File.stream!("data.xml")
-|> FnXML.Event.Preprocess.Normalize.line_endings_stream() # Preprocess: normalize line endings
+|> FnXML.Preprocess.Normalize.line_endings() # Preprocess: normalize line endings
 |> FnXML.Parser.parse()                    # Parse XML to event stream
 |> FnXML.Event.Filter.filter_ws()          # Filter whitespace events
 |> FnXML.Event.Validate.well_formed()      # Add validation (optional)
@@ -77,7 +77,7 @@ results = events
                              │
                              ▼ Preprocess (Optional)
                 ┌────────────────────────────┐
-                │ FnXML.Event.Preprocess.*   │
+                │ FnXML.Preprocess.*         │
                 │ • Utf16.to_utf8()          │
                 │ • Normalize.line_endings() │
                 └────────────┬───────────────┘
@@ -130,7 +130,7 @@ results = events
 ```
 
 **Key Concepts:**
-- **Preprocessors** - `FnXML.Event.Preprocess.*` operates on binaries before parsing (UTF-16, line endings)
+- **Preprocessors** - `FnXML.Preprocess.*` operates on binaries before parsing (UTF-16, line endings)
 - **Event streams are the basic format** - Use Elixir's Stream and Enum modules directly
 - **FnXML.Event is the standard API** - Provides stream transformations and filters for events
 - **DOM/SAX/StAX are alternative APIs** - For traditional XML processing patterns

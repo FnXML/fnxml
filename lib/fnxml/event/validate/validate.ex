@@ -629,12 +629,20 @@ defmodule FnXML.Event.Validate do
   This is a convenience function that combines all validation checks
   needed for full XML 1.0 conformance. Use this for strict validation.
 
-  Includes:
-  - `well_formed/2` - Tag matching
-  - `attributes/2` - Unique attribute names
-  - `comments/2` - No '--' in comments, no trailing '-'
-  - `processing_instructions/2` - Valid PI targets
-  - `characters/2` - Valid XML characters
+  Includes (in order):
+  1. `xml_declaration/2` - XML declaration format validation
+  2. `well_formed/2` - Tag matching (structural validity)
+  3. `root_boundary/2` - Content only within root element
+  4. `attributes/2` - Unique attribute names
+  5. `comments/2` - No '--' in comments, no trailing '-'
+  6. `processing_instructions/2` - Valid PI targets
+  7. `namespaces/2` - Namespace prefix declarations
+  8. `FnXML.DTD.parse_model/2` - Parse DTD and emit model event
+  9. `entity_references_streaming/2` - Entity reference validation (WFCs)
+
+  Note: XML character validation is performed by the parser itself.
+  DTD entity resolution (`FnXML.Event.resolve/2`) should be applied after
+  conformance validation if needed, as it transforms the stream.
 
   ## Options
 
@@ -642,22 +650,27 @@ defmodule FnXML.Event.Validate do
 
   ## Examples
 
-      FnXML.parse_stream(xml)
+      FnXML.Parser.parse(xml)
       |> FnXML.Event.Validate.conformant()
       |> Enum.to_list()
 
-      # For conformance testing with entities
-      FnXML.parse_stream(xml)
+      # With resolution after validation
+      FnXML.Parser.parse(xml)
       |> FnXML.Event.Validate.conformant()
-      |> FnXML.Event.Transform.Entities.resolve(on_unknown: :keep)
+      |> FnXML.Event.resolve()
       |> Enum.to_list()
   """
   def conformant(stream, opts \\ []) do
     stream
+    |> xml_declaration(opts)
     |> well_formed(opts)
+    |> root_boundary(opts)
     |> attributes(opts)
     |> comments(opts)
     |> processing_instructions(opts)
+    |> namespaces(opts)
+    |> FnXML.DTD.parse_model(opts)
+    |> entity_references_streaming(opts)
   end
 
   # ============================================================================
@@ -1023,6 +1036,150 @@ defmodule FnXML.Event.Validate do
   defp handle_entity_error(msg, loc, :raise, _event) do
     {line, _, _} = loc
     raise "#{msg} at line #{line}"
+  end
+
+  @doc """
+  Validate entity references using DTD model from stream.
+
+  Watches for `{:dtd_model, model}` events emitted by `FnXML.DTD.parse_model/2`
+  and uses the model to validate entity references. No buffering required -
+  events before the model are passed through, validation starts after model is seen.
+
+  If a `{:dtd, ...}` event is seen without a prior `{:dtd_model, ...}`, emits
+  an error indicating that `FnXML.DTD.parse_model/2` is missing from the pipeline.
+
+  Validates:
+  - WFC: Parsed Entity - unparsed entities (NDATA) can't be in content
+  - WFC: No External Entity References - external entities can't be in attributes
+  - Undefined entity references
+
+  ## Pipeline Requirement
+
+  This validator requires `FnXML.DTD.parse_model/2` earlier in the pipeline:
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.DTD.parse_model()                    # Required - emits {:dtd_model, ...}
+      |> FnXML.Event.Validate.entity_references_streaming()
+      |> Enum.to_list()
+
+  ## Options
+
+  - `:on_error` - How to handle errors:
+    - `:error` (default) - Emit error event in stream
+    - `:raise` - Raise exception
+
+  ## Examples
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.DTD.parse_model()
+      |> FnXML.Event.Validate.entity_references_streaming()
+      |> Enum.to_list()
+  """
+  @spec entity_references_streaming(Enumerable.t(), keyword()) :: Enumerable.t()
+  def entity_references_streaming(stream, opts \\ []) do
+    on_error = Keyword.get(opts, :on_error, :error)
+
+    # State: entity_info
+    # nil = waiting for model, {entities, unparsed, external} = have model
+    Stream.transform(stream, nil, fn event, entity_info ->
+      validate_entity_streaming(event, entity_info, on_error)
+    end)
+  end
+
+  # Received DTD model - extract entity info and pass through
+  defp validate_entity_streaming({:dtd_model, model} = event, nil, _on_error) do
+    entity_info = extract_entity_info_from_model(model)
+    {[event], entity_info}
+  end
+
+  # DTD event without prior model - pipeline error
+  defp validate_entity_streaming({:dtd, _, _, _, _} = event, nil, on_error) do
+    handle_missing_model_error(event, on_error)
+  end
+
+  defp validate_entity_streaming({:dtd, _, _} = event, nil, on_error) do
+    handle_missing_model_error(event, on_error)
+  end
+
+  defp validate_entity_streaming({:dtd, _} = event, nil, on_error) do
+    handle_missing_model_error(event, on_error)
+  end
+
+  # No model yet, pass through (will validate after model arrives, or no DTD in doc)
+  defp validate_entity_streaming(event, nil, _on_error) do
+    {[event], nil}
+  end
+
+  # Have entity info - validate events
+  defp validate_entity_streaming(event, entity_info, on_error) do
+    {validate_entity_event(event, entity_info, on_error), entity_info}
+  end
+
+  defp handle_missing_model_error(_dtd_event, :raise) do
+    raise "DTD found but no {:dtd_model, ...} event received. Add FnXML.DTD.parse_model/2 to pipeline before entity validation."
+  end
+
+  defp handle_missing_model_error(dtd_event, _on_error) do
+    error =
+      {:error, :no_dtd_model, "DTD parser (FnXML.DTD.parse_model/2) missing from pipeline", nil}
+
+    {[error, dtd_event], {MapSet.new(), MapSet.new(), MapSet.new()}}
+  end
+
+  # Validate a single event against entity info
+  defp validate_entity_event(
+         {:characters, content, line, ls, pos} = event,
+         {entities, unparsed, _external},
+         on_error
+       ) do
+    validate_entity_refs_in_text(event, content, {line, ls, pos}, entities, unparsed, on_error)
+  end
+
+  defp validate_entity_event(
+         {:start_element, tag, attrs, line, ls, pos} = event,
+         {entities, unparsed, external},
+         on_error
+       ) do
+    validate_entity_refs_in_attrs(
+      event,
+      tag,
+      attrs,
+      {line, ls, pos},
+      entities,
+      external,
+      unparsed,
+      on_error
+    )
+  end
+
+  defp validate_entity_event(event, _entity_info, _on_error), do: [event]
+
+  # Extract entity info from parsed DTD model
+  defp extract_entity_info_from_model(%{entities: entities} = model) do
+    entity_names = entities |> Map.keys() |> MapSet.new()
+    {unparsed, external} = categorize_entities(model)
+    {entity_names, unparsed, external}
+  end
+
+  defp extract_entity_info_from_model(_), do: {MapSet.new(), MapSet.new(), MapSet.new()}
+
+  # Categorize entities as unparsed (NDATA) or external (SYSTEM/PUBLIC without NDATA)
+  defp categorize_entities(%{entities: entities}) do
+    Enum.reduce(entities, {MapSet.new(), MapSet.new()}, fn {name, value}, {unparsed, external} ->
+      cond do
+        # Unparsed entities have NDATA
+        is_binary(value) and String.contains?(value, "NDATA") ->
+          {MapSet.put(unparsed, name), external}
+
+        # External entities have SYSTEM or PUBLIC but no NDATA
+        is_binary(value) and
+            (String.contains?(value, "SYSTEM") or String.contains?(value, "PUBLIC")) ->
+          {unparsed, MapSet.put(external, name)}
+
+        true ->
+          {unparsed, external}
+      end
+    end)
   end
 
   # ============================================================================
