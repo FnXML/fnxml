@@ -27,6 +27,26 @@ This provides:
 - **Backpressure** - Slow consumers automatically slow the parser
 - **Natural integration** - Use `Stream.filter`, `Stream.map`, `Stream.take`, `Enum.reduce`, etc.
 
+## Features
+
+### Core Capabilities
+
+- **Pure Elixir** - No external dependencies, runs anywhere Elixir runs
+- **Streaming parser** - Process XML incrementally without loading entire document
+- **Macro-based performance** - Compile-time parser generation for optimal speed
+- **Constant memory** - Process multi-gigabyte files with O(1) memory usage
+- **Lazy evaluation** - Parse only what you consume, stop early when done
+
+### Component-Based Design
+
+- **Modular pipeline** - Connect only the components you need
+- **Preprocessors** - UTF-16 conversion, line ending normalization (operates on binaries)
+- **Event filters** - Filter whitespace, comments, or custom event types (operates on event streams)
+- **Event transforms** - Entity resolution, SimpleForm conversion (operates on event streams)
+- **Optional validation** - Use `compliant()` for full XML 1.0 validation or individual validators
+- **Optional resolution** - Use `resolve()` for DTD entity and namespace resolution
+- **Custom components** - Build your own stream transformers and filters
+
 ## Installation
 
 ```elixir
@@ -310,20 +330,6 @@ filtered = events
 |> Stream.filter(fn {:characters, _, _, _, _} -> true; _ -> false end)
 |> Enum.map(fn {:characters, text, _, _, _} -> text end)
 ```
-
-### Chunk Boundary Handling
-
-FnXML correctly handles XML elements that span chunk boundaries in streamed input:
-
-```elixir
-# Even if <element> starts in one chunk and ends in another, it's parsed correctly
-File.stream!("file.xml", [], 1024)  # Small chunks
-|> FnXML.Parser.parse()
-|> Enum.to_list()
-# All elements are correctly parsed regardless of chunk boundaries
-```
-
-The parser maintains continuation state to handle incomplete elements across chunk boundaries transparently.
 
 ## APIs
 
@@ -663,41 +669,6 @@ xml = ~s(<root><secret id="data">Sensitive info</secret></root>)
 | **Canonicalization** | C14N 1.0, Exclusive C14N (with/without comments) |
 
 All cryptographic operations use Erlang/OTP built-in `:crypto` and `:public_key` modules.
-
-## Features
-
-### Core Capabilities
-
-- **Pure Elixir** - No external dependencies, runs anywhere Elixir runs
-- **Streaming parser** - Process XML incrementally without loading entire document
-- **Macro-based performance** - Compile-time parser generation for optimal speed
-- **Constant memory** - Process multi-gigabyte files with O(1) memory usage
-- **Lazy evaluation** - Parse only what you consume, stop early when done
-
-### Component-Based Design
-
-- **Modular pipeline** - Connect only the components you need
-- **Preprocessors** - UTF-16 conversion, line ending normalization (operates on binaries)
-- **Event filters** - Filter whitespace, comments, or custom event types (operates on event streams)
-- **Event transforms** - Entity resolution, SimpleForm conversion (operates on event streams)
-- **Optional validation** - Use `compliant()` for full XML 1.0 validation or individual validators
-- **Optional resolution** - Use `resolve()` for DTD entity and namespace resolution
-- **Custom components** - Build your own stream transformers and filters
-
-### Standards and APIs
-
-- **XML 1.0 Edition 4 & 5** - W3C-compliant parsing with configurable strictness
-- **Namespace support** - Full XML namespace resolution per W3C specification
-- **Three standard APIs** - DOM (tree), SAX (push callbacks), StAX (pull cursor)
-- **XML Security** - W3C-compliant canonicalization, signatures, and encryption
-
-### Developer Experience
-
-- **Location tracking** - Line/column info for every event for error reporting
-- **Chunk boundary handling** - Handles elements spanning chunk boundaries correctly
-- **Saxy compatible** - SimpleForm format for easy migration from Saxy
-- **Custom parsers** - Generate specialized parsers with compile-time event filtering
-- **Backpressure support** - Slow consumers automatically slow the parser
 
 ### W3C Standards Compliance
 
