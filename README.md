@@ -27,25 +27,24 @@ This provides:
 - **Backpressure** - Slow consumers automatically slow the parser
 - **Natural integration** - Use `Stream.filter`, `Stream.map`, `Stream.take`, `Enum.reduce`, etc.
 
-### Standard API: FnXML.Event
+### Elixir API: FnXML.Event
 
 The **FnXML.Event** module provides the standard API for working with XML event streams. Build your XML processing pipeline by connecting components:
 
 ```elixir
 File.stream!("data.xml")
-|> FnXML.Preprocess.Normalize.line_endings() # Preprocess: normalize line endings
+|> FnXML.preprocess()                      # Preprocess: UTF-16 + line endings
 |> FnXML.Parser.parse()                    # Parse XML to event stream
 |> FnXML.Event.Filter.filter_ws()          # Filter whitespace events
-|> FnXML.Event.Validate.well_formed()      # Add validation (optional)
-|> FnXML.Namespaces.resolve()              # Add namespace resolution (optional)
-|> FnXML.DTD.validate()                    # Add DTD validation (optional)
+|> FnXML.Event.Validate.compliant()        # Full XML 1.0 validation (optional)
+|> FnXML.Event.resolve()                   # DTD + namespace resolution (optional)
 |> Stream.filter(&my_filter/1)             # Your custom filters
 |> Enum.reduce(acc, &my_reducer/2)         # Process events
 ```
 
 **Use only what you need.** Each component is optional—add DTD validation only if you need it, add namespace resolution only if your XML uses namespaces, add custom filters using standard Elixir Stream functions.
 
-### Alternative XML APIs: DOM, SAX, StAX
+### XML APIs: DOM, SAX, StAX
 
 For developers familiar with traditional XML APIs, FnXML also provides standard DOM, SAX, and StAX interfaces. These are built on top of the event stream:
 
@@ -214,9 +213,10 @@ Build processing pipelines by composing stream transformations:
 
 ```elixir
 File.stream!("data.xml")
+|> FnXML.preprocess()                          # Normalize encoding/line endings
 |> FnXML.Parser.parse()                        # Parse to events
-|> FnXML.Event.Validate.well_formed()          # Validate structure
-|> FnXML.Namespaces.resolve()                  # Resolve namespaces
+|> FnXML.Event.Validate.compliant()            # Full XML 1.0 validation
+|> FnXML.Event.resolve()                       # Resolve DTD + namespaces
 |> FnXML.Event.Filter.filter_ws()              # Remove whitespace
 |> FnXML.API.SAX.dispatch(Handler, state)      # Process with handler
 ```
@@ -308,11 +308,12 @@ Build an in-memory tree representation. Best for small-to-medium documents where
 doc = FnXML.Parser.parse("<root><child id=\"1\">text</child></root>")
       |> FnXML.API.DOM.build()
 
-# With validation/transformation pipeline
+# With full validation and resolution
 doc = File.stream!("large.xml")
+      |> FnXML.preprocess()
       |> FnXML.Parser.parse()
-      |> FnXML.Event.Validate.well_formed()
-      |> FnXML.Namespaces.resolve()
+      |> FnXML.Event.Validate.compliant()
+      |> FnXML.Event.resolve()
       |> FnXML.API.DOM.build()
 
 # Navigate
@@ -357,10 +358,11 @@ end
 {:ok, result} = FnXML.Parser.parse(xml)
                 |> FnXML.API.SAX.dispatch(MyHandler, [])
 
-# With validation/transforms
+# With full validation
 {:ok, result} = File.stream!("large.xml")
+                |> FnXML.preprocess()
                 |> FnXML.Parser.parse()
-                |> FnXML.Event.Validate.well_formed()
+                |> FnXML.Event.Validate.compliant()
                 |> FnXML.API.SAX.dispatch(MyHandler, [])
 ```
 
@@ -377,10 +379,11 @@ Pull-based cursor navigation. Best for large documents with complex processing l
 reader = FnXML.Parser.parse(xml)
          |> FnXML.API.StAX.Reader.new()
 
-# With validation/transforms
+# With full validation
 reader = File.stream!("large.xml")
+         |> FnXML.preprocess()
          |> FnXML.Parser.parse()
-         |> FnXML.Event.Validate.well_formed()
+         |> FnXML.Event.Validate.compliant()
          |> FnXML.API.StAX.Reader.new()
 
 # Pull events one at a time (lazy - O(1) memory)
@@ -656,8 +659,8 @@ All cryptographic operations use Erlang/OTP built-in `:crypto` and `:public_key`
 - **Preprocessors** - UTF-16 conversion, line ending normalization (operates on binaries)
 - **Event filters** - Filter whitespace, comments, or custom event types (operates on event streams)
 - **Event transforms** - Entity resolution, SimpleForm conversion (operates on event streams)
-- **Optional validation** - Add well-formed, namespace, attribute, comment validators
-- **Optional DTD support** - Include DTD parsing and validation only when needed
+- **Optional validation** - Use `compliant()` for full XML 1.0 validation or individual validators
+- **Optional resolution** - Use `resolve()` for DTD entity and namespace resolution
 - **Custom components** - Build your own stream transformers and filters
 
 ### Standards and APIs
