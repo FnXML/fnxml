@@ -691,6 +691,19 @@ All cryptographic operations use Erlang/OTP built-in `:crypto` and `:public_key`
 - **Custom parsers** - Generate specialized parsers with compile-time event filtering
 - **Backpressure support** - Slow consumers automatically slow the parser
 
+### W3C Standards Compliance
+
+FnXML implements the following W3C specifications:
+
+| Standard | Version | Status |
+|----------|---------|--------|
+| [XML 1.0](https://www.w3.org/TR/xml/) | Fifth Edition | Supported |
+| [Namespaces in XML 1.0](https://www.w3.org/TR/xml-names/) | Third Edition | Supported |
+| [Canonical XML 1.0](https://www.w3.org/TR/xml-c14n/) | 1.0 | Supported |
+| [Exclusive XML Canonicalization 1.0](https://www.w3.org/TR/xml-exc-c14n/) | 1.0 | Supported |
+| [XML Signature Syntax and Processing](https://www.w3.org/TR/xmldsig-core1/) | 1.1 | In Development |
+| [XML Encryption Syntax and Processing](https://www.w3.org/TR/xmlenc-core1/) | 1.1 | In Development |
+
 ## License
 
 MIT
