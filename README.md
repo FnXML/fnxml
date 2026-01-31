@@ -124,24 +124,29 @@ results = events
 ```mermaid
 flowchart TB
     subgraph Input["XML Input"]
+        direction LR
         binary["Binary"]
         stream["File Stream"]
     end
 
     subgraph Preprocess["FnXML.preprocess() - Optional"]
+        direction LR
         utf16["Utf16.to_utf8()"]
         normalize["Normalize.line_endings()"]
     end
 
     subgraph Parser["FnXML.Parser"]
+        direction LR
         parse["Macro-based streaming parser<br/>Edition 4 or 5<br/>Pure Elixir • Zero-copy"]
     end
 
     subgraph Events["Event Stream"]
+        direction LR
         evt["Elixir Stream<br/>{:start_element, ...}<br/>{:characters, ...}<br/>{:end_element, ...}"]
     end
 
     subgraph StreamOps["Elixir Stream Functions"]
+        direction LR
         filter["Stream.filter/2"]
         map["Stream.map/2"]
         take["Stream.take/2"]
@@ -149,18 +154,21 @@ flowchart TB
     end
 
     subgraph Components["FnXML Components"]
+        direction LR
         event["FnXML.Event<br/>Filter, Transform"]
         validate["FnXML.Event.Validate<br/>compliant(), well_formed()"]
         namespace["FnXML.Namespaces<br/>resolve()"]
     end
 
     subgraph APIs["Consumer APIs"]
+        direction LR
         dom["FnXML.API.DOM<br/>Tree Builder<br/>O(n) memory"]
         sax["FnXML.API.SAX<br/>Event Handler<br/>O(1) memory"]
         stax["FnXML.API.StAX<br/>Pull Cursor<br/>O(1) memory"]
     end
 
     subgraph Output["Your Code"]
+        direction LR
         app["Application"]
         handlers["Handlers"]
         state["State Machine"]
