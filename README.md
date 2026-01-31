@@ -85,64 +85,61 @@ results = events
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         XML Input                               │
-│                   (Binary | File Stream)                        │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼ Preprocess (Optional)
-                ┌────────────────────────────┐
-                │ FnXML.Preprocess.*         │
-                │ • Utf16.to_utf8()          │
-                │ • Normalize.line_endings() │
-                └────────────┬───────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      FnXML.Parser                               │
-│         Macro-based streaming parser (Edition 4 or 5)           │
-│                 Pure Elixir • Zero-copy parsing                 │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼ Event Stream (Elixir Stream)
-                    {:start_element, ...}
-                    {:characters, ...}
-                    {:end_element, ...}
-                             │
-                ┌────────────┼────────────┐
-                │ Use all Elixir Stream  │
-                │ functions directly:    │
-                │ • Stream.filter/2      │
-                │ • Stream.map/2         │
-                │ • Stream.take/2        │
-                │ • Enum.reduce/3        │
-                └────────────┼────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                    ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│  FnXML.Event     │ │  FnXML.Validate  │ │  FnXML.Namespace │
-│  (Standard API)  │ │  (Optional)      │ │  (Optional)      │
-├──────────────────┤ ├──────────────────┤ ├──────────────────┤
-│ • Filter         │ │ • Well-formed    │ │ • Resolve        │
-│ • Transform      │ │ • Attributes     │ │ • QName          │
-│ • SimpleForm     │ │ • Namespaces     │ │ • Context        │
-│                  │ │ • Comments       │ │                  │
-└────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
-         └────────────────────┼────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ▼                     ▼                     ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│  FnXML.API.DOM   │ │  FnXML.API.SAX   │ │  FnXML.API.StAX  │
-│  (Alternative)   │ │  (Alternative)   │ │  (Alternative)   │
-│  Tree Builder    │ │  Event Handler   │ │  Pull Cursor     │
-│  O(n) memory     │ │  O(1) memory     │ │  O(1) memory     │
-└────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
-         │                    │                     │
-         ▼                    ▼                     ▼
-    Your Application      Your Handlers      Your State Machine
+```mermaid
+flowchart TB
+    subgraph Input["XML Input"]
+        binary["Binary"]
+        stream["File Stream"]
+    end
+
+    subgraph Preprocess["FnXML.preprocess() - Optional"]
+        utf16["Utf16.to_utf8()"]
+        normalize["Normalize.line_endings()"]
+    end
+
+    subgraph Parser["FnXML.Parser"]
+        parse["Macro-based streaming parser<br/>Edition 4 or 5<br/>Pure Elixir • Zero-copy"]
+    end
+
+    subgraph Events["Event Stream"]
+        evt["Elixir Stream<br/>{:start_element, ...}<br/>{:characters, ...}<br/>{:end_element, ...}"]
+    end
+
+    subgraph StreamOps["Elixir Stream Functions"]
+        filter["Stream.filter/2"]
+        map["Stream.map/2"]
+        take["Stream.take/2"]
+        reduce["Enum.reduce/3"]
+    end
+
+    subgraph Components["FnXML Components"]
+        event["FnXML.Event<br/>Filter, Transform"]
+        validate["FnXML.Event.Validate<br/>compliant(), well_formed()"]
+        namespace["FnXML.Namespaces<br/>resolve()"]
+    end
+
+    subgraph APIs["Consumer APIs"]
+        dom["FnXML.API.DOM<br/>Tree Builder<br/>O(n) memory"]
+        sax["FnXML.API.SAX<br/>Event Handler<br/>O(1) memory"]
+        stax["FnXML.API.StAX<br/>Pull Cursor<br/>O(1) memory"]
+    end
+
+    subgraph Output["Your Code"]
+        app["Application"]
+        handlers["Handlers"]
+        state["State Machine"]
+    end
+
+    Input --> Preprocess
+    Preprocess --> Parser
+    Parser --> Events
+    Events --> StreamOps
+    Events --> Components
+    StreamOps --> Components
+    Components --> APIs
+    dom --> app
+    sax --> handlers
+    stax --> state
 ```
 
 **Key Concepts:**
