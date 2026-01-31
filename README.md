@@ -27,6 +27,42 @@ This provides:
 - **Backpressure** - Slow consumers automatically slow the parser
 - **Natural integration** - Use `Stream.filter`, `Stream.map`, `Stream.take`, `Enum.reduce`, etc.
 
+## Installation
+
+```elixir
+def deps do
+  [{:fnxml, "~> 0.1.0"}]
+end
+```
+
+## Quick Start
+
+```elixir
+# Fully compliant processing (recommended)
+events = FnXML.process("<root><child id=\"1\">Hello</child></root>")
+|> Enum.to_list()
+
+# Build DOM tree
+doc = FnXML.process("<root><child id=\"1\">Hello</child></root>")
+      |> FnXML.API.DOM.build()
+doc.root.tag  # => "root"
+
+# SAX callback-based parsing
+defmodule CountHandler do
+  use FnXML.API.SAX.Handler
+  def start_element(_uri, _local, _qname, _attrs, count), do: {:ok, count + 1}
+end
+{:ok, 2} = FnXML.process("<root><child/></root>")
+           |> FnXML.API.SAX.dispatch(CountHandler, 0)
+
+# StAX pull-based parsing
+reader = FnXML.process("<root attr=\"val\"/>")
+         |> FnXML.API.StAX.Reader.new()
+reader = FnXML.API.StAX.Reader.next(reader)
+FnXML.API.StAX.Reader.local_name(reader)  # => "root"
+FnXML.API.StAX.Reader.attribute_value(reader, nil, "attr")  # => "val"
+```
+
 ### Simple: Full Compliant Processing
 
 For fully XML 1.0 compliant processing, use `FnXML.process/1`:
@@ -148,42 +184,6 @@ flowchart TB
 - **FnXML.Event is the standard API** - Provides stream transformations and filters for events
 - **DOM/SAX/StAX are alternative APIs** - For traditional XML processing patterns
 - **Component-based** - Connect only the components you need
-
-## Quick Start
-
-```elixir
-# Fully compliant processing (recommended)
-events = FnXML.process("<root><child id=\"1\">Hello</child></root>")
-|> Enum.to_list()
-
-# Build DOM tree
-doc = FnXML.process("<root><child id=\"1\">Hello</child></root>")
-      |> FnXML.API.DOM.build()
-doc.root.tag  # => "root"
-
-# SAX callback-based parsing
-defmodule CountHandler do
-  use FnXML.API.SAX.Handler
-  def start_element(_uri, _local, _qname, _attrs, count), do: {:ok, count + 1}
-end
-{:ok, 2} = FnXML.process("<root><child/></root>")
-           |> FnXML.API.SAX.dispatch(CountHandler, 0)
-
-# StAX pull-based parsing
-reader = FnXML.process("<root attr=\"val\"/>")
-         |> FnXML.API.StAX.Reader.new()
-reader = FnXML.API.StAX.Reader.next(reader)
-FnXML.API.StAX.Reader.local_name(reader)  # => "root"
-FnXML.API.StAX.Reader.attribute_value(reader, nil, "attr")  # => "val"
-```
-
-## Installation
-
-```elixir
-def deps do
-  [{:fnxml, "~> 0.1.0"}]
-end
-```
 
 ## Streaming Architecture
 
