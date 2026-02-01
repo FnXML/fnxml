@@ -1216,7 +1216,7 @@ defmodule FnXML.Parser.Generator do
       end
 
       defp parse_element(events, <<"<!--", rest::binary>>, xml, buf_pos, abs_pos, line, ls) do
-        parse_comment(
+        parse_raw_content(
           events,
           rest,
           xml,
@@ -1227,13 +1227,14 @@ defmodule FnXML.Parser.Generator do
           line,
           ls,
           abs_pos + 4,
-          false,
-          buf_pos
+          abs_pos + 4,
+          :comment,
+          {false}
         )
       end
 
       defp parse_element(events, <<"<![CDATA[", rest::binary>>, xml, buf_pos, abs_pos, line, ls) do
-        parse_cdata(
+        parse_raw_content(
           events,
           rest,
           xml,
@@ -1244,7 +1245,9 @@ defmodule FnXML.Parser.Generator do
           line,
           ls,
           abs_pos + 9,
-          buf_pos
+          abs_pos + 9,
+          :cdata,
+          nil
         )
       end
 
@@ -2925,7 +2928,8 @@ defmodule FnXML.Parser.Generator do
                elem_start
              )
              when c in @unquoted_terminators do
-          value = binary_part(xml, buf_start(buf_pos, abs_pos, val_abs_pos), abs_pos - val_abs_pos)
+          value =
+            binary_part(xml, buf_start(buf_pos, abs_pos, val_abs_pos), abs_pos - val_abs_pos)
 
           {new_attrs, new_seen, events} =
             if attr_name in seen do
@@ -3074,22 +3078,127 @@ defmodule FnXML.Parser.Generator do
         # Raw text element parsing (script, style, etc.)
         # ============================================================================
 
-        # Empty input - incomplete
-        defp parse_raw_text(
+        # Helper to emit raw text content and EOF error
+        defp emit_raw_text_eof(
                events,
-               <<>>,
-               _xml,
-               _buf_pos,
+               xml,
+               buf_pos,
                abs_pos,
                line,
                ls,
-               _tag_name,
-               _text_start,
-               _text_line,
-               _text_ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
                text_abs_pos
              ) do
-          incomplete(events, text_abs_pos, line, ls, abs_pos)
+          # Calculate content length from text_start to current position
+          text_length = buf_pos - text_start
+
+          # Emit characters event if there is content
+          events =
+            if text_length > 0 do
+              text = binary_part(xml, text_start, text_length)
+              new_event(events, :characters, text, text_line, text_ls, text_abs_pos)
+            else
+              events
+            end
+
+          # Emit EOF error and implied end element, then complete
+          events
+          |> error(:eof_in_raw_text, tag_name, line, ls, abs_pos)
+          |> new_event(:end_element, tag_name, line, ls, abs_pos)
+          |> complete(line, ls, abs_pos)
+        end
+
+        # EOF - emit content and error (not incomplete)
+        defp parse_raw_text(
+               events,
+               <<>>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos
+             ) do
+          emit_raw_text_eof(
+            events,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
+        end
+
+        # Partial </ at EOF - include in content
+        defp parse_raw_text(
+               events,
+               <<"</">>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos
+             ) do
+          emit_raw_text_eof(
+            events,
+            xml,
+            buf_pos + 2,
+            abs_pos + 2,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
+        end
+
+        # Partial < at EOF - include in content
+        defp parse_raw_text(
+               events,
+               <<"<">>,
+               xml,
+               buf_pos,
+               abs_pos,
+               line,
+               ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
+               text_abs_pos
+             ) do
+          emit_raw_text_eof(
+            events,
+            xml,
+            buf_pos + 1,
+            abs_pos + 1,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
         end
 
         # Potential end tag - check for </tagname
@@ -3275,23 +3384,35 @@ defmodule FnXML.Parser.Generator do
         end
 
         # Parse potential end tag name
-        # Empty input - incomplete
+        # EOF in end tag - emit content including partial tag
         defp parse_raw_text_end_tag(
                events,
                <<>>,
-               _xml,
-               _buf_pos,
+               xml,
+               buf_pos,
                abs_pos,
                line,
                ls,
-               _tag_name,
-               _text_start,
-               _text_line,
-               _text_ls,
+               tag_name,
+               text_start,
+               text_line,
+               text_ls,
                text_abs_pos,
                _acc
              ) do
-          incomplete(events, text_abs_pos, line, ls, abs_pos)
+          emit_raw_text_eof(
+            events,
+            xml,
+            buf_pos,
+            abs_pos,
+            line,
+            ls,
+            tag_name,
+            text_start,
+            text_line,
+            text_ls,
+            text_abs_pos
+          )
         end
 
         # End of tag name - check if it matches
@@ -3436,7 +3557,16 @@ defmodule FnXML.Parser.Generator do
                _ls,
                tag_name
              ) do
-          parse_raw_text_close(events, rest, xml, buf_pos + 1, abs_pos + 1, line + 1, abs_pos + 1, tag_name)
+          parse_raw_text_close(
+            events,
+            rest,
+            xml,
+            buf_pos + 1,
+            abs_pos + 1,
+            line + 1,
+            abs_pos + 1,
+            tag_name
+          )
         end
 
         # Found > - emit end_element and continue normal parsing
@@ -3715,27 +3845,122 @@ defmodule FnXML.Parser.Generator do
       end
 
       # ============================================================================
-      # Comment
+      # Unified raw content parsing (comments, CDATA, PI)
+      # Handles EOF properly by emitting content + error + complete
       # ============================================================================
 
-      defp parse_comment(
+      # Helper to extract content from xml using positions
+      defp extract_raw_content(xml, buf_pos, abs_pos, content_start) do
+        start = buf_start(buf_pos, abs_pos, content_start)
+        binary_part(xml, start, buf_pos - start)
+      end
+
+      # Emit error if double-dash was found in comment
+      defp maybe_error_double_dash(events, true, el_line, el_ls, el_abs_pos) do
+        error(events, :comment, nil, el_line, el_ls, el_abs_pos)
+      end
+
+      defp maybe_error_double_dash(events, false, _el_line, _el_ls, _el_abs_pos) do
+        events
+      end
+
+      # Emit the appropriate content event based on type
+      defp emit_raw_content_event(
              events,
-             <<>>,
-             _xml,
-             _buf_pos,
+             :comment,
+             content,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             {has_double_dash}
+           ) do
+        events
+        |> new_event(:comment, content, el_line, el_ls, el_abs_pos)
+        |> maybe_error_double_dash(has_double_dash, el_line, el_ls, el_abs_pos)
+      end
+
+      defp emit_raw_content_event(events, :cdata, content, el_line, el_ls, el_abs_pos, _extra) do
+        new_event(events, :cdata, content, el_line, el_ls, el_abs_pos)
+      end
+
+      defp emit_raw_content_event(events, :pi, content, el_line, el_ls, el_abs_pos, {target}) do
+        new_event(events, :processing_instruction, target, content, el_line, el_ls, el_abs_pos)
+      end
+
+      # Emit EOF error based on type
+      defp emit_raw_eof_error(events, :comment, _extra, line, ls, abs_pos) do
+        error(events, :eof_in_comment, nil, line, ls, abs_pos)
+      end
+
+      defp emit_raw_eof_error(events, :cdata, _extra, line, ls, abs_pos) do
+        error(events, :eof_in_cdata, nil, line, ls, abs_pos)
+      end
+
+      defp emit_raw_eof_error(events, :pi, _extra, line, ls, abs_pos) do
+        error(events, :eof_in_pi, nil, line, ls, abs_pos)
+      end
+
+      # Emit content and error on EOF
+      defp emit_raw_content_eof(
+             events,
+             xml,
+             buf_pos,
              abs_pos,
              line,
              ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _has_double_dash,
-             elem_start
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             content_type,
+             extra_data
            ) do
-        incomplete(events, elem_start, line, ls, abs_pos)
+        content = extract_raw_content(xml, buf_pos, abs_pos, content_start)
+
+        events
+        |> emit_raw_content_event(content_type, content, el_line, el_ls, el_abs_pos, extra_data)
+        |> emit_raw_eof_error(content_type, extra_data, line, ls, abs_pos)
+        |> complete(line, ls, abs_pos)
       end
 
-      defp parse_comment(
+      # ============================================================================
+      # parse_raw_content - unified parsing for comments, CDATA, and PI
+      # ============================================================================
+
+      # EOF - emit content and error for all types
+      defp parse_raw_content(
+             events,
+             <<>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             content_type,
+             extra_data
+           ) do
+        emit_raw_content_eof(
+          events,
+          xml,
+          buf_pos,
+          abs_pos,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          content_type,
+          extra_data
+        )
+      end
+
+      # Comment terminator: -->
+      defp parse_raw_content(
              events,
              <<"-->", rest::binary>>,
              xml,
@@ -3746,25 +3971,20 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             has_double_dash,
-             _elem_start
+             content_start,
+             :comment,
+             {has_double_dash}
            ) do
-        start = buf_start(buf_pos, abs_pos, el_abs_pos)
-        comment = binary_part(xml, start, buf_pos - start)
+        content = extract_raw_content(xml, buf_pos, abs_pos, content_start)
 
         events
-        |> new_event(:comment, comment, el_line, el_ls, el_abs_pos)
-        |> then(fn events ->
-          if has_double_dash do
-            error(events, :comment, nil, el_line, el_ls, el_abs_pos)
-          else
-            events
-          end
-        end)
+        |> new_event(:comment, content, el_line, el_ls, el_abs_pos)
+        |> maybe_error_double_dash(has_double_dash, el_line, el_ls, el_abs_pos)
         |> parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls)
       end
 
-      defp parse_comment(
+      # Comment: --->  (double-dash ending with >)
+      defp parse_raw_content(
              events,
              <<"--->", rest::binary>>,
              xml,
@@ -3775,19 +3995,87 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             _has_double_dash,
-             _elem_start
+             content_start,
+             :comment,
+             _extra
            ) do
-        start = buf_start(buf_pos, abs_pos, el_abs_pos)
-        comment = binary_part(xml, start, buf_pos - start + 1)
+        # Include the trailing dash in content
+        content = extract_raw_content(xml, buf_pos + 1, abs_pos + 1, content_start)
 
         events
-        |> new_event(:comment, comment, el_line, el_ls, el_abs_pos)
+        |> new_event(:comment, content, el_line, el_ls, el_abs_pos)
         |> error(:comment, nil, el_line, el_ls, el_abs_pos)
         |> parse_content(rest, xml, buf_pos + 4, abs_pos + 4, line, ls)
       end
 
-      defp parse_comment(
+      # Comment: -- at EOF (partial terminator)
+      defp parse_raw_content(
+             events,
+             <<"--">>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :comment,
+             _extra
+           ) do
+        # Include the -- in content
+        emit_raw_content_eof(
+          events,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :comment,
+          {true}
+        )
+      end
+
+      # Comment: - at EOF (single dash)
+      defp parse_raw_content(
+             events,
+             <<"-">>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :comment,
+             extra
+           ) do
+        # Include the - in content
+        emit_raw_content_eof(
+          events,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :comment,
+          extra
+        )
+      end
+
+      # Comment: detect -- sequence (set flag)
+      defp parse_raw_content(
              events,
              <<"--", rest::binary>>,
              xml,
@@ -3798,10 +4086,11 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             _has_double_dash,
-             elem_start
+             content_start,
+             :comment,
+             _extra
            ) do
-        parse_comment(
+        parse_raw_content(
           events,
           rest,
           xml,
@@ -3812,233 +4101,14 @@ defmodule FnXML.Parser.Generator do
           el_line,
           el_ls,
           el_abs_pos,
-          true,
-          elem_start
+          content_start,
+          :comment,
+          {true}
         )
       end
 
-      defp parse_comment(
-             events,
-             <<"-">>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _has_double_dash,
-             elem_start
-           ) do
-        incomplete(events, elem_start, line, ls, abs_pos)
-      end
-
-      defp parse_comment(
-             events,
-             <<?\n, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             _ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             has_double_dash,
-             elem_start
-           ) do
-        parse_comment(
-          events,
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line + 1,
-          abs_pos + 1,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          has_double_dash,
-          elem_start
-        )
-      end
-
-      # ASCII fast path for valid XML chars (excludes -, control chars; newline handled above)
-      defp parse_comment(
-             events,
-             <<c, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             has_double_dash,
-             elem_start
-           )
-           when c in 0x20..0x2C or c in 0x2E..0x7F or c == 0x09 or c == 0x0D do
-        parse_comment(
-          events,
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line,
-          ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          has_double_dash,
-          elem_start
-        )
-      end
-
-      # Handle single dash followed by non-dash (valid in comment)
-      defp parse_comment(
-             events,
-             <<"-", rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             has_double_dash,
-             elem_start
-           ) do
-        parse_comment(
-          events,
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line,
-          ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          has_double_dash,
-          elem_start
-        )
-      end
-
-      # Non-ASCII UTF-8: validate with is_xml_char guard
-      defp parse_comment(
-             events,
-             <<c::utf8, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             has_double_dash,
-             elem_start
-           )
-           when is_xml_char(c) do
-        size = utf8_size(c)
-
-        parse_comment(
-          events,
-          rest,
-          xml,
-          buf_pos + size,
-          abs_pos + size,
-          line,
-          ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          has_double_dash,
-          elem_start
-        )
-      end
-
-      # Invalid XML character - emit error and stop
-      defp parse_comment(
-             events,
-             <<c::utf8, _rest::binary>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _has_double_dash,
-             _elem_start
-           ) do
-        events =
-          error(
-            events,
-            :invalid_char,
-            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in comment",
-            line,
-            ls,
-            abs_pos
-          )
-
-        complete(events, line, ls, abs_pos)
-      end
-
-      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
-      defp parse_comment(
-             events,
-             <<byte, _rest::binary>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _has_double_dash,
-             _elem_start
-           )
-           when byte >= 0x80 do
-        events =
-          error(
-            events,
-            :invalid_utf8,
-            "Invalid UTF-8 byte sequence in comment",
-            line,
-            ls,
-            abs_pos
-          )
-
-        complete(events, line, ls, abs_pos)
-      end
-
-      # ============================================================================
-      # CDATA
-      # ============================================================================
-
-      defp parse_cdata(
-             events,
-             <<>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             elem_start
-           ) do
-        incomplete(events, elem_start, line, ls, abs_pos)
-      end
-
-      defp parse_cdata(
+      # CDATA terminator: ]]>
+      defp parse_raw_content(
              events,
              <<"]]>", rest::binary>>,
              xml,
@@ -4049,49 +4119,138 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             _elem_start
+             content_start,
+             :cdata,
+             _extra
            ) do
-        start = buf_start(buf_pos, abs_pos, el_abs_pos)
-        cdata = binary_part(xml, start, buf_pos - start)
+        content = extract_raw_content(xml, buf_pos, abs_pos, content_start)
 
         events
-        |> new_event(:cdata, cdata, el_line, el_ls, el_abs_pos)
+        |> new_event(:cdata, content, el_line, el_ls, el_abs_pos)
         |> parse_content(rest, xml, buf_pos + 3, abs_pos + 3, line, ls)
       end
 
-      defp parse_cdata(
+      # CDATA: ]] at EOF
+      defp parse_raw_content(
              events,
              <<"]]">>,
-             _xml,
-             _buf_pos,
+             xml,
+             buf_pos,
              abs_pos,
              line,
              ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             elem_start
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :cdata,
+             extra
            ) do
-        incomplete(events, elem_start, line, ls, abs_pos)
+        emit_raw_content_eof(
+          events,
+          xml,
+          buf_pos + 2,
+          abs_pos + 2,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :cdata,
+          extra
+        )
       end
 
-      defp parse_cdata(
+      # CDATA: ] at EOF
+      defp parse_raw_content(
              events,
              <<"]">>,
-             _xml,
-             _buf_pos,
+             xml,
+             buf_pos,
              abs_pos,
              line,
              ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             elem_start
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :cdata,
+             extra
            ) do
-        incomplete(events, elem_start, line, ls, abs_pos)
+        emit_raw_content_eof(
+          events,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :cdata,
+          extra
+        )
       end
 
-      defp parse_cdata(
+      # PI terminator: ?>
+      defp parse_raw_content(
+             events,
+             <<"?>", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :pi,
+             {target}
+           ) do
+        content = extract_raw_content(xml, buf_pos, abs_pos, content_start)
+
+        events
+        |> new_event(:processing_instruction, target, content, el_line, el_ls, el_abs_pos)
+        |> parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
+      end
+
+      # PI: ? at EOF
+      defp parse_raw_content(
+             events,
+             <<"?">>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :pi,
+             extra
+           ) do
+        emit_raw_content_eof(
+          events,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :pi,
+          extra
+        )
+      end
+
+      # Newline - update line tracking (all types)
+      defp parse_raw_content(
              events,
              <<?\n, rest::binary>>,
              xml,
@@ -4102,9 +4261,11 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             elem_start
+             content_start,
+             content_type,
+             extra_data
            ) do
-        parse_cdata(
+        parse_raw_content(
           events,
           rest,
           xml,
@@ -4115,12 +4276,14 @@ defmodule FnXML.Parser.Generator do
           el_line,
           el_ls,
           el_abs_pos,
-          elem_start
+          content_start,
+          content_type,
+          extra_data
         )
       end
 
-      # ASCII fast path for valid XML chars (excludes ], control chars; newline handled above)
-      defp parse_cdata(
+      # ASCII fast path for comment (excludes -, newline, control chars)
+      defp parse_raw_content(
              events,
              <<c, rest::binary>>,
              xml,
@@ -4131,10 +4294,12 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             elem_start
+             content_start,
+             :comment,
+             extra_data
            )
-           when c in 0x20..0x5C or c in 0x5E..0x7F or c == 0x09 or c == 0x0D do
-        parse_cdata(
+           when c in 0x20..0x2C or c in 0x2E..0x7F or c == 0x09 or c == 0x0D do
+        parse_raw_content(
           events,
           rest,
           xml,
@@ -4145,12 +4310,81 @@ defmodule FnXML.Parser.Generator do
           el_line,
           el_ls,
           el_abs_pos,
-          elem_start
+          content_start,
+          :comment,
+          extra_data
+        )
+      end
+
+      # Handle single dash followed by non-dash (valid in comment)
+      defp parse_raw_content(
+             events,
+             <<"-", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :comment,
+             extra_data
+           ) do
+        parse_raw_content(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :comment,
+          extra_data
+        )
+      end
+
+      # ASCII fast path for CDATA (excludes ], newline, control chars)
+      defp parse_raw_content(
+             events,
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :cdata,
+             extra_data
+           )
+           when c in 0x20..0x5C or c in 0x5E..0x7F or c == 0x09 or c == 0x0D do
+        parse_raw_content(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :cdata,
+          extra_data
         )
       end
 
       # Handle single ] (valid in CDATA until ]]>)
-      defp parse_cdata(
+      defp parse_raw_content(
              events,
              <<"]", rest::binary>>,
              xml,
@@ -4161,9 +4395,11 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             elem_start
+             content_start,
+             :cdata,
+             extra_data
            ) do
-        parse_cdata(
+        parse_raw_content(
           events,
           rest,
           xml,
@@ -4174,12 +4410,81 @@ defmodule FnXML.Parser.Generator do
           el_line,
           el_ls,
           el_abs_pos,
-          elem_start
+          content_start,
+          :cdata,
+          extra_data
         )
       end
 
-      # Non-ASCII UTF-8: validate with is_xml_char guard
-      defp parse_cdata(
+      # ASCII fast path for PI (excludes ?, newline, control chars)
+      defp parse_raw_content(
+             events,
+             <<c, rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :pi,
+             extra_data
+           )
+           when c in 0x20..0x3E or c in 0x40..0x7F or c == 0x09 or c == 0x0D do
+        parse_raw_content(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :pi,
+          extra_data
+        )
+      end
+
+      # Handle single ? (valid in PI content until ?>)
+      defp parse_raw_content(
+             events,
+             <<"?", rest::binary>>,
+             xml,
+             buf_pos,
+             abs_pos,
+             line,
+             ls,
+             el_line,
+             el_ls,
+             el_abs_pos,
+             content_start,
+             :pi,
+             extra_data
+           ) do
+        parse_raw_content(
+          events,
+          rest,
+          xml,
+          buf_pos + 1,
+          abs_pos + 1,
+          line,
+          ls,
+          el_line,
+          el_ls,
+          el_abs_pos,
+          content_start,
+          :pi,
+          extra_data
+        )
+      end
+
+      # Non-ASCII UTF-8: validate with is_xml_char guard (all types)
+      defp parse_raw_content(
              events,
              <<c::utf8, rest::binary>>,
              xml,
@@ -4190,12 +4495,14 @@ defmodule FnXML.Parser.Generator do
              el_line,
              el_ls,
              el_abs_pos,
-             elem_start
+             content_start,
+             content_type,
+             extra_data
            )
            when is_xml_char(c) do
         size = utf8_size(c)
 
-        parse_cdata(
+        parse_raw_content(
           events,
           rest,
           xml,
@@ -4206,12 +4513,14 @@ defmodule FnXML.Parser.Generator do
           el_line,
           el_ls,
           el_abs_pos,
-          elem_start
+          content_start,
+          content_type,
+          extra_data
         )
       end
 
       # Invalid XML character - emit error and stop
-      defp parse_cdata(
+      defp parse_raw_content(
              events,
              <<c::utf8, _rest::binary>>,
              _xml,
@@ -4222,13 +4531,22 @@ defmodule FnXML.Parser.Generator do
              _el_line,
              _el_ls,
              _el_abs_pos,
-             _elem_start
+             _content_start,
+             content_type,
+             _extra_data
            ) do
+        type_name =
+          case content_type do
+            :comment -> "comment"
+            :cdata -> "CDATA"
+            :pi -> "processing instruction"
+          end
+
         events =
           error(
             events,
             :invalid_char,
-            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in CDATA",
+            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in #{type_name}",
             line,
             ls,
             abs_pos
@@ -4238,7 +4556,7 @@ defmodule FnXML.Parser.Generator do
       end
 
       # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
-      defp parse_cdata(
+      defp parse_raw_content(
              events,
              <<byte, _rest::binary>>,
              _xml,
@@ -4249,11 +4567,27 @@ defmodule FnXML.Parser.Generator do
              _el_line,
              _el_ls,
              _el_abs_pos,
-             _elem_start
+             _content_start,
+             content_type,
+             _extra_data
            )
            when byte >= 0x80 do
+        type_name =
+          case content_type do
+            :comment -> "comment"
+            :cdata -> "CDATA"
+            :pi -> "processing instruction"
+          end
+
         events =
-          error(events, :invalid_utf8, "Invalid UTF-8 byte sequence in CDATA", line, ls, abs_pos)
+          error(
+            events,
+            :invalid_utf8,
+            "Invalid UTF-8 byte sequence in #{type_name}",
+            line,
+            ls,
+            abs_pos
+          )
 
         complete(events, line, ls, abs_pos)
       end
@@ -5016,7 +5350,7 @@ defmodule FnXML.Parser.Generator do
 
           complete(events, line, ls, abs_pos)
         else
-          parse_pi_content(
+          parse_raw_content(
             events,
             rest,
             xml,
@@ -5027,264 +5361,12 @@ defmodule FnXML.Parser.Generator do
             el_line,
             el_ls,
             el_abs_pos,
-            target,
-            # content_start_abs_pos - content starts after target name
+            # content_start - content starts after target name
             abs_pos,
-            elem_start
+            :pi,
+            {target}
           )
         end
-      end
-
-      defp parse_pi_content(
-             events,
-             <<>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _target,
-             _content_start_abs_pos,
-             elem_start
-           ) do
-        incomplete(events, elem_start, line, ls, abs_pos)
-      end
-
-      defp parse_pi_content(
-             events,
-             <<"?>", rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             target,
-             content_start_abs_pos,
-             _elem_start
-           ) do
-        start = buf_start(buf_pos, abs_pos, content_start_abs_pos)
-        content = binary_part(xml, start, buf_pos - start)
-
-        events
-        |> new_event(:processing_instruction, target, content, el_line, el_ls, el_abs_pos)
-        |> parse_content(rest, xml, buf_pos + 2, abs_pos + 2, line, ls)
-      end
-
-      defp parse_pi_content(
-             events,
-             <<"?">>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _target,
-             _content_start_abs_pos,
-             elem_start
-           ) do
-        incomplete(events, elem_start, line, ls, abs_pos)
-      end
-
-      defp parse_pi_content(
-             events,
-             <<?\n, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             _ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             target,
-             content_start_abs_pos,
-             elem_start
-           ) do
-        parse_pi_content(
-          events,
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line + 1,
-          abs_pos + 1,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          target,
-          content_start_abs_pos,
-          elem_start
-        )
-      end
-
-      # ASCII fast path for valid XML chars (excludes ?, control chars; newline handled above)
-      defp parse_pi_content(
-             events,
-             <<c, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             target,
-             content_start_abs_pos,
-             elem_start
-           )
-           when c in 0x20..0x3E or c in 0x40..0x7F or c == 0x09 or c == 0x0D do
-        parse_pi_content(
-          events,
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line,
-          ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          target,
-          content_start_abs_pos,
-          elem_start
-        )
-      end
-
-      # Handle single ? (valid in PI content until ?>)
-      defp parse_pi_content(
-             events,
-             <<"?", rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             target,
-             content_start_abs_pos,
-             elem_start
-           ) do
-        parse_pi_content(
-          events,
-          rest,
-          xml,
-          buf_pos + 1,
-          abs_pos + 1,
-          line,
-          ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          target,
-          content_start_abs_pos,
-          elem_start
-        )
-      end
-
-      # Non-ASCII UTF-8: validate with is_xml_char guard
-      defp parse_pi_content(
-             events,
-             <<c::utf8, rest::binary>>,
-             xml,
-             buf_pos,
-             abs_pos,
-             line,
-             ls,
-             el_line,
-             el_ls,
-             el_abs_pos,
-             target,
-             content_start_abs_pos,
-             elem_start
-           )
-           when is_xml_char(c) do
-        size = utf8_size(c)
-
-        parse_pi_content(
-          events,
-          rest,
-          xml,
-          buf_pos + size,
-          abs_pos + size,
-          line,
-          ls,
-          el_line,
-          el_ls,
-          el_abs_pos,
-          target,
-          content_start_abs_pos,
-          elem_start
-        )
-      end
-
-      # Invalid XML character - emit error and stop
-      defp parse_pi_content(
-             events,
-             <<c::utf8, _rest::binary>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _target,
-             _content_start_abs_pos,
-             _elem_start
-           ) do
-        events =
-          error(
-            events,
-            :invalid_char,
-            "Invalid XML character U+#{Integer.to_string(c, 16) |> String.pad_leading(4, "0")} in processing instruction",
-            line,
-            ls,
-            abs_pos
-          )
-
-        complete(events, line, ls, abs_pos)
-      end
-
-      # Malformed UTF-8 byte sequence - catch high bytes not matched by UTF-8 pattern
-      defp parse_pi_content(
-             events,
-             <<byte, _rest::binary>>,
-             _xml,
-             _buf_pos,
-             abs_pos,
-             line,
-             ls,
-             _el_line,
-             _el_ls,
-             _el_abs_pos,
-             _target,
-             _elem_start
-           )
-           when byte >= 0x80 do
-        events =
-          error(
-            events,
-            :invalid_utf8,
-            "Invalid UTF-8 byte sequence in processing instruction",
-            line,
-            ls,
-            abs_pos
-          )
-
-        complete(events, line, ls, abs_pos)
       end
 
       # ============================================================================
