@@ -311,4 +311,78 @@ defmodule FnXML.Parser.HTMLModeTest do
       assert {"data-id", "123"} in div_attrs
     end
   end
+
+  describe "raw text elements - EOF handling" do
+    test "EOF in script emits text content, error, and implied end tag" do
+      events = HTMLParser.parse("<script>alert(1)") |> Enum.to_list()
+      assert Enum.any?(events, &match?({:start_element, "script", [], _, _, _}, &1))
+      assert Enum.any?(events, &match?({:characters, "alert(1)", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "script", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:end_element, "script", _, _, _}, &1))
+    end
+
+    test "EOF with partial end tag </scr" do
+      events = HTMLParser.parse("<script>code</scr") |> Enum.to_list()
+      assert Enum.any?(events, &match?({:characters, "code</scr", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "script", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:end_element, "script", _, _, _}, &1))
+    end
+
+    test "EOF with </ only" do
+      events = HTMLParser.parse("<script>code</") |> Enum.to_list()
+      assert Enum.any?(events, &match?({:characters, "code</", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "script", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:end_element, "script", _, _, _}, &1))
+    end
+
+    test "EOF with < only" do
+      events = HTMLParser.parse("<script>code<") |> Enum.to_list()
+      assert Enum.any?(events, &match?({:characters, "code<", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "script", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:end_element, "script", _, _, _}, &1))
+    end
+
+    test "EOF immediately after script open tag" do
+      events = HTMLParser.parse("<script>") |> Enum.to_list()
+      assert Enum.any?(events, &match?({:start_element, "script", [], _, _, _}, &1))
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "script", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:end_element, "script", _, _, _}, &1))
+      # No characters event for empty content
+      refute Enum.any?(events, &match?({:characters, _, _, _, _}, &1))
+    end
+
+    test "EOF in style element" do
+      events = HTMLParser.parse("<style>body { color: red }") |> Enum.to_list()
+      assert Enum.any?(events, &match?({:start_element, "style", [], _, _, _}, &1))
+      assert Enum.any?(events, &match?({:characters, "body { color: red }", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "style", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:end_element, "style", _, _, _}, &1))
+    end
+
+    test "EOF with multiline raw text content" do
+      events = HTMLParser.parse("<script>line1\nline2") |> Enum.to_list()
+
+      assert Enum.any?(events, fn
+               {:characters, content, _, _, _} -> String.contains?(content, "line1\nline2")
+               _ -> false
+             end)
+
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "script", _, _, _}, &1))
+      assert Enum.any?(events, &match?({:end_element, "script", _, _, _}, &1))
+    end
+
+    test "EOF with script containing XML-like content" do
+      events = HTMLParser.parse("<script>if (a < b && c > d) {}") |> Enum.to_list()
+
+      assert Enum.any?(events, fn
+               {:characters, content, _, _, _} ->
+                 String.contains?(content, "if (a < b && c > d) {}")
+
+               _ ->
+                 false
+             end)
+
+      assert Enum.any?(events, &match?({:error, :eof_in_raw_text, "script", _, _, _}, &1))
+    end
+  end
 end
