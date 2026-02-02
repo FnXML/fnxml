@@ -40,11 +40,26 @@ defmodule FnXML.Namespaces do
       |> FnXML.Namespaces.resolve()
       |> Enum.to_list()
 
+      # Track namespace context (emits {:ns_context, ...} events)
+      FnXML.Parser.parse(xml)
+      |> FnXML.Namespaces.track()
+      |> Enum.to_list()
+
       # Both validate and resolve
       FnXML.Parser.parse(xml)
       |> FnXML.Namespaces.validate()
       |> FnXML.Namespaces.resolve()
       |> Enum.to_list()
+
+  ## Namespace Context Events
+
+  The `track/2` function emits `{:ns_context, context, line, ls, pos}` events
+  before each `{:start_element}` event. This enables downstream processors
+  (like XPath evaluators) to access the namespace bindings in scope at each
+  element, which is required for functions like `namespace-uri()`.
+
+  This follows the same pattern as `FnXML.DTD.parse_model/1` which emits
+  `{:dtd_model, model}` events for DTD information.
 
   ## Event Transformation
 
@@ -131,6 +146,149 @@ defmodule FnXML.Namespaces do
   """
   @spec resolve(Enumerable.t(), keyword()) :: Enumerable.t()
   defdelegate resolve(stream, opts \\ []), to: Resolver
+
+  @doc """
+  Track namespace context and emit it as stream events.
+
+  Emits `{:ns_context, %FnXML.Namespaces.Context{}, line, ls, pos}` events
+  BEFORE each `{:start_element, ...}` event, providing the namespace context
+  that applies to that element.
+
+  This follows the same pattern as `FnXML.DTD.parse_model/1` which emits
+  `{:dtd_model, model}` events for DTD information.
+
+  ## Usage
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.Namespaces.track()        # Emits {:ns_context, ...}
+      |> FnXPath.filter("//ns:item")     # Can use context for namespace-uri()
+      |> Enum.to_list()
+
+  ## Event Format
+
+      {:ns_context, %FnXML.Namespaces.Context{}, line, line_start, abs_pos}
+
+  ## Event Order
+
+  For each element:
+  1. `{:ns_context, context, ...}` - Current namespace context
+  2. `{:start_element, tag, attrs, ...}` - Original element event
+
+  ## Options
+
+  - `:only_changes` - Only emit context when it changes (default: false).
+    When true, reduces verbosity for documents with few namespace declarations.
+  - `:strip_declarations` - Remove xmlns attributes from element attrs (default: false)
+
+  ## Idempotent
+
+  Like `parse_model/1`, this is idempotent - if `{:ns_context, ...}` events
+  already exist in the stream, they pass through unchanged.
+
+  ## Examples
+
+      # Track namespace context for XPath processing
+      xml = ~s(<root xmlns:ns="http://example.org"><ns:item/></root>)
+
+      FnXML.Parser.parse(xml)
+      |> FnXML.Namespaces.track()
+      |> Enum.to_list()
+      # => [
+      #   {:ns_context, %Context{...}, 1, 0, 0},
+      #   {:start_element, "root", [...], 1, 0, 0},
+      #   {:ns_context, %Context{...}, 1, 0, 41},
+      #   {:start_element, "ns:item", [], 1, 0, 41},
+      #   ...
+      # ]
+
+      # Only emit when context changes
+      FnXML.Parser.parse(xml)
+      |> FnXML.Namespaces.track(only_changes: true)
+      |> Enum.to_list()
+  """
+  @spec track(Enumerable.t(), keyword()) :: Enumerable.t()
+  def track(stream, opts \\ []) do
+    only_changes = Keyword.get(opts, :only_changes, false)
+    strip = Keyword.get(opts, :strip_declarations, false)
+
+    # State: {context, has_existing_context}
+    # has_existing_context tracks if we've seen {:ns_context, ...} in stream (idempotent)
+    initial_state = {Context.new(), false}
+
+    Stream.transform(stream, initial_state, fn event, {ctx, has_existing} ->
+      track_event(event, ctx, has_existing, only_changes, strip)
+    end)
+  end
+
+  # Already has context tracking - pass through (idempotent)
+  defp track_event({:ns_context, _, _, _, _} = event, ctx, _has_existing, _only_changes, _strip) do
+    {[event], {ctx, true}}
+  end
+
+  # Legacy format without location
+  defp track_event({:ns_context, _} = event, ctx, _has_existing, _only_changes, _strip) do
+    {[event], {ctx, true}}
+  end
+
+  # If stream already has context events, just pass through everything
+  defp track_event(event, ctx, true = _has_existing, _only_changes, _strip) do
+    {[event], {ctx, true}}
+  end
+
+  # Start element - push context and emit
+  defp track_event(
+         {:start_element, tag, attrs, line, ls, pos} = event,
+         ctx,
+         false,
+         only_changes,
+         strip
+       ) do
+    case Context.push(ctx, attrs, strip_declarations: strip) do
+      {:ok, new_ctx, filtered_attrs} ->
+        element_event =
+          if strip do
+            {:start_element, tag, filtered_attrs, line, ls, pos}
+          else
+            event
+          end
+
+        if only_changes and context_equal?(ctx, new_ctx) do
+          # Context unchanged, don't emit ns_context event
+          {[element_event], {new_ctx, false}}
+        else
+          # Emit context before element
+          {[{:ns_context, new_ctx, line, ls, pos}, element_event], {new_ctx, false}}
+        end
+
+      {:error, _reason} ->
+        # On error, continue with original context
+        # The error will be caught by validate() if used
+        {[event], {ctx, false}}
+    end
+  end
+
+  # End element - pop context
+  defp track_event({:end_element, _tag, _line, _ls, _pos} = event, ctx, false, _only_changes, _strip) do
+    new_ctx = Context.pop(ctx)
+    {[event], {new_ctx, false}}
+  end
+
+  # Legacy format without location
+  defp track_event({:end_element, _tag} = event, ctx, false, _only_changes, _strip) do
+    new_ctx = Context.pop(ctx)
+    {[event], {new_ctx, false}}
+  end
+
+  # All other events pass through
+  defp track_event(event, ctx, has_existing, _only_changes, _strip) do
+    {[event], {ctx, has_existing}}
+  end
+
+  # Compare contexts for equality (ignoring parent chain structure)
+  defp context_equal?(ctx1, ctx2) do
+    Context.default_namespace(ctx1) == Context.default_namespace(ctx2) and
+      Context.all_prefixes(ctx1) == Context.all_prefixes(ctx2)
+  end
 
   # ============================================================================
   # Utility Functions
@@ -306,5 +464,47 @@ defmodule FnXML.Namespaces do
   @spec errors?(list(term())) :: boolean()
   def errors?(events) when is_list(events) do
     Enum.any?(events, &ns_error?/1)
+  end
+
+  # ============================================================================
+  # Context Event Helpers
+  # ============================================================================
+
+  @doc """
+  Check if an event is a namespace context event.
+  """
+  @spec ns_context?(term()) :: boolean()
+  def ns_context?({:ns_context, _, _, _, _}), do: true
+  def ns_context?({:ns_context, _}), do: true
+  def ns_context?(_), do: false
+
+  @doc """
+  Extract the context from a namespace context event.
+
+  Returns the `%FnXML.Namespaces.Context{}` struct or nil if not a context event.
+  """
+  @spec extract_context(term()) :: Context.t() | nil
+  def extract_context({:ns_context, ctx, _, _, _}), do: ctx
+  def extract_context({:ns_context, ctx}), do: ctx
+  def extract_context(_), do: nil
+
+  @doc """
+  Find the most recent namespace context from a list of events.
+
+  Searches backwards through the event list and returns the first
+  `{:ns_context, ...}` event's context, or nil if none found.
+
+  ## Examples
+
+      events = FnXML.Parser.parse(xml) |> FnXML.Namespaces.track() |> Enum.to_list()
+      ctx = FnXML.Namespaces.find_context(events)
+  """
+  @spec find_context(list(term())) :: Context.t() | nil
+  def find_context(events) when is_list(events) do
+    events
+    |> Enum.reverse()
+    |> Enum.find_value(fn event ->
+      extract_context(event)
+    end)
   end
 end
